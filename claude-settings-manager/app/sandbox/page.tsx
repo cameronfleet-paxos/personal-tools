@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { ScopeBadge } from "@/components/ui/scope-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Dialog,
@@ -32,10 +33,25 @@ import {
   AlertTriangle,
   Shield,
 } from "lucide-react";
+import type { SettingsTarget, Settings } from "@/types/settings";
+
+interface SandboxItem {
+  value: string;
+  source: SettingsTarget;
+}
 
 export default function SandboxPage() {
-  const { updateSetting, isLoading, effectiveGlobal, effectiveLocal } =
-    useSettingsStore();
+  const {
+    updateSetting,
+    isLoading,
+    effectiveUser,
+    effectiveUserLocal,
+    effectiveProject,
+    effectiveProjectLocal,
+    isInProjectContext,
+  } = useSettingsStore();
+
+  const inProject = isInProjectContext();
 
   const [newPath, setNewPath] = useState("");
   const [newHost, setNewHost] = useState("");
@@ -52,18 +68,151 @@ export default function SandboxPage() {
     );
   }
 
-  const sandboxEnabled = effectiveLocal?.sandbox?.enabled !== false;
-  const autoAllowBash = effectiveLocal?.sandbox?.autoAllowBashIfSandboxed ?? false;
-  const writePaths =
-    effectiveGlobal?.sandbox?.filesystem?.write?.allowOnly || [];
-  const allowedHosts = effectiveGlobal?.sandbox?.network?.allowedHosts || [];
-  const unixSockets = effectiveGlobal?.sandbox?.network?.allowUnixSockets || [];
+  // Helper to get items from a specific source
+  const getPathsFromSource = (settings: Settings | null, source: SettingsTarget): SandboxItem[] => {
+    return (settings?.sandbox?.filesystem?.write?.allowOnly || []).map((value) => ({
+      value,
+      source,
+    }));
+  };
+
+  const getHostsFromSource = (settings: Settings | null, source: SettingsTarget): SandboxItem[] => {
+    return (settings?.sandbox?.network?.allowedHosts || []).map((value) => ({
+      value,
+      source,
+    }));
+  };
+
+  const getSocketsFromSource = (settings: Settings | null, source: SettingsTarget): SandboxItem[] => {
+    return (settings?.sandbox?.network?.allowUnixSockets || []).map((value) => ({
+      value,
+      source,
+    }));
+  };
+
+  // Collect items from all sources
+  const getAllPaths = (): SandboxItem[] => {
+    if (inProject) {
+      return [
+        ...getPathsFromSource(effectiveUser, "user"),
+        ...getPathsFromSource(effectiveUserLocal, "user-local"),
+        ...getPathsFromSource(effectiveProject, "project"),
+        ...getPathsFromSource(effectiveProjectLocal, "project-local"),
+      ];
+    }
+    return [
+      ...getPathsFromSource(effectiveUser, "user"),
+      ...getPathsFromSource(effectiveUserLocal, "user-local"),
+    ];
+  };
+
+  const getAllHosts = (): SandboxItem[] => {
+    if (inProject) {
+      return [
+        ...getHostsFromSource(effectiveUser, "user"),
+        ...getHostsFromSource(effectiveUserLocal, "user-local"),
+        ...getHostsFromSource(effectiveProject, "project"),
+        ...getHostsFromSource(effectiveProjectLocal, "project-local"),
+      ];
+    }
+    return [
+      ...getHostsFromSource(effectiveUser, "user"),
+      ...getHostsFromSource(effectiveUserLocal, "user-local"),
+    ];
+  };
+
+  const getAllSockets = (): SandboxItem[] => {
+    if (inProject) {
+      return [
+        ...getSocketsFromSource(effectiveUser, "user"),
+        ...getSocketsFromSource(effectiveUserLocal, "user-local"),
+        ...getSocketsFromSource(effectiveProject, "project"),
+        ...getSocketsFromSource(effectiveProjectLocal, "project-local"),
+      ];
+    }
+    return [
+      ...getSocketsFromSource(effectiveUser, "user"),
+      ...getSocketsFromSource(effectiveUserLocal, "user-local"),
+    ];
+  };
+
+  // Get settings object for a given target
+  const getSettingsForTarget = (target: SettingsTarget): Settings => {
+    switch (target) {
+      case "user":
+        return effectiveUser;
+      case "user-local":
+        return effectiveUserLocal;
+      case "project":
+        return effectiveProject;
+      case "project-local":
+        return effectiveProjectLocal;
+    }
+  };
+
+  // Default target for new items
+  const defaultTarget: SettingsTarget = inProject ? "project" : "user";
+
+  // Get sandbox settings with priority (project-local > project > user-local > user)
+  const getSandboxEnabledSetting = (): { value: boolean; source: SettingsTarget } => {
+    if (inProject) {
+      if (effectiveProjectLocal?.sandbox?.enabled !== undefined)
+        return { value: effectiveProjectLocal.sandbox.enabled, source: "project-local" };
+      if (effectiveProject?.sandbox?.enabled !== undefined)
+        return { value: effectiveProject.sandbox.enabled, source: "project" };
+      if (effectiveUserLocal?.sandbox?.enabled !== undefined)
+        return { value: effectiveUserLocal.sandbox.enabled, source: "user-local" };
+      if (effectiveUser?.sandbox?.enabled !== undefined)
+        return { value: effectiveUser.sandbox.enabled, source: "user" };
+    } else {
+      if (effectiveUserLocal?.sandbox?.enabled !== undefined)
+        return { value: effectiveUserLocal.sandbox.enabled, source: "user-local" };
+      if (effectiveUser?.sandbox?.enabled !== undefined)
+        return { value: effectiveUser.sandbox.enabled, source: "user" };
+    }
+    return { value: true, source: "user" }; // Default enabled
+  };
+
+  const getAutoAllowBashSetting = (): { value: boolean; source: SettingsTarget } => {
+    if (inProject) {
+      if (effectiveProjectLocal?.sandbox?.autoAllowBashIfSandboxed !== undefined)
+        return { value: effectiveProjectLocal.sandbox.autoAllowBashIfSandboxed, source: "project-local" };
+      if (effectiveProject?.sandbox?.autoAllowBashIfSandboxed !== undefined)
+        return { value: effectiveProject.sandbox.autoAllowBashIfSandboxed, source: "project" };
+      if (effectiveUserLocal?.sandbox?.autoAllowBashIfSandboxed !== undefined)
+        return { value: effectiveUserLocal.sandbox.autoAllowBashIfSandboxed, source: "user-local" };
+      if (effectiveUser?.sandbox?.autoAllowBashIfSandboxed !== undefined)
+        return { value: effectiveUser.sandbox.autoAllowBashIfSandboxed, source: "user" };
+    } else {
+      if (effectiveUserLocal?.sandbox?.autoAllowBashIfSandboxed !== undefined)
+        return { value: effectiveUserLocal.sandbox.autoAllowBashIfSandboxed, source: "user-local" };
+      if (effectiveUser?.sandbox?.autoAllowBashIfSandboxed !== undefined)
+        return { value: effectiveUser.sandbox.autoAllowBashIfSandboxed, source: "user" };
+    }
+    return { value: false, source: "user" };
+  };
+
+  const sandboxSetting = getSandboxEnabledSetting();
+  const autoAllowBashSetting = getAutoAllowBashSetting();
+  const sandboxEnabled = sandboxSetting.value;
+  const autoAllowBash = autoAllowBashSetting.value;
+  const writePaths = getAllPaths();
+  const allowedHosts = getAllHosts();
+  const unixSockets = getAllSockets();
+
+  // Check if inherited
+  const isInherited = (source: SettingsTarget): boolean => {
+    return inProject && (source === "user" || source === "user-local");
+  };
+
+  // Use project-local for sandbox toggles (machine-specific)
+  const sandboxTarget: SettingsTarget = inProject ? "project-local" : "user-local";
 
   const handleToggleSandbox = (enabled: boolean) => {
     updateSetting(
       ["sandbox", "enabled"],
       enabled,
-      "local",
+      sandboxTarget,
       `${enabled ? "Enabled" : "Disabled"} sandbox`
     );
   };
@@ -72,77 +221,89 @@ export default function SandboxPage() {
     updateSetting(
       ["sandbox", "autoAllowBashIfSandboxed"],
       enabled,
-      "local",
+      sandboxTarget,
       `${enabled ? "Enabled" : "Disabled"} auto-allow bash in sandbox`
     );
   };
 
   const handleAddPath = () => {
     if (!newPath.trim()) return;
-    const updatedPaths = [...writePaths, newPath.trim()];
+    const settings = getSettingsForTarget(defaultTarget);
+    const currentPaths = settings?.sandbox?.filesystem?.write?.allowOnly || [];
+    const updatedPaths = [...currentPaths, newPath.trim()];
     updateSetting(
       ["sandbox", "filesystem", "write", "allowOnly"],
       updatedPaths,
-      "global",
+      defaultTarget,
       `Added write path: ${newPath}`
     );
     setNewPath("");
     setIsPathDialogOpen(false);
   };
 
-  const handleRemovePath = (path: string) => {
-    const updatedPaths = writePaths.filter((p) => p !== path);
+  const handleRemovePath = (item: SandboxItem) => {
+    const settings = getSettingsForTarget(item.source);
+    const currentPaths = settings?.sandbox?.filesystem?.write?.allowOnly || [];
+    const updatedPaths = currentPaths.filter((p) => p !== item.value);
     updateSetting(
       ["sandbox", "filesystem", "write", "allowOnly"],
       updatedPaths,
-      "global",
-      `Removed write path: ${path}`
+      item.source,
+      `Removed write path: ${item.value}`
     );
   };
 
   const handleAddHost = () => {
     if (!newHost.trim()) return;
-    const updatedHosts = [...allowedHosts, newHost.trim()];
+    const settings = getSettingsForTarget(defaultTarget);
+    const currentHosts = settings?.sandbox?.network?.allowedHosts || [];
+    const updatedHosts = [...currentHosts, newHost.trim()];
     updateSetting(
       ["sandbox", "network", "allowedHosts"],
       updatedHosts,
-      "global",
+      defaultTarget,
       `Added allowed host: ${newHost}`
     );
     setNewHost("");
     setIsHostDialogOpen(false);
   };
 
-  const handleRemoveHost = (host: string) => {
-    const updatedHosts = allowedHosts.filter((h) => h !== host);
+  const handleRemoveHost = (item: SandboxItem) => {
+    const settings = getSettingsForTarget(item.source);
+    const currentHosts = settings?.sandbox?.network?.allowedHosts || [];
+    const updatedHosts = currentHosts.filter((h) => h !== item.value);
     updateSetting(
       ["sandbox", "network", "allowedHosts"],
       updatedHosts,
-      "global",
-      `Removed allowed host: ${host}`
+      item.source,
+      `Removed allowed host: ${item.value}`
     );
   };
 
   const handleAddSocket = () => {
     if (!newSocket.trim()) return;
-    const updatedSockets = [...unixSockets, newSocket.trim()];
+    const settings = getSettingsForTarget(defaultTarget);
+    const currentSockets = settings?.sandbox?.network?.allowUnixSockets || [];
+    const updatedSockets = [...currentSockets, newSocket.trim()];
     updateSetting(
       ["sandbox", "network", "allowUnixSockets"],
       updatedSockets,
-      "global",
+      defaultTarget,
       `Added unix socket: ${newSocket}`
     );
     setNewSocket("");
     setIsSocketDialogOpen(false);
   };
 
-  const handleRemoveSocket = (socket: string) => {
-    const updatedSockets = unixSockets.filter((s) => s !== socket);
+  const handleRemoveSocket = (item: SandboxItem) => {
+    const settings = getSettingsForTarget(item.source);
+    const currentSockets = settings?.sandbox?.network?.allowUnixSockets || [];
+    const updatedSockets = currentSockets.filter((s) => s !== item.value);
     updateSetting(
       ["sandbox", "network", "allowUnixSockets"],
       updatedSockets,
-      "global",
-      `Removed unix socket: ${socket}`
+      item.source,
+      `Removed unix socket: ${item.value}`
     );
   };
 
@@ -168,7 +329,13 @@ export default function SandboxPage() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between rounded-lg border p-4">
             <div className="space-y-1">
-              <Label className="font-medium">Enable Sandbox</Label>
+              <div className="flex items-center gap-2">
+                <Label className="font-medium">Enable Sandbox</Label>
+                <ScopeBadge scope={sandboxSetting.source} />
+                {isInherited(sandboxSetting.source) && (
+                  <span className="text-xs text-muted-foreground">← inherited</span>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground">
                 Restrict commands to only allowed paths and hosts.
               </p>
@@ -192,7 +359,13 @@ export default function SandboxPage() {
 
           <div className="flex items-center justify-between rounded-lg border p-4">
             <div className="space-y-1">
-              <Label className="font-medium">Auto-allow bash if sandboxed</Label>
+              <div className="flex items-center gap-2">
+                <Label className="font-medium">Auto-allow bash if sandboxed</Label>
+                <ScopeBadge scope={autoAllowBashSetting.source} />
+                {isInherited(autoAllowBashSetting.source) && (
+                  <span className="text-xs text-muted-foreground">← inherited</span>
+                )}
+              </div>
               <p className="text-sm text-muted-foreground">
                 Automatically allow bash commands when sandbox is enabled.
               </p>
@@ -213,7 +386,7 @@ export default function SandboxPage() {
               Filesystem Write Access
             </CardTitle>
             <CardDescription>
-              Paths where Claude can write files.
+              Paths where Claude can write files. {inProject && "Shows paths from all sources."}
             </CardDescription>
           </div>
           <Dialog open={isPathDialogOpen} onOpenChange={setIsPathDialogOpen}>
@@ -264,16 +437,24 @@ export default function SandboxPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {writePaths.map((path, index) => (
+              {writePaths.map((item, index) => (
                 <div
-                  key={`${path}-${index}`}
-                  className="flex items-center justify-between p-3 rounded-lg border"
+                  key={`${item.source}-${item.value}-${index}`}
+                  className={`flex items-center justify-between p-3 rounded-lg border ${
+                    isInherited(item.source) ? "bg-muted/30" : ""
+                  }`}
                 >
-                  <code className="text-sm">{path}</code>
+                  <div className="flex items-center gap-3">
+                    <code className="text-sm">{item.value}</code>
+                    <ScopeBadge scope={item.source} />
+                    {isInherited(item.source) && (
+                      <span className="text-xs text-muted-foreground">← inherited</span>
+                    )}
+                  </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleRemovePath(path)}
+                    onClick={() => handleRemovePath(item)}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
@@ -292,7 +473,7 @@ export default function SandboxPage() {
               Network Allowed Hosts
             </CardTitle>
             <CardDescription>
-              Hosts that Claude can connect to.
+              Hosts that Claude can connect to. {inProject && "Shows hosts from all sources."}
             </CardDescription>
           </div>
           <Dialog open={isHostDialogOpen} onOpenChange={setIsHostDialogOpen}>
@@ -339,21 +520,29 @@ export default function SandboxPage() {
               No allowed hosts configured
             </div>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {allowedHosts.map((host, index) => (
-                <Badge
-                  key={`${host}-${index}`}
-                  variant="secondary"
-                  className="gap-2 py-1.5 px-3"
+            <div className="space-y-2">
+              {allowedHosts.map((item, index) => (
+                <div
+                  key={`${item.source}-${item.value}-${index}`}
+                  className={`flex items-center justify-between p-3 rounded-lg border ${
+                    isInherited(item.source) ? "bg-muted/30" : ""
+                  }`}
                 >
-                  {host}
-                  <button
-                    onClick={() => handleRemoveHost(host)}
-                    className="hover:text-destructive"
+                  <div className="flex items-center gap-3">
+                    <code className="text-sm">{item.value}</code>
+                    <ScopeBadge scope={item.source} />
+                    {isInherited(item.source) && (
+                      <span className="text-xs text-muted-foreground">← inherited</span>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleRemoveHost(item)}
                   >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </Badge>
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
+                </div>
               ))}
             </div>
           )}
@@ -363,9 +552,11 @@ export default function SandboxPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
-            <CardTitle>Unix Sockets</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              Unix Sockets
+            </CardTitle>
             <CardDescription>
-              Unix socket paths that Claude can access.
+              Unix socket paths that Claude can access. {inProject && "Shows sockets from all sources."}
             </CardDescription>
           </div>
           <Dialog open={isSocketDialogOpen} onOpenChange={setIsSocketDialogOpen}>
@@ -416,16 +607,24 @@ export default function SandboxPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {unixSockets.map((socket, index) => (
+              {unixSockets.map((item, index) => (
                 <div
-                  key={`${socket}-${index}`}
-                  className="flex items-center justify-between p-3 rounded-lg border"
+                  key={`${item.source}-${item.value}-${index}`}
+                  className={`flex items-center justify-between p-3 rounded-lg border ${
+                    isInherited(item.source) ? "bg-muted/30" : ""
+                  }`}
                 >
-                  <code className="text-sm">{socket}</code>
+                  <div className="flex items-center gap-3">
+                    <code className="text-sm">{item.value}</code>
+                    <ScopeBadge scope={item.source} />
+                    {isInherited(item.source) && (
+                      <span className="text-xs text-muted-foreground">← inherited</span>
+                    )}
+                  </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleRemoveSocket(socket)}
+                    onClick={() => handleRemoveSocket(item)}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>

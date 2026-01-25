@@ -140,13 +140,53 @@ export interface SaveSettingsResponse {
   errors?: Array<{ file: string; error: string }>;
 }
 
+// Settings target types - 3 sources for settings inheritance in project context
+// Note: user-local does NOT exist per Claude Code docs - only project-local has a .local.json scope
+export type SettingsTarget = "user" | "project" | "project-local";
+
 // Store types
 export interface PendingChange {
   id: string;
   path: string[];
   oldValue: unknown;
   newValue: unknown;
-  target: "global" | "local";
+  target: SettingsTarget;
   description: string;
   timestamp: Date;
+}
+
+// Multi-source response when viewing a project (includes inherited user settings)
+// Note: userLocal removed - user-local settings don't exist per Claude Code docs
+export interface MultiSourceSettingsResponse {
+  user: Settings;
+  project: Settings;
+  projectLocal: Settings;
+  plugins: InstalledPlugins | null;
+  stats: StatsCache | null;
+}
+
+// Settings Index types (for multi-project discovery)
+export interface SettingsLocation {
+  path: string; // e.g., "/Users/cam/dev/project/.claude"
+  projectName: string; // Derived from parent folder name
+  hasSettings: boolean; // settings.json exists
+  hasLocalSettings: boolean; // settings.local.json exists
+  lastModified: string; // Most recent file mtime (ISO timestamp)
+}
+
+export interface SettingsIndex {
+  lastIndexed: string; // ISO timestamp
+  locations: SettingsLocation[];
+}
+
+export interface IndexResponse {
+  index: SettingsIndex | null;
+  isFirstRun: boolean;
+}
+
+export interface ReindexResponse {
+  success: boolean;
+  index: SettingsIndex;
+  duration: number; // ms
+  error?: string;
 }

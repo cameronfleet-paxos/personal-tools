@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/accordion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ScopeBadge } from "@/components/ui/scope-badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,7 +31,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Plus, Trash2, Terminal, MessageSquare } from "lucide-react";
-import type { HookType, HookMatcher, Hook } from "@/types/settings";
+import type { HookType, HookMatcher, Hook, SettingsTarget, Settings } from "@/types/settings";
+
+interface HookItem {
+  matcher: HookMatcher;
+  source: SettingsTarget;
+  index: number; // index within source
+}
 
 const hookTypes: { id: HookType; name: string; description: string }[] = [
   {
@@ -61,7 +68,17 @@ const hookTypes: { id: HookType; name: string; description: string }[] = [
 ];
 
 export default function HooksPage() {
-  const { updateSetting, isLoading, effectiveGlobal } = useSettingsStore();
+  const {
+    updateSetting,
+    isLoading,
+    effectiveUser,
+    effectiveUserLocal,
+    effectiveProject,
+    effectiveProjectLocal,
+    isInProjectContext,
+  } = useSettingsStore();
+
+  const inProject = isInProjectContext();
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [selectedHookType, setSelectedHookType] = useState<HookType | null>(
@@ -83,10 +100,62 @@ export default function HooksPage() {
     );
   }
 
-  const hooks = effectiveGlobal?.hooks || {};
+  // Get settings object for a given target
+  const getSettingsForTarget = (target: SettingsTarget): Settings => {
+    switch (target) {
+      case "user":
+        return effectiveUser;
+      case "user-local":
+        return effectiveUserLocal;
+      case "project":
+        return effectiveProject;
+      case "project-local":
+        return effectiveProjectLocal;
+    }
+  };
 
-  const getHooksForType = (type: HookType): HookMatcher[] => {
-    return hooks[type] || [];
+  // Default target for new hooks
+  const defaultTarget: SettingsTarget = inProject ? "project" : "user";
+
+  // Check if inherited
+  const isInherited = (source: SettingsTarget): boolean => {
+    return inProject && (source === "user" || source === "user-local");
+  };
+
+  // Helper to get hooks from a specific source
+  const getHooksFromSource = (
+    settings: Settings | null,
+    source: SettingsTarget,
+    type: HookType
+  ): HookItem[] => {
+    const matchers = settings?.hooks?.[type] || [];
+    return matchers.map((matcher, index) => ({
+      matcher,
+      source,
+      index,
+    }));
+  };
+
+  // Collect hooks from all sources for a given type
+  const getAllHooksForType = (type: HookType): HookItem[] => {
+    if (inProject) {
+      return [
+        ...getHooksFromSource(effectiveUser, "user", type),
+        ...getHooksFromSource(effectiveUserLocal, "user-local", type),
+        ...getHooksFromSource(effectiveProject, "project", type),
+        ...getHooksFromSource(effectiveProjectLocal, "project-local", type),
+      ];
+    }
+    return [
+      ...getHooksFromSource(effectiveUser, "user", type),
+      ...getHooksFromSource(effectiveUserLocal, "user-local", type),
+    ];
+  };
+
+  // Legacy function for getting raw hooks (used in add/delete)
+  const getHooksForType = (type: HookType, target: SettingsTarget): HookMatcher[] => {
+    const settings = getSettingsForTarget(target);
+    return settings?.hooks?.[type] || [];
   };
 
   const openAddDialog = (hookType: HookType) => {
@@ -119,38 +188,39 @@ export default function HooksPage() {
       hooks: [hook],
     };
 
-    const currentHooks = getHooksForType(selectedHookType);
+    const currentHooks = getHooksForType(selectedHookType, defaultTarget);
     const updatedHooks = [...currentHooks, newMatcher_];
 
     updateSetting(
       ["hooks", selectedHookType],
       updatedHooks,
-      "global",
+      defaultTarget,
       `Added ${selectedHookType} hook`
     );
 
     setIsDialogOpen(false);
   };
 
-  const handleDeleteHook = (hookType: HookType, index: number) => {
-    const currentHooks = getHooksForType(hookType);
-    const updatedHooks = currentHooks.filter((_, i) => i !== index);
+  const handleDeleteHook = (hookType: HookType, item: HookItem) => {
+    const settings = getSettingsForTarget(item.source);
+    const currentHooks = settings?.hooks?.[hookType] || [];
+    const updatedHooks = currentHooks.filter((_, i) => i !== item.index);
 
     if (updatedHooks.length === 0) {
       // Remove the entire hook type if no hooks remain
-      const newHooks = { ...hooks };
+      const newHooks = { ...(settings?.hooks || {}) };
       delete newHooks[hookType];
       updateSetting(
         ["hooks"],
         Object.keys(newHooks).length > 0 ? newHooks : undefined,
-        "global",
+        item.source,
         `Removed all ${hookType} hooks`
       );
     } else {
       updateSetting(
         ["hooks", hookType],
         updatedHooks,
-        "global",
+        item.source,
         `Removed ${hookType} hook`
       );
     }
@@ -167,15 +237,18 @@ export default function HooksPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Lifecycle Hooks</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            Lifecycle Hooks
+          </CardTitle>
           <CardDescription>
             Hooks run at specific points during Claude Code sessions.
+            {inProject && " Shows hooks from all sources."}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Accordion type="multiple" className="w-full">
             {hookTypes.map((hookType) => {
-              const typeHooks = getHooksForType(hookType.id);
+              const typeHooks = getAllHooksForType(hookType.id);
               return (
                 <AccordionItem key={hookType.id} value={hookType.id}>
                   <AccordionTrigger className="hover:no-underline">
@@ -198,12 +271,14 @@ export default function HooksPage() {
                         </div>
                       ) : (
                         <div className="space-y-2">
-                          {typeHooks.map((matcher, index) => (
+                          {typeHooks.map((item, itemIndex) => (
                             <div
-                              key={index}
-                              className="border rounded-lg p-4 space-y-2"
+                              key={`${item.source}-${item.index}-${itemIndex}`}
+                              className={`border rounded-lg p-4 space-y-2 ${
+                                isInherited(item.source) ? "bg-muted/30" : ""
+                              }`}
                             >
-                              {matcher.hooks.map((hook, hookIndex) => (
+                              {item.matcher.hooks.map((hook, hookIndex) => (
                                 <div
                                   key={hookIndex}
                                   className="flex items-start justify-between"
@@ -218,15 +293,19 @@ export default function HooksPage() {
                                       <Badge variant="outline">
                                         {hook.type}
                                       </Badge>
+                                      <ScopeBadge scope={item.source} />
+                                      {isInherited(item.source) && (
+                                        <span className="text-xs text-muted-foreground">← inherited</span>
+                                      )}
                                     </div>
                                     <code className="text-sm block mt-1">
                                       {hook.type === "command"
                                         ? hook.command
                                         : hook.prompt}
                                     </code>
-                                    {matcher.matcher && (
+                                    {item.matcher.matcher && (
                                       <p className="text-xs text-muted-foreground">
-                                        Matcher: {matcher.matcher}
+                                        Matcher: {item.matcher.matcher}
                                       </p>
                                     )}
                                     {hook.type === "command" && hook.timeout && (
@@ -239,7 +318,7 @@ export default function HooksPage() {
                                     variant="ghost"
                                     size="sm"
                                     onClick={() =>
-                                      handleDeleteHook(hookType.id, index)
+                                      handleDeleteHook(hookType.id, item)
                                     }
                                   >
                                     <Trash2 className="h-4 w-4 text-destructive" />

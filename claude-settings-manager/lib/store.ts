@@ -6,6 +6,9 @@ import type {
   InstalledPlugins,
   StatsCache,
   PendingChange,
+  SettingsIndex,
+  SettingsTarget,
+  MultiSourceSettingsResponse,
 } from "@/types/settings";
 
 function generateId(): string {
@@ -48,11 +51,11 @@ function setValueAtPath(
 function computeEffectiveSettings(
   base: Settings | null,
   pendingChanges: PendingChange[],
-  target: "global" | "local"
+  targets: SettingsTarget[]
 ): Settings {
   let result = { ...base } as Record<string, unknown>;
   for (const change of pendingChanges) {
-    if (change.target === target) {
+    if (targets.includes(change.target)) {
       result = setValueAtPath(result, change.path, change.newValue);
     }
   }
@@ -60,13 +63,30 @@ function computeEffectiveSettings(
 }
 
 interface SettingsStore {
-  // Data
+  // Multi-source settings data (3 sources when in project context)
+  // Note: userLocalSettings removed - user-local doesn't exist per Claude Code docs
+  userSettings: Settings | null;
+  projectSettings: Settings | null;
+  projectLocalSettings: Settings | null;
+
+  // Legacy aliases for backward compatibility (point to user or project depending on context)
   globalSettings: Settings | null;
   localSettings: Settings | null;
+
   plugins: InstalledPlugins | null;
   stats: StatsCache | null;
 
+  // Settings Index (multi-project discovery)
+  settingsIndex: SettingsIndex | null;
+  selectedProjectPath: string | null; // null = user settings mode
+
   // Computed effective settings (with pending changes applied)
+  // Note: effectiveUserLocal removed - user-local doesn't exist per Claude Code docs
+  effectiveUser: Settings;
+  effectiveProject: Settings;
+  effectiveProjectLocal: Settings;
+
+  // Legacy aliases for backward compatibility
   effectiveGlobal: Settings;
   effectiveLocal: Settings;
 
@@ -76,51 +96,124 @@ interface SettingsStore {
   // UI State
   isLoading: boolean;
   isSaving: boolean;
+  isIndexing: boolean;
   error: string | null;
+
+  // Computed helpers
+  getGlobalScopeLabel: () => "user" | "project";
+  isInProjectContext: () => boolean;
 
   // Actions
   loadSettings: () => Promise<void>;
   updateSetting: (
     path: string[],
     value: unknown,
-    target: "global" | "local",
+    target: SettingsTarget,
     description: string
   ) => void;
   discardChange: (changeId: string) => void;
   discardAllChanges: () => void;
   saveChanges: () => Promise<void>;
+  loadIndex: () => Promise<void>;
+  reindex: () => Promise<void>;
+  selectProject: (path: string | null) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
+  // Multi-source settings (userLocalSettings removed - doesn't exist per Claude Code docs)
+  userSettings: null,
+  projectSettings: null,
+  projectLocalSettings: null,
+
+  // Legacy aliases (computed based on context)
   globalSettings: null,
   localSettings: null,
+
   plugins: null,
   stats: null,
+  settingsIndex: null,
+  selectedProjectPath: null,
+
+  // Effective settings (with pending changes) - effectiveUserLocal removed
+  effectiveUser: {},
+  effectiveProject: {},
+  effectiveProjectLocal: {},
+
+  // Legacy aliases
   effectiveGlobal: {},
   effectiveLocal: {},
+
   pendingChanges: [],
   isLoading: false,
   isSaving: false,
+  isIndexing: false,
   error: null,
 
+  // Returns "user" when viewing ~/.claude, "project" when viewing a project
+  getGlobalScopeLabel: () => {
+    return get().selectedProjectPath ? "project" : "user";
+  },
+
+  // Returns true when a project is selected
+  isInProjectContext: () => {
+    return get().selectedProjectPath !== null;
+  },
+
   loadSettings: async () => {
+    const state = get();
     set({ isLoading: true, error: null });
     try {
-      const response = await fetch("/api/settings");
+      const url = state.selectedProjectPath
+        ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
+        : "/api/settings";
+      const response = await fetch(url);
       if (!response.ok) {
         throw new Error("Failed to load settings");
       }
       const data = await response.json();
-      set({
-        globalSettings: data.global,
-        localSettings: data.local,
-        plugins: data.plugins,
-        stats: data.stats,
-        effectiveGlobal: data.global || {},
-        effectiveLocal: data.local || {},
-        isLoading: false,
-        pendingChanges: [],
-      });
+
+      if (state.selectedProjectPath) {
+        // Multi-source response (project context) - userLocal removed
+        const multiData = data as MultiSourceSettingsResponse;
+        set({
+          userSettings: multiData.user,
+          projectSettings: multiData.project,
+          projectLocalSettings: multiData.projectLocal,
+          // Legacy aliases point to project settings in project context
+          globalSettings: multiData.project,
+          localSettings: multiData.projectLocal,
+          plugins: multiData.plugins,
+          stats: multiData.stats,
+          effectiveUser: multiData.user || {},
+          effectiveProject: multiData.project || {},
+          effectiveProjectLocal: multiData.projectLocal || {},
+          // Legacy aliases
+          effectiveGlobal: multiData.project || {},
+          effectiveLocal: multiData.projectLocal || {},
+          isLoading: false,
+          pendingChanges: [],
+        });
+      } else {
+        // Legacy response (user settings only) - userLocal removed
+        set({
+          userSettings: data.global,
+          projectSettings: null,
+          projectLocalSettings: null,
+          // Legacy aliases point to user settings when no project
+          globalSettings: data.global,
+          localSettings: null,
+          plugins: data.plugins,
+          stats: data.stats,
+          effectiveUser: data.global || {},
+          effectiveProject: {},
+          effectiveProjectLocal: {},
+          // Legacy aliases
+          effectiveGlobal: data.global || {},
+          effectiveLocal: {},
+          isLoading: false,
+          pendingChanges: [],
+        });
+      }
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Unknown error",
@@ -131,8 +224,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   updateSetting: (path, value, target, description) => {
     const state = get();
-    const settings =
-      target === "global" ? state.globalSettings : state.localSettings;
+
+    // Get the base settings for the target (user-local removed - doesn't exist)
+    const getBaseSettings = (t: SettingsTarget): Settings | null => {
+      switch (t) {
+        case "user":
+          return state.userSettings;
+        case "project":
+          return state.projectSettings;
+        case "project-local":
+          return state.projectLocalSettings;
+      }
+    };
+
+    const settings = getBaseSettings(target);
     const oldValue = getValueAtPath(settings, path);
 
     // Don't add change if value is the same
@@ -176,19 +281,31 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       newPendingChanges = [...state.pendingChanges, newChange];
     }
 
-    // Recompute effective settings
+    // Recompute all effective settings (userLocal removed)
     set({
       pendingChanges: newPendingChanges,
-      effectiveGlobal: computeEffectiveSettings(
-        state.globalSettings,
+      effectiveUser: computeEffectiveSettings(
+        state.userSettings,
         newPendingChanges,
-        "global"
+        ["user"]
       ),
-      effectiveLocal: computeEffectiveSettings(
-        state.localSettings,
+      effectiveProject: computeEffectiveSettings(
+        state.projectSettings,
         newPendingChanges,
-        "local"
+        ["project"]
       ),
+      effectiveProjectLocal: computeEffectiveSettings(
+        state.projectLocalSettings,
+        newPendingChanges,
+        ["project-local"]
+      ),
+      // Legacy aliases
+      effectiveGlobal: state.selectedProjectPath
+        ? computeEffectiveSettings(state.projectSettings, newPendingChanges, ["project"])
+        : computeEffectiveSettings(state.userSettings, newPendingChanges, ["user"]),
+      effectiveLocal: state.selectedProjectPath
+        ? computeEffectiveSettings(state.projectLocalSettings, newPendingChanges, ["project-local"])
+        : {},
     });
   },
 
@@ -199,16 +316,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     );
     set({
       pendingChanges: newPendingChanges,
-      effectiveGlobal: computeEffectiveSettings(
-        state.globalSettings,
+      effectiveUser: computeEffectiveSettings(
+        state.userSettings,
         newPendingChanges,
-        "global"
+        ["user"]
       ),
-      effectiveLocal: computeEffectiveSettings(
-        state.localSettings,
+      effectiveProject: computeEffectiveSettings(
+        state.projectSettings,
         newPendingChanges,
-        "local"
+        ["project"]
       ),
+      effectiveProjectLocal: computeEffectiveSettings(
+        state.projectLocalSettings,
+        newPendingChanges,
+        ["project-local"]
+      ),
+      // Legacy aliases
+      effectiveGlobal: state.selectedProjectPath
+        ? computeEffectiveSettings(state.projectSettings, newPendingChanges, ["project"])
+        : computeEffectiveSettings(state.userSettings, newPendingChanges, ["user"]),
+      effectiveLocal: state.selectedProjectPath
+        ? computeEffectiveSettings(state.projectLocalSettings, newPendingChanges, ["project-local"])
+        : {},
     });
   },
 
@@ -216,8 +345,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const state = get();
     set({
       pendingChanges: [],
-      effectiveGlobal: state.globalSettings || {},
-      effectiveLocal: state.localSettings || {},
+      effectiveUser: state.userSettings || {},
+      effectiveProject: state.projectSettings || {},
+      effectiveProjectLocal: state.projectLocalSettings || {},
+      // Legacy aliases
+      effectiveGlobal: state.selectedProjectPath
+        ? (state.projectSettings || {})
+        : (state.userSettings || {}),
+      effectiveLocal: state.selectedProjectPath
+        ? (state.projectLocalSettings || {})
+        : {},
     });
   },
 
@@ -228,19 +365,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ isSaving: true, error: null });
 
     try {
-      const hasGlobalChanges = state.pendingChanges.some(
-        (c) => c.target === "global"
+      const hasUserChanges = state.pendingChanges.some(
+        (c) => c.target === "user"
       );
-      const hasLocalChanges = state.pendingChanges.some(
-        (c) => c.target === "local"
+      const hasUserLocalChanges = state.pendingChanges.some(
+        (c) => c.target === "user-local"
+      );
+      const hasProjectChanges = state.pendingChanges.some(
+        (c) => c.target === "project"
+      );
+      const hasProjectLocalChanges = state.pendingChanges.some(
+        (c) => c.target === "project-local"
       );
 
       const response = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          global: hasGlobalChanges ? state.effectiveGlobal : undefined,
-          local: hasLocalChanges ? state.effectiveLocal : undefined,
+          user: hasUserChanges ? state.effectiveUser : undefined,
+          userLocal: hasUserLocalChanges ? state.effectiveUserLocal : undefined,
+          project: hasProjectChanges ? state.effectiveProject : undefined,
+          projectLocal: hasProjectLocalChanges ? state.effectiveProjectLocal : undefined,
+          path: state.selectedProjectPath || undefined,
         }),
       });
 
@@ -255,12 +401,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
       // Update base settings to match effective and clear pending changes
       set({
-        globalSettings: hasGlobalChanges
-          ? state.effectiveGlobal
-          : state.globalSettings,
-        localSettings: hasLocalChanges
-          ? state.effectiveLocal
-          : state.localSettings,
+        userSettings: hasUserChanges ? state.effectiveUser : state.userSettings,
+        userLocalSettings: hasUserLocalChanges ? state.effectiveUserLocal : state.userLocalSettings,
+        projectSettings: hasProjectChanges ? state.effectiveProject : state.projectSettings,
+        projectLocalSettings: hasProjectLocalChanges ? state.effectiveProjectLocal : state.projectLocalSettings,
+        // Update legacy aliases
+        globalSettings: state.selectedProjectPath
+          ? (hasProjectChanges ? state.effectiveProject : state.projectSettings)
+          : (hasUserChanges ? state.effectiveUser : state.userSettings),
+        localSettings: state.selectedProjectPath
+          ? (hasProjectLocalChanges ? state.effectiveProjectLocal : state.projectLocalSettings)
+          : (hasUserLocalChanges ? state.effectiveUserLocal : state.userLocalSettings),
         pendingChanges: [],
         isSaving: false,
       });
@@ -270,5 +421,46 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         isSaving: false,
       });
     }
+  },
+
+  loadIndex: async () => {
+    set({ isIndexing: true });
+    try {
+      const response = await fetch("/api/index");
+      if (!response.ok) {
+        throw new Error("Failed to load index");
+      }
+      const data = await response.json();
+      set({ settingsIndex: data.index, isIndexing: false });
+    } catch (err) {
+      console.error("Error loading index:", err);
+      set({ isIndexing: false });
+    }
+  },
+
+  reindex: async () => {
+    set({ isIndexing: true, error: null });
+    try {
+      const response = await fetch("/api/index", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Failed to reindex");
+      }
+      const data = await response.json();
+      if (data.success) {
+        set({ settingsIndex: data.index, isIndexing: false });
+      } else {
+        throw new Error(data.error || "Reindex failed");
+      }
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Reindex failed",
+        isIndexing: false,
+      });
+    }
+  },
+
+  selectProject: async (path) => {
+    set({ selectedProjectPath: path, pendingChanges: [] });
+    await get().loadSettings();
   },
 }));

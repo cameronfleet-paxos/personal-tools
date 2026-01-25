@@ -6,6 +6,9 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { ScopeBadge, getScopeDescription } from "@/components/ui/scope-badge";
+import type { Scope } from "@/components/ui/scope-badge";
+import type { SettingsTarget } from "@/types/settings";
 import { Brain, Zap, Sparkles, Lightbulb } from "lucide-react";
 
 const models = [
@@ -33,10 +36,65 @@ const models = [
 ];
 
 export default function ModelPage() {
-  const { updateSetting, isLoading, effectiveGlobal } = useSettingsStore();
+  const {
+    updateSetting,
+    isLoading,
+    effectiveUser,
+    effectiveUserLocal,
+    effectiveProject,
+    effectiveProjectLocal,
+    isInProjectContext,
+  } = useSettingsStore();
 
-  const currentModel = effectiveGlobal?.model || "sonnet";
-  const thinkingEnabled = effectiveGlobal?.alwaysThinkingEnabled ?? false;
+  const inProject = isInProjectContext();
+
+  // Determine effective model value and which source it comes from
+  // Priority: project-local > project > user-local > user
+  const getEffectiveModelSetting = (): { value: string | undefined; source: SettingsTarget } => {
+    if (inProject) {
+      if (effectiveProjectLocal?.model) return { value: effectiveProjectLocal.model, source: "project-local" };
+      if (effectiveProject?.model) return { value: effectiveProject.model, source: "project" };
+      if (effectiveUserLocal?.model) return { value: effectiveUserLocal.model, source: "user-local" };
+      if (effectiveUser?.model) return { value: effectiveUser.model, source: "user" };
+    } else {
+      if (effectiveUserLocal?.model) return { value: effectiveUserLocal.model, source: "user-local" };
+      if (effectiveUser?.model) return { value: effectiveUser.model, source: "user" };
+    }
+    return { value: undefined, source: "user" };
+  };
+
+  const getEffectiveThinkingSetting = (): { value: boolean; source: SettingsTarget } => {
+    if (inProject) {
+      if (effectiveProjectLocal?.alwaysThinkingEnabled !== undefined)
+        return { value: effectiveProjectLocal.alwaysThinkingEnabled, source: "project-local" };
+      if (effectiveProject?.alwaysThinkingEnabled !== undefined)
+        return { value: effectiveProject.alwaysThinkingEnabled, source: "project" };
+      if (effectiveUserLocal?.alwaysThinkingEnabled !== undefined)
+        return { value: effectiveUserLocal.alwaysThinkingEnabled, source: "user-local" };
+      if (effectiveUser?.alwaysThinkingEnabled !== undefined)
+        return { value: effectiveUser.alwaysThinkingEnabled, source: "user" };
+    } else {
+      if (effectiveUserLocal?.alwaysThinkingEnabled !== undefined)
+        return { value: effectiveUserLocal.alwaysThinkingEnabled, source: "user-local" };
+      if (effectiveUser?.alwaysThinkingEnabled !== undefined)
+        return { value: effectiveUser.alwaysThinkingEnabled, source: "user" };
+    }
+    return { value: false, source: "user" };
+  };
+
+  const modelSetting = getEffectiveModelSetting();
+  const thinkingSetting = getEffectiveThinkingSetting();
+
+  const currentModel = modelSetting.value || "sonnet";
+  const thinkingEnabled = thinkingSetting.value;
+
+  // Determine which target to use when making changes
+  const defaultTarget: SettingsTarget = inProject ? "project" : "user";
+
+  // Check if value is inherited from user settings while in project context
+  const isInherited = (source: SettingsTarget): boolean => {
+    return inProject && (source === "user" || source === "user-local");
+  };
 
   if (isLoading) {
     return (
@@ -57,16 +115,27 @@ export default function ModelPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Default Model</CardTitle>
+          <CardTitle className="flex items-center gap-2">
+            Default Model
+            <ScopeBadge scope={modelSetting.source} />
+            {isInherited(modelSetting.source) && (
+              <span className="text-xs font-normal text-muted-foreground">← inherited</span>
+            )}
+          </CardTitle>
           <CardDescription>
             Select which Claude model to use by default for your sessions.
+            {isInherited(modelSetting.source) && inProject && (
+              <span className="block mt-1 text-xs">
+                This value is inherited from user settings. Changes will override in project settings.
+              </span>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <RadioGroup
             value={currentModel}
             onValueChange={(value) =>
-              updateSetting(["model"], value, "global", `Changed model to ${value}`)
+              updateSetting(["model"], value, defaultTarget, `Changed model to ${value}`)
             }
             className="space-y-3"
           >
@@ -103,9 +172,18 @@ export default function ModelPage() {
           <CardTitle className="flex items-center gap-2">
             <Lightbulb className="h-5 w-5" />
             Extended Thinking
+            <ScopeBadge scope={thinkingSetting.source} />
+            {isInherited(thinkingSetting.source) && (
+              <span className="text-xs font-normal text-muted-foreground">← inherited</span>
+            )}
           </CardTitle>
           <CardDescription>
             Enable Claude to reason through complex problems step by step before responding.
+            {isInherited(thinkingSetting.source) && inProject && (
+              <span className="block mt-1 text-xs">
+                This value is inherited from user settings. Changes will override in project settings.
+              </span>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -125,7 +203,7 @@ export default function ModelPage() {
                 updateSetting(
                   ["alwaysThinkingEnabled"],
                   checked,
-                  "global",
+                  defaultTarget,
                   `${checked ? "Enabled" : "Disabled"} extended thinking`
                 )
               }

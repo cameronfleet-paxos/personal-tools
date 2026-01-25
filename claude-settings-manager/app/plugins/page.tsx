@@ -12,10 +12,13 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Puzzle, Info, Calendar, FolderOpen } from "lucide-react";
+import type { SettingsTarget } from "@/types/settings";
 
 export default function PluginsPage() {
-  const { plugins, updateSetting, isLoading, effectiveGlobal } =
+  const { plugins, updateSetting, isLoading, effectiveUser, isInProjectContext } =
     useSettingsStore();
+
+  const inProject = isInProjectContext();
 
   if (isLoading) {
     return (
@@ -26,14 +29,18 @@ export default function PluginsPage() {
   }
 
   const installedPlugins = plugins?.plugins || {};
-  const enabledPlugins = effectiveGlobal?.enabledPlugins || {};
+  // Plugins are stored at user level
+  const enabledPlugins = effectiveUser?.enabledPlugins || {};
+
+  // Default target for plugin changes (always user level since plugins are user-scoped)
+  const defaultTarget: SettingsTarget = "user";
 
   const handleTogglePlugin = (pluginId: string, enabled: boolean) => {
     const newEnabledPlugins = { ...enabledPlugins, [pluginId]: enabled };
     updateSetting(
       ["enabledPlugins"],
       newEnabledPlugins,
-      "global",
+      defaultTarget,
       `${enabled ? "Enabled" : "Disabled"} plugin: ${pluginId.split("@")[0]}`
     );
   };

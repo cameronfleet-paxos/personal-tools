@@ -22,9 +22,27 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Plus, Trash2, Terminal, Wrench } from "lucide-react";
+import { ScopeBadge } from "@/components/ui/scope-badge";
+import type { SettingsTarget, Settings } from "@/types/settings";
+
+interface PatternItem {
+  pattern: string;
+  source: SettingsTarget;
+}
 
 export default function AdvancedPage() {
-  const { updateSetting, isLoading, effectiveGlobal } = useSettingsStore();
+  const {
+    updateSetting,
+    isLoading,
+    effectiveUser,
+    effectiveUserLocal,
+    effectiveProject,
+    effectiveProjectLocal,
+    selectedProjectPath,
+    isInProjectContext,
+  } = useSettingsStore();
+
+  const inProject = isInProjectContext();
 
   const [newPattern, setNewPattern] = useState("");
   const [isPatternDialogOpen, setIsPatternDialogOpen] = useState(false);
@@ -37,28 +55,81 @@ export default function AdvancedPage() {
     );
   }
 
-  const bashPatterns = effectiveGlobal?.allowedBashPatterns || [];
+  // Get settings object for a given target
+  const getSettingsForTarget = (target: SettingsTarget): Settings => {
+    switch (target) {
+      case "user":
+        return effectiveUser;
+      case "user-local":
+        return effectiveUserLocal;
+      case "project":
+        return effectiveProject;
+      case "project-local":
+        return effectiveProjectLocal;
+    }
+  };
+
+  // Default target for new patterns
+  const defaultTarget: SettingsTarget = inProject ? "project" : "user";
+
+  // Check if inherited
+  const isInherited = (source: SettingsTarget): boolean => {
+    return inProject && (source === "user" || source === "user-local");
+  };
+
+  // Helper to get patterns from a specific source
+  const getPatternsFromSource = (
+    settings: Settings | null,
+    source: SettingsTarget
+  ): PatternItem[] => {
+    return (settings?.allowedBashPatterns || []).map((pattern) => ({
+      pattern,
+      source,
+    }));
+  };
+
+  // Collect patterns from all sources
+  const getAllPatterns = (): PatternItem[] => {
+    if (inProject) {
+      return [
+        ...getPatternsFromSource(effectiveUser, "user"),
+        ...getPatternsFromSource(effectiveUserLocal, "user-local"),
+        ...getPatternsFromSource(effectiveProject, "project"),
+        ...getPatternsFromSource(effectiveProjectLocal, "project-local"),
+      ];
+    }
+    return [
+      ...getPatternsFromSource(effectiveUser, "user"),
+      ...getPatternsFromSource(effectiveUserLocal, "user-local"),
+    ];
+  };
+
+  const bashPatterns = getAllPatterns();
 
   const handleAddPattern = () => {
     if (!newPattern.trim()) return;
-    const updatedPatterns = [...bashPatterns, newPattern.trim()];
+    const settings = getSettingsForTarget(defaultTarget);
+    const currentPatterns = settings?.allowedBashPatterns || [];
+    const updatedPatterns = [...currentPatterns, newPattern.trim()];
     updateSetting(
       ["allowedBashPatterns"],
       updatedPatterns,
-      "global",
+      defaultTarget,
       `Added bash pattern: ${newPattern}`
     );
     setNewPattern("");
     setIsPatternDialogOpen(false);
   };
 
-  const handleRemovePattern = (pattern: string) => {
-    const updatedPatterns = bashPatterns.filter((p) => p !== pattern);
+  const handleRemovePattern = (item: PatternItem) => {
+    const settings = getSettingsForTarget(item.source);
+    const currentPatterns = settings?.allowedBashPatterns || [];
+    const updatedPatterns = currentPatterns.filter((p) => p !== item.pattern);
     updateSetting(
       ["allowedBashPatterns"],
       updatedPatterns.length > 0 ? updatedPatterns : undefined,
-      "global",
-      `Removed bash pattern: ${pattern}`
+      item.source,
+      `Removed bash pattern: ${item.pattern}`
     );
   };
 
@@ -138,16 +209,24 @@ export default function AdvancedPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {bashPatterns.map((pattern, index) => (
+              {bashPatterns.map((item, index) => (
                 <div
-                  key={`${pattern}-${index}`}
-                  className="flex items-center justify-between p-3 rounded-lg border"
+                  key={`${item.source}-${item.pattern}-${index}`}
+                  className={`flex items-center justify-between p-3 rounded-lg border ${
+                    isInherited(item.source) ? "bg-muted/30" : ""
+                  }`}
                 >
-                  <code className="text-sm">{pattern}</code>
+                  <div className="flex items-center gap-3">
+                    <code className="text-sm">{item.pattern}</code>
+                    <ScopeBadge scope={item.source} />
+                    {isInherited(item.source) && (
+                      <span className="text-xs text-muted-foreground">← inherited</span>
+                    )}
+                  </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={() => handleRemovePattern(pattern)}
+                    onClick={() => handleRemovePattern(item)}
                   >
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
@@ -171,17 +250,33 @@ export default function AdvancedPage() {
         <CardContent>
           <div className="space-y-3">
             <div className="p-3 rounded-lg border">
-              <div className="text-sm font-medium">Global Settings</div>
+              <div className="text-sm font-medium">User Settings</div>
               <code className="text-xs text-muted-foreground">
                 ~/.claude/settings.json
               </code>
             </div>
             <div className="p-3 rounded-lg border">
-              <div className="text-sm font-medium">Local Settings</div>
+              <div className="text-sm font-medium">User Local Settings</div>
               <code className="text-xs text-muted-foreground">
                 ~/.claude/settings.local.json
               </code>
             </div>
+            {selectedProjectPath && (
+              <>
+                <div className="p-3 rounded-lg border border-purple-500/20 bg-purple-500/5">
+                  <div className="text-sm font-medium">Project Settings</div>
+                  <code className="text-xs text-muted-foreground">
+                    {selectedProjectPath}/settings.json
+                  </code>
+                </div>
+                <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/5">
+                  <div className="text-sm font-medium">Project Local Settings</div>
+                  <code className="text-xs text-muted-foreground">
+                    {selectedProjectPath}/settings.local.json
+                  </code>
+                </div>
+              </>
+            )}
             <div className="p-3 rounded-lg border">
               <div className="text-sm font-medium">Installed Plugins</div>
               <code className="text-xs text-muted-foreground">

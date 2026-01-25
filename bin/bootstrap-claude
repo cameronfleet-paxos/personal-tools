@@ -1,9 +1,10 @@
 #!/bin/bash
-# bootstrap-claude: Set up 4 iTerm2 panes with named/colored Claude agents
+# bootstrap-claude: Set up 6 iTerm2 panes with named/colored Claude agents
 #
-# Layout:
-#   Window 1: white (~/dev) | badge (~/dev/pax)
+# Layout (distinct muted backgrounds):
+#   Window 1: gray (~/dev) | brown (~/dev/pax)
 #   Window 2: blue (~/dev/pax-agent1) | red (~/dev/pax-worktrees)
+#   Window 3: green (~/dev/cameron-musings) | purple (~/dev/personal-tools)
 
 osascript <<'APPLESCRIPT'
 tell application "iTerm2"
@@ -13,21 +14,24 @@ tell application "iTerm2"
     set win1 to (create window with default profile)
     tell win1
         tell current session of current tab
-            -- Configure white agent
-            set name to "white"
-            set variable named "user.badge" to "WHITE"
-            set background color to {13107, 13107, 13107}
-            write text "cd ~/dev && clear && claude --dangerously-skip-permissions"
+            -- Configure gray agent
+            set name to "gray"
+            set variable named "user.badge" to "GRAY"
+            set background color to {8738, 8738, 8738}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev && clear && claude"
 
             -- Create vertical split for badge agent
             set badgeSession to (split vertically with default profile)
         end tell
 
         tell badgeSession
-            set name to "badge"
-            set variable named "user.badge" to "BADGE"
-            set background color to {16384, 14745, 6553}
-            write text "cd ~/dev/pax && clear && claude --dangerously-skip-permissions"
+            -- Configure brown agent
+            set name to "brown"
+            set variable named "user.badge" to "BROWN"
+            set background color to {10794, 7710, 5140}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/pax && clear && claude"
         end tell
     end tell
 
@@ -38,22 +42,50 @@ tell application "iTerm2"
             -- Configure blue agent
             set name to "blue"
             set variable named "user.badge" to "BLUE"
-            set background color to {6553, 9830, 19660}
-            write text "cd ~/dev/pax-agent1 && clear && claude --dangerously-skip-permissions"
+            set background color to {3855, 5140, 12850}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/pax-agent1 && clear && claude"
 
             -- Create vertical split for red agent
             set redSession to (split vertically with default profile)
         end tell
 
         tell redSession
+            -- Configure red agent
             set name to "red"
             set variable named "user.badge" to "RED"
-            set background color to {19660, 6553, 6553}
-            write text "cd ~/dev/pax-worktrees && clear && claude --dangerously-skip-permissions"
+            set background color to {12850, 3855, 3855}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/pax-worktrees && clear && claude"
+        end tell
+    end tell
+
+    -- Create Window 3 with vertical split (green | purple)
+    set win3 to (create window with default profile)
+    tell win3
+        tell current session of current tab
+            -- Configure green agent
+            set name to "green"
+            set variable named "user.badge" to "GREEN"
+            set background color to {3855, 10280, 5140}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/cameron-musings && clear && claude"
+
+            -- Create vertical split for purple agent
+            set purpleSession to (split vertically with default profile)
+        end tell
+
+        tell purpleSession
+            -- Configure purple agent
+            set name to "purple"
+            set variable named "user.badge" to "PURPLE"
+            set background color to {10280, 3855, 12850}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/personal-tools && clear && claude"
         end tell
     end tell
 
 end tell
 APPLESCRIPT
 
-echo "✓ Launched 4 Claude agent panes across 2 windows"
+echo "✓ Launched 6 Claude agent panes across 3 windows"
