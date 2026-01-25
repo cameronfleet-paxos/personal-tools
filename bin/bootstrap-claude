@@ -1,0 +1,59 @@
+#!/bin/bash
+# bootstrap-claude: Set up 4 iTerm2 panes with named/colored Claude agents
+#
+# Layout:
+#   Window 1: white (~/dev) | badge (~/dev/pax)
+#   Window 2: blue (~/dev/pax-agent1) | red (~/dev/pax-worktrees)
+
+osascript <<'APPLESCRIPT'
+tell application "iTerm2"
+    activate
+
+    -- Create Window 1 with vertical split (white | badge)
+    set win1 to (create window with default profile)
+    tell win1
+        tell current session of current tab
+            -- Configure white agent
+            set name to "white"
+            set variable named "user.badge" to "WHITE"
+            set background color to {26214, 26214, 26214}
+            write text "cd ~/dev && clear"
+
+            -- Create vertical split for badge agent
+            set badgeSession to (split vertically with default profile)
+        end tell
+
+        tell badgeSession
+            set name to "badge"
+            set variable named "user.badge" to "BADGE"
+            set background color to {32767, 29490, 13107}
+            write text "cd ~/dev/pax && clear"
+        end tell
+    end tell
+
+    -- Create Window 2 with vertical split (blue | red)
+    set win2 to (create window with default profile)
+    tell win2
+        tell current session of current tab
+            -- Configure blue agent
+            set name to "blue"
+            set variable named "user.badge" to "BLUE"
+            set background color to {13107, 19660, 32767}
+            write text "cd ~/dev/pax-agent1 && clear"
+
+            -- Create vertical split for red agent
+            set redSession to (split vertically with default profile)
+        end tell
+
+        tell redSession
+            set name to "red"
+            set variable named "user.badge" to "RED"
+            set background color to {32767, 16383, 16383}
+            write text "cd ~/dev/pax-worktrees && clear"
+        end tell
+    end tell
+
+end tell
+APPLESCRIPT
+
+echo "✓ Launched 4 Claude agent panes across 2 windows"
