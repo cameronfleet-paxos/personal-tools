@@ -35,7 +35,6 @@ export default function AdvancedPage() {
     updateSetting,
     isLoading,
     effectiveUser,
-    effectiveUserLocal,
     effectiveProject,
     effectiveProjectLocal,
     selectedProjectPath,
@@ -55,13 +54,11 @@ export default function AdvancedPage() {
     );
   }
 
-  // Get settings object for a given target
+  // Get settings object for a given target (user-local removed)
   const getSettingsForTarget = (target: SettingsTarget): Settings => {
     switch (target) {
       case "user":
         return effectiveUser;
-      case "user-local":
-        return effectiveUserLocal;
       case "project":
         return effectiveProject;
       case "project-local":
@@ -74,7 +71,7 @@ export default function AdvancedPage() {
 
   // Check if inherited
   const isInherited = (source: SettingsTarget): boolean => {
-    return inProject && (source === "user" || source === "user-local");
+    return inProject && source === "user";
   };
 
   // Helper to get patterns from a specific source
@@ -88,19 +85,17 @@ export default function AdvancedPage() {
     }));
   };
 
-  // Collect patterns from all sources
+  // Collect patterns from all sources (user-local removed)
   const getAllPatterns = (): PatternItem[] => {
     if (inProject) {
       return [
         ...getPatternsFromSource(effectiveUser, "user"),
-        ...getPatternsFromSource(effectiveUserLocal, "user-local"),
         ...getPatternsFromSource(effectiveProject, "project"),
         ...getPatternsFromSource(effectiveProjectLocal, "project-local"),
       ];
     }
     return [
       ...getPatternsFromSource(effectiveUser, "user"),
-      ...getPatternsFromSource(effectiveUserLocal, "user-local"),
     ];
   };
 
@@ -253,12 +248,6 @@ export default function AdvancedPage() {
               <div className="text-sm font-medium">User Settings</div>
               <code className="text-xs text-muted-foreground">
                 ~/.claude/settings.json
-              </code>
-            </div>
-            <div className="p-3 rounded-lg border">
-              <div className="text-sm font-medium">User Local Settings</div>
-              <code className="text-xs text-muted-foreground">
-                ~/.claude/settings.local.json
               </code>
             </div>
             {selectedProjectPath && (

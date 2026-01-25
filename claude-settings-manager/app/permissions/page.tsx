@@ -78,11 +78,9 @@ export default function PermissionsPage() {
     updateSetting,
     isLoading,
     effectiveUser,
-    effectiveUserLocal,
     effectiveProject,
     effectiveProjectLocal,
     effectiveGlobal,
-    effectiveLocal,
     isInProjectContext,
   } = useSettingsStore();
 
@@ -117,21 +115,20 @@ export default function PermissionsPage() {
     }));
   };
 
-  // Combine rules from all sources (4 sources in project context, 2 otherwise)
+  // Combine rules from all sources (3 sources in project context, 1 otherwise)
+  // Note: user-local removed - doesn't exist per Claude Code docs
   const getAllRules = (type: RuleType): ParsedRule[] => {
     if (inProject) {
-      // In project context, show all 4 sources
+      // In project context, show all 3 sources
       return [
         ...getRulesFromSource(effectiveUser, "user", type),
-        ...getRulesFromSource(effectiveUserLocal, "user-local", type),
         ...getRulesFromSource(effectiveProject, "project", type),
         ...getRulesFromSource(effectiveProjectLocal, "project-local", type),
       ];
     } else {
-      // User settings only (2 sources)
+      // User settings only (1 source)
       return [
         ...getRulesFromSource(effectiveGlobal, "user", type),
-        ...getRulesFromSource(effectiveLocal, "user-local", type),
       ];
     }
   };
@@ -140,13 +137,11 @@ export default function PermissionsPage() {
   const askRules = getAllRules("ask");
   const denyRules = getAllRules("deny");
 
-  // Get settings object for a given target
+  // Get settings object for a given target (user-local removed)
   const getSettingsForTarget = (target: SettingsTarget): Settings => {
     switch (target) {
       case "user":
         return effectiveUser;
-      case "user-local":
-        return effectiveUserLocal;
       case "project":
         return effectiveProject;
       case "project-local":
@@ -212,7 +207,7 @@ export default function PermissionsPage() {
 
     // Check if this rule is inherited (from user settings while viewing project)
     const isInherited = (source: SettingsTarget): boolean => {
-      return inProject && (source === "user" || source === "user-local");
+      return inProject && source === "user";
     };
 
     return (
@@ -377,7 +372,7 @@ export default function PermissionsPage() {
                   className="space-y-2"
                 >
                   {inProject ? (
-                    // Project context: show all 4 options
+                    // Project context: show 3 options (user-local removed)
                     <>
                       <label
                         htmlFor="project"
@@ -436,68 +431,28 @@ export default function PermissionsPage() {
                           </p>
                         </div>
                       </label>
-                      <label
-                        htmlFor="user-local"
-                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
-                          newRuleTarget === "user-local"
-                            ? "border-primary bg-primary/5"
-                            : "hover:bg-muted/50"
-                        }`}
-                      >
-                        <RadioGroupItem value="user-local" id="user-local" className="mt-1" />
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">User Local</span>
-                            <ScopeBadge scope="user-local" showLabel={false} />
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {getScopeDescription("user-local", true)}
-                          </p>
-                        </div>
-                      </label>
                     </>
                   ) : (
-                    // User context: show only user and user-local
-                    <>
-                      <label
-                        htmlFor="user"
-                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
-                          newRuleTarget === "user"
-                            ? "border-primary bg-primary/5"
-                            : "hover:bg-muted/50"
-                        }`}
-                      >
-                        <RadioGroupItem value="user" id="user" className="mt-1" />
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">User Settings</span>
-                            <ScopeBadge scope="user" showLabel={false} />
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {getScopeDescription("user", false)}
-                          </p>
+                    // User context: show only user (user-local doesn't exist)
+                    <label
+                      htmlFor="user"
+                      className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
+                        newRuleTarget === "user"
+                          ? "border-primary bg-primary/5"
+                          : "hover:bg-muted/50"
+                      }`}
+                    >
+                      <RadioGroupItem value="user" id="user" className="mt-1" />
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">User Settings</span>
+                          <ScopeBadge scope="user" showLabel={false} />
                         </div>
-                      </label>
-                      <label
-                        htmlFor="user-local"
-                        className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors ${
-                          newRuleTarget === "user-local"
-                            ? "border-primary bg-primary/5"
-                            : "hover:bg-muted/50"
-                        }`}
-                      >
-                        <RadioGroupItem value="user-local" id="user-local" className="mt-1" />
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">User Local</span>
-                            <ScopeBadge scope="user-local" showLabel={false} />
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {getScopeDescription("user-local", false)}
-                          </p>
-                        </div>
-                      </label>
-                    </>
+                        <p className="text-xs text-muted-foreground">
+                          {getScopeDescription("user", false)}
+                        </p>
+                      </div>
+                    </label>
                   )}
                 </RadioGroup>
               </div>

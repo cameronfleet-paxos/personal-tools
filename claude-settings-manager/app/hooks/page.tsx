@@ -72,7 +72,6 @@ export default function HooksPage() {
     updateSetting,
     isLoading,
     effectiveUser,
-    effectiveUserLocal,
     effectiveProject,
     effectiveProjectLocal,
     isInProjectContext,
@@ -100,13 +99,11 @@ export default function HooksPage() {
     );
   }
 
-  // Get settings object for a given target
+  // Get settings object for a given target (user-local removed)
   const getSettingsForTarget = (target: SettingsTarget): Settings => {
     switch (target) {
       case "user":
         return effectiveUser;
-      case "user-local":
-        return effectiveUserLocal;
       case "project":
         return effectiveProject;
       case "project-local":
@@ -119,7 +116,7 @@ export default function HooksPage() {
 
   // Check if inherited
   const isInherited = (source: SettingsTarget): boolean => {
-    return inProject && (source === "user" || source === "user-local");
+    return inProject && source === "user";
   };
 
   // Helper to get hooks from a specific source
@@ -136,19 +133,17 @@ export default function HooksPage() {
     }));
   };
 
-  // Collect hooks from all sources for a given type
+  // Collect hooks from all sources for a given type (user-local removed)
   const getAllHooksForType = (type: HookType): HookItem[] => {
     if (inProject) {
       return [
         ...getHooksFromSource(effectiveUser, "user", type),
-        ...getHooksFromSource(effectiveUserLocal, "user-local", type),
         ...getHooksFromSource(effectiveProject, "project", type),
         ...getHooksFromSource(effectiveProjectLocal, "project-local", type),
       ];
     }
     return [
       ...getHooksFromSource(effectiveUser, "user", type),
-      ...getHooksFromSource(effectiveUserLocal, "user-local", type),
     ];
   };
 

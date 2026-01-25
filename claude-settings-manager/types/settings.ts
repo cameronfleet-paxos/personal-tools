@@ -36,7 +36,12 @@ export interface SandboxFilesystemWrite {
   denyWithinAllow?: string[];
 }
 
+export interface SandboxFilesystemRead {
+  denyOnly?: string[];
+}
+
 export interface SandboxFilesystem {
+  read?: SandboxFilesystemRead;
   write?: SandboxFilesystemWrite;
 }
 
@@ -174,9 +179,33 @@ export interface SettingsLocation {
   lastModified: string; // Most recent file mtime (ISO timestamp)
 }
 
+// Command types (for commands explorer)
+export interface CommandMetadata {
+  description?: string;
+  argumentHint?: string;
+  allowedTools?: string[];
+}
+
+export interface CommandEntry {
+  name: string; // e.g., "jira2:new" or "prd"
+  filePath: string; // Absolute path to .md file
+  source: "user" | "project";
+  type: "command" | "skill"; // Commands are in commands/, skills are in skills/
+  projectPath?: string; // For project commands/skills
+  repoUrl?: string; // Git remote origin URL for deduplication across worktrees/clones
+  metadata: CommandMetadata;
+  lastModified: string;
+}
+
+export interface CommandsData {
+  commands: CommandEntry[];
+  totalCount: number;
+}
+
 export interface SettingsIndex {
   lastIndexed: string; // ISO timestamp
   locations: SettingsLocation[];
+  commands?: CommandsData; // Optional for backward compatibility
 }
 
 export interface IndexResponse {
@@ -189,4 +218,37 @@ export interface ReindexResponse {
   index: SettingsIndex;
   duration: number; // ms
   error?: string;
+}
+
+// Recommendations types (for promoting duplicated project settings to user scope)
+export interface SettingOccurrence {
+  projectPath: string;
+  projectName: string;
+  scope: "project" | "project-local";
+}
+
+export type RecommendationType =
+  | "permission-allow"
+  | "permission-deny"
+  | "permission-ask"
+  | "sandbox-host"
+  | "sandbox-path"
+  | "sandbox-socket";
+
+export interface SettingRecommendation {
+  id: string;
+  settingType: RecommendationType;
+  value: string; // The duplicated value (e.g., "Bash(git *)")
+  occurrences: SettingOccurrence[];
+  alreadyInUser: boolean; // True if already exists at user scope
+}
+
+export interface RecommendationsResponse {
+  recommendations: SettingRecommendation[];
+  analyzedProjects: number;
+}
+
+export interface ApplyRecommendationResponse {
+  success: boolean;
+  errors?: Array<{ project: string; error: string }>;
 }

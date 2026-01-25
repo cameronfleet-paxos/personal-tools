@@ -9,6 +9,8 @@ import type {
   SettingsIndex,
   SettingsTarget,
   MultiSourceSettingsResponse,
+  CommandEntry,
+  SettingRecommendation,
 } from "@/types/settings";
 
 function generateId(): string {
@@ -93,6 +95,18 @@ interface SettingsStore {
   // Pending changes
   pendingChanges: PendingChange[];
 
+  // Commands state
+  commands: CommandEntry[];
+  commandsLastIndexed: string | null;
+  commandsSearchQuery: string;
+  commandsSourceFilter: "all" | "user" | "project";
+  commandsTypeFilter: "all" | "command" | "skill";
+
+  // Recommendations state
+  recommendations: SettingRecommendation[];
+  recommendationsLoading: boolean;
+  analyzedProjects: number;
+
   // UI State
   isLoading: boolean;
   isSaving: boolean;
@@ -102,6 +116,7 @@ interface SettingsStore {
   // Computed helpers
   getGlobalScopeLabel: () => "user" | "project";
   isInProjectContext: () => boolean;
+  filteredCommands: () => CommandEntry[];
 
   // Actions
   loadSettings: () => Promise<void>;
@@ -117,6 +132,13 @@ interface SettingsStore {
   loadIndex: () => Promise<void>;
   reindex: () => Promise<void>;
   selectProject: (path: string | null) => Promise<void>;
+  setCommandsSearchQuery: (query: string) => void;
+  setCommandsSourceFilter: (filter: "all" | "user" | "project") => void;
+  setCommandsTypeFilter: (filter: "all" | "command" | "skill") => void;
+
+  // Recommendations actions
+  loadRecommendations: () => Promise<void>;
+  applyRecommendation: (id: string) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -144,6 +166,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   effectiveLocal: {},
 
   pendingChanges: [],
+
+  // Commands state
+  commands: [],
+  commandsLastIndexed: null,
+  commandsSearchQuery: "",
+  commandsSourceFilter: "all",
+  commandsTypeFilter: "all",
+
+  // Recommendations state
+  recommendations: [],
+  recommendationsLoading: false,
+  analyzedProjects: 0,
+
   isLoading: false,
   isSaving: false,
   isIndexing: false,
@@ -157,6 +192,32 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Returns true when a project is selected
   isInProjectContext: () => {
     return get().selectedProjectPath !== null;
+  },
+
+  // Filter commands by search query, source, and type
+  filteredCommands: () => {
+    const { commands, commandsSearchQuery, commandsSourceFilter, commandsTypeFilter } = get();
+    const query = commandsSearchQuery.toLowerCase();
+
+    return commands.filter((cmd) => {
+      // Filter by source
+      if (commandsSourceFilter !== "all" && cmd.source !== commandsSourceFilter) {
+        return false;
+      }
+      // Filter by type
+      if (commandsTypeFilter !== "all" && cmd.type !== commandsTypeFilter) {
+        return false;
+      }
+      // Filter by search query (matches name or description)
+      if (query) {
+        const matchesName = cmd.name.toLowerCase().includes(query);
+        const matchesDescription = cmd.metadata.description?.toLowerCase().includes(query);
+        if (!matchesName && !matchesDescription) {
+          return false;
+        }
+      }
+      return true;
+    });
   },
 
   loadSettings: async () => {
@@ -368,9 +429,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const hasUserChanges = state.pendingChanges.some(
         (c) => c.target === "user"
       );
-      const hasUserLocalChanges = state.pendingChanges.some(
-        (c) => c.target === "user-local"
-      );
+      // userLocal removed - doesn't exist per Claude Code docs
       const hasProjectChanges = state.pendingChanges.some(
         (c) => c.target === "project"
       );
@@ -383,7 +442,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           user: hasUserChanges ? state.effectiveUser : undefined,
-          userLocal: hasUserLocalChanges ? state.effectiveUserLocal : undefined,
           project: hasProjectChanges ? state.effectiveProject : undefined,
           projectLocal: hasProjectLocalChanges ? state.effectiveProjectLocal : undefined,
           path: state.selectedProjectPath || undefined,
@@ -402,7 +460,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // Update base settings to match effective and clear pending changes
       set({
         userSettings: hasUserChanges ? state.effectiveUser : state.userSettings,
-        userLocalSettings: hasUserLocalChanges ? state.effectiveUserLocal : state.userLocalSettings,
         projectSettings: hasProjectChanges ? state.effectiveProject : state.projectSettings,
         projectLocalSettings: hasProjectLocalChanges ? state.effectiveProjectLocal : state.projectLocalSettings,
         // Update legacy aliases
@@ -411,7 +468,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           : (hasUserChanges ? state.effectiveUser : state.userSettings),
         localSettings: state.selectedProjectPath
           ? (hasProjectLocalChanges ? state.effectiveProjectLocal : state.projectLocalSettings)
-          : (hasUserLocalChanges ? state.effectiveUserLocal : state.userLocalSettings),
+          : null,
         pendingChanges: [],
         isSaving: false,
       });
@@ -431,7 +488,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         throw new Error("Failed to load index");
       }
       const data = await response.json();
-      set({ settingsIndex: data.index, isIndexing: false });
+      const index = data.index;
+      set({
+        settingsIndex: index,
+        commands: index?.commands?.commands || [],
+        commandsLastIndexed: index?.lastIndexed || null,
+        isIndexing: false,
+      });
     } catch (err) {
       console.error("Error loading index:", err);
       set({ isIndexing: false });
@@ -447,7 +510,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       }
       const data = await response.json();
       if (data.success) {
-        set({ settingsIndex: data.index, isIndexing: false });
+        const index = data.index;
+        set({
+          settingsIndex: index,
+          commands: index?.commands?.commands || [],
+          commandsLastIndexed: index?.lastIndexed || null,
+          isIndexing: false,
+        });
       } else {
         throw new Error(data.error || "Reindex failed");
       }
@@ -462,5 +531,72 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   selectProject: async (path) => {
     set({ selectedProjectPath: path, pendingChanges: [] });
     await get().loadSettings();
+  },
+
+  setCommandsSearchQuery: (query) => {
+    set({ commandsSearchQuery: query });
+  },
+
+  setCommandsSourceFilter: (filter) => {
+    set({ commandsSourceFilter: filter });
+  },
+
+  setCommandsTypeFilter: (filter) => {
+    set({ commandsTypeFilter: filter });
+  },
+
+  loadRecommendations: async () => {
+    set({ recommendationsLoading: true });
+    try {
+      const response = await fetch("/api/recommendations");
+      if (!response.ok) {
+        throw new Error("Failed to load recommendations");
+      }
+      const data = await response.json();
+      set({
+        recommendations: data.recommendations,
+        analyzedProjects: data.analyzedProjects,
+        recommendationsLoading: false,
+      });
+    } catch (err) {
+      console.error("Error loading recommendations:", err);
+      set({ recommendationsLoading: false });
+    }
+  },
+
+  applyRecommendation: async (id) => {
+    const state = get();
+    const recommendation = state.recommendations.find((r) => r.id === id);
+    if (!recommendation) return;
+
+    set({ recommendationsLoading: true });
+    try {
+      const response = await fetch("/api/recommendations/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recommendation }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to apply recommendation");
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        console.error("Errors applying recommendation:", result.errors);
+      }
+
+      // Remove the applied recommendation from the list
+      set({
+        recommendations: state.recommendations.filter((r) => r.id !== id),
+        recommendationsLoading: false,
+      });
+
+      // Reload settings to reflect changes
+      await get().loadSettings();
+    } catch (err) {
+      console.error("Error applying recommendation:", err);
+      set({ recommendationsLoading: false });
+    }
   },
 }));

@@ -40,7 +40,6 @@ export default function ModelPage() {
     updateSetting,
     isLoading,
     effectiveUser,
-    effectiveUserLocal,
     effectiveProject,
     effectiveProjectLocal,
     isInProjectContext,
@@ -49,15 +48,13 @@ export default function ModelPage() {
   const inProject = isInProjectContext();
 
   // Determine effective model value and which source it comes from
-  // Priority: project-local > project > user-local > user
+  // Priority: project-local > project > user (user-local removed)
   const getEffectiveModelSetting = (): { value: string | undefined; source: SettingsTarget } => {
     if (inProject) {
       if (effectiveProjectLocal?.model) return { value: effectiveProjectLocal.model, source: "project-local" };
       if (effectiveProject?.model) return { value: effectiveProject.model, source: "project" };
-      if (effectiveUserLocal?.model) return { value: effectiveUserLocal.model, source: "user-local" };
       if (effectiveUser?.model) return { value: effectiveUser.model, source: "user" };
     } else {
-      if (effectiveUserLocal?.model) return { value: effectiveUserLocal.model, source: "user-local" };
       if (effectiveUser?.model) return { value: effectiveUser.model, source: "user" };
     }
     return { value: undefined, source: "user" };
@@ -69,13 +66,9 @@ export default function ModelPage() {
         return { value: effectiveProjectLocal.alwaysThinkingEnabled, source: "project-local" };
       if (effectiveProject?.alwaysThinkingEnabled !== undefined)
         return { value: effectiveProject.alwaysThinkingEnabled, source: "project" };
-      if (effectiveUserLocal?.alwaysThinkingEnabled !== undefined)
-        return { value: effectiveUserLocal.alwaysThinkingEnabled, source: "user-local" };
       if (effectiveUser?.alwaysThinkingEnabled !== undefined)
         return { value: effectiveUser.alwaysThinkingEnabled, source: "user" };
     } else {
-      if (effectiveUserLocal?.alwaysThinkingEnabled !== undefined)
-        return { value: effectiveUserLocal.alwaysThinkingEnabled, source: "user-local" };
       if (effectiveUser?.alwaysThinkingEnabled !== undefined)
         return { value: effectiveUser.alwaysThinkingEnabled, source: "user" };
     }
@@ -93,7 +86,7 @@ export default function ModelPage() {
 
   // Check if value is inherited from user settings while in project context
   const isInherited = (source: SettingsTarget): boolean => {
-    return inProject && (source === "user" || source === "user-local");
+    return inProject && source === "user";
   };
 
   if (isLoading) {

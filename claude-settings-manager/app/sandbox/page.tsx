@@ -9,11 +9,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { ScopeBadge } from "@/components/ui/scope-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -45,7 +45,6 @@ export default function SandboxPage() {
     updateSetting,
     isLoading,
     effectiveUser,
-    effectiveUserLocal,
     effectiveProject,
     effectiveProjectLocal,
     isInProjectContext,
@@ -54,9 +53,11 @@ export default function SandboxPage() {
   const inProject = isInProjectContext();
 
   const [newPath, setNewPath] = useState("");
+  const [newDenyPath, setNewDenyPath] = useState("");
   const [newHost, setNewHost] = useState("");
   const [newSocket, setNewSocket] = useState("");
   const [isPathDialogOpen, setIsPathDialogOpen] = useState(false);
+  const [isDenyPathDialogOpen, setIsDenyPathDialogOpen] = useState(false);
   const [isHostDialogOpen, setIsHostDialogOpen] = useState(false);
   const [isSocketDialogOpen, setIsSocketDialogOpen] = useState(false);
 
@@ -76,6 +77,13 @@ export default function SandboxPage() {
     }));
   };
 
+  const getDenyPathsFromSource = (settings: Settings | null, source: SettingsTarget): SandboxItem[] => {
+    return (settings?.sandbox?.filesystem?.read?.denyOnly || []).map((value) => ({
+      value,
+      source,
+    }));
+  };
+
   const getHostsFromSource = (settings: Settings | null, source: SettingsTarget): SandboxItem[] => {
     return (settings?.sandbox?.network?.allowedHosts || []).map((value) => ({
       value,
@@ -90,19 +98,30 @@ export default function SandboxPage() {
     }));
   };
 
-  // Collect items from all sources
+  // Collect items from all sources (user-local removed)
   const getAllPaths = (): SandboxItem[] => {
     if (inProject) {
       return [
         ...getPathsFromSource(effectiveUser, "user"),
-        ...getPathsFromSource(effectiveUserLocal, "user-local"),
         ...getPathsFromSource(effectiveProject, "project"),
         ...getPathsFromSource(effectiveProjectLocal, "project-local"),
       ];
     }
     return [
       ...getPathsFromSource(effectiveUser, "user"),
-      ...getPathsFromSource(effectiveUserLocal, "user-local"),
+    ];
+  };
+
+  const getAllDenyPaths = (): SandboxItem[] => {
+    if (inProject) {
+      return [
+        ...getDenyPathsFromSource(effectiveUser, "user"),
+        ...getDenyPathsFromSource(effectiveProject, "project"),
+        ...getDenyPathsFromSource(effectiveProjectLocal, "project-local"),
+      ];
+    }
+    return [
+      ...getDenyPathsFromSource(effectiveUser, "user"),
     ];
   };
 
@@ -110,14 +129,12 @@ export default function SandboxPage() {
     if (inProject) {
       return [
         ...getHostsFromSource(effectiveUser, "user"),
-        ...getHostsFromSource(effectiveUserLocal, "user-local"),
         ...getHostsFromSource(effectiveProject, "project"),
         ...getHostsFromSource(effectiveProjectLocal, "project-local"),
       ];
     }
     return [
       ...getHostsFromSource(effectiveUser, "user"),
-      ...getHostsFromSource(effectiveUserLocal, "user-local"),
     ];
   };
 
@@ -125,24 +142,20 @@ export default function SandboxPage() {
     if (inProject) {
       return [
         ...getSocketsFromSource(effectiveUser, "user"),
-        ...getSocketsFromSource(effectiveUserLocal, "user-local"),
         ...getSocketsFromSource(effectiveProject, "project"),
         ...getSocketsFromSource(effectiveProjectLocal, "project-local"),
       ];
     }
     return [
       ...getSocketsFromSource(effectiveUser, "user"),
-      ...getSocketsFromSource(effectiveUserLocal, "user-local"),
     ];
   };
 
-  // Get settings object for a given target
+  // Get settings object for a given target (user-local removed)
   const getSettingsForTarget = (target: SettingsTarget): Settings => {
     switch (target) {
       case "user":
         return effectiveUser;
-      case "user-local":
-        return effectiveUserLocal;
       case "project":
         return effectiveProject;
       case "project-local":
@@ -153,20 +166,17 @@ export default function SandboxPage() {
   // Default target for new items
   const defaultTarget: SettingsTarget = inProject ? "project" : "user";
 
-  // Get sandbox settings with priority (project-local > project > user-local > user)
+  // Get sandbox settings with priority (project-local > project > user)
+  // user-local removed - doesn't exist per Claude Code docs
   const getSandboxEnabledSetting = (): { value: boolean; source: SettingsTarget } => {
     if (inProject) {
       if (effectiveProjectLocal?.sandbox?.enabled !== undefined)
         return { value: effectiveProjectLocal.sandbox.enabled, source: "project-local" };
       if (effectiveProject?.sandbox?.enabled !== undefined)
         return { value: effectiveProject.sandbox.enabled, source: "project" };
-      if (effectiveUserLocal?.sandbox?.enabled !== undefined)
-        return { value: effectiveUserLocal.sandbox.enabled, source: "user-local" };
       if (effectiveUser?.sandbox?.enabled !== undefined)
         return { value: effectiveUser.sandbox.enabled, source: "user" };
     } else {
-      if (effectiveUserLocal?.sandbox?.enabled !== undefined)
-        return { value: effectiveUserLocal.sandbox.enabled, source: "user-local" };
       if (effectiveUser?.sandbox?.enabled !== undefined)
         return { value: effectiveUser.sandbox.enabled, source: "user" };
     }
@@ -179,13 +189,9 @@ export default function SandboxPage() {
         return { value: effectiveProjectLocal.sandbox.autoAllowBashIfSandboxed, source: "project-local" };
       if (effectiveProject?.sandbox?.autoAllowBashIfSandboxed !== undefined)
         return { value: effectiveProject.sandbox.autoAllowBashIfSandboxed, source: "project" };
-      if (effectiveUserLocal?.sandbox?.autoAllowBashIfSandboxed !== undefined)
-        return { value: effectiveUserLocal.sandbox.autoAllowBashIfSandboxed, source: "user-local" };
       if (effectiveUser?.sandbox?.autoAllowBashIfSandboxed !== undefined)
         return { value: effectiveUser.sandbox.autoAllowBashIfSandboxed, source: "user" };
     } else {
-      if (effectiveUserLocal?.sandbox?.autoAllowBashIfSandboxed !== undefined)
-        return { value: effectiveUserLocal.sandbox.autoAllowBashIfSandboxed, source: "user-local" };
       if (effectiveUser?.sandbox?.autoAllowBashIfSandboxed !== undefined)
         return { value: effectiveUser.sandbox.autoAllowBashIfSandboxed, source: "user" };
     }
@@ -197,16 +203,17 @@ export default function SandboxPage() {
   const sandboxEnabled = sandboxSetting.value;
   const autoAllowBash = autoAllowBashSetting.value;
   const writePaths = getAllPaths();
+  const denyPaths = getAllDenyPaths();
   const allowedHosts = getAllHosts();
   const unixSockets = getAllSockets();
 
   // Check if inherited
   const isInherited = (source: SettingsTarget): boolean => {
-    return inProject && (source === "user" || source === "user-local");
+    return inProject && source === "user";
   };
 
   // Use project-local for sandbox toggles (machine-specific)
-  const sandboxTarget: SettingsTarget = inProject ? "project-local" : "user-local";
+  const sandboxTarget: SettingsTarget = inProject ? "project-local" : "user";
 
   const handleToggleSandbox = (enabled: boolean) => {
     updateSetting(
@@ -250,6 +257,33 @@ export default function SandboxPage() {
       updatedPaths,
       item.source,
       `Removed write path: ${item.value}`
+    );
+  };
+
+  const handleAddDenyPath = () => {
+    if (!newDenyPath.trim()) return;
+    const settings = getSettingsForTarget(defaultTarget);
+    const currentPaths = settings?.sandbox?.filesystem?.read?.denyOnly || [];
+    const updatedPaths = [...currentPaths, newDenyPath.trim()];
+    updateSetting(
+      ["sandbox", "filesystem", "read", "denyOnly"],
+      updatedPaths,
+      defaultTarget,
+      `Added read deny path: ${newDenyPath}`
+    );
+    setNewDenyPath("");
+    setIsDenyPathDialogOpen(false);
+  };
+
+  const handleRemoveDenyPath = (item: SandboxItem) => {
+    const settings = getSettingsForTarget(item.source);
+    const currentPaths = settings?.sandbox?.filesystem?.read?.denyOnly || [];
+    const updatedPaths = currentPaths.filter((p) => p !== item.value);
+    updateSetting(
+      ["sandbox", "filesystem", "read", "denyOnly"],
+      updatedPaths,
+      item.source,
+      `Removed read deny path: ${item.value}`
     );
   };
 
@@ -304,6 +338,53 @@ export default function SandboxPage() {
       updatedSockets,
       item.source,
       `Removed unix socket: ${item.value}`
+    );
+  };
+
+  // Reusable list component for items
+  const ItemList = ({
+    items,
+    onRemove,
+    emptyMessage,
+  }: {
+    items: SandboxItem[];
+    onRemove: (item: SandboxItem) => void;
+    emptyMessage: string;
+  }) => {
+    if (items.length === 0) {
+      return (
+        <div className="text-center py-8 text-muted-foreground">
+          {emptyMessage}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-2">
+        {items.map((item, index) => (
+          <div
+            key={`${item.source}-${item.value}-${index}`}
+            className={`flex items-center justify-between p-3 rounded-lg border ${
+              isInherited(item.source) ? "bg-muted/30" : ""
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <code className="text-sm">{item.value}</code>
+              <ScopeBadge scope={item.source} />
+              {isInherited(item.source) && (
+                <span className="text-xs text-muted-foreground">← inherited</span>
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => onRemove(item)}
+            >
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
+        ))}
+      </div>
     );
   };
 
@@ -379,259 +460,243 @@ export default function SandboxPage() {
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <FolderOpen className="h-5 w-5" />
-              Filesystem Write Access
-            </CardTitle>
-            <CardDescription>
-              Paths where Claude can write files. {inProject && "Shows paths from all sources."}
-            </CardDescription>
-          </div>
-          <Dialog open={isPathDialogOpen} onOpenChange={setIsPathDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="mr-2 h-4 w-4" />
-                Add Path
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add Write Path</DialogTitle>
-                <DialogDescription>
-                  Add a path where Claude can write files.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Path</Label>
-                  <Input
-                    value={newPath}
-                    onChange={(e) => setNewPath(e.target.value)}
-                    placeholder="/path/to/directory"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Use . for current directory. Supports glob patterns like *
-                  </p>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setIsPathDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={handleAddPath} disabled={!newPath.trim()}>
-                  Add Path
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FolderOpen className="h-5 w-5" />
+            Filesystem Access
+          </CardTitle>
+          <CardDescription>
+            Control where Claude can read and write files.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {writePaths.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No write paths configured
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {writePaths.map((item, index) => (
-                <div
-                  key={`${item.source}-${item.value}-${index}`}
-                  className={`flex items-center justify-between p-3 rounded-lg border ${
-                    isInherited(item.source) ? "bg-muted/30" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <code className="text-sm">{item.value}</code>
-                    <ScopeBadge scope={item.source} />
-                    {isInherited(item.source) && (
-                      <span className="text-xs text-muted-foreground">← inherited</span>
-                    )}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemovePath(item)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
+          <Tabs defaultValue="write">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="write">
+                Write Allow ({writePaths.length})
+              </TabsTrigger>
+              <TabsTrigger value="read">
+                Read Deny ({denyPaths.length})
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="write" className="mt-4">
+              <div className="flex justify-end mb-4">
+                <Dialog open={isPathDialogOpen} onOpenChange={setIsPathDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Path
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add Write Path</DialogTitle>
+                      <DialogDescription>
+                        Add a path where Claude can write files.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Path</Label>
+                        <Input
+                          value={newPath}
+                          onChange={(e) => setNewPath(e.target.value)}
+                          placeholder="/path/to/directory"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Use . for current directory. Supports glob patterns like *
+                        </p>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsPathDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddPath} disabled={!newPath.trim()}>
+                        Add Path
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <ItemList
+                items={writePaths}
+                onRemove={handleRemovePath}
+                emptyMessage="No write paths configured"
+              />
+            </TabsContent>
+            <TabsContent value="read" className="mt-4">
+              <div className="flex justify-end mb-4">
+                <Dialog open={isDenyPathDialogOpen} onOpenChange={setIsDenyPathDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Path
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add Read Deny Path</DialogTitle>
+                      <DialogDescription>
+                        Add a path that Claude cannot read from.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Path</Label>
+                        <Input
+                          value={newDenyPath}
+                          onChange={(e) => setNewDenyPath(e.target.value)}
+                          placeholder="~/.secrets/*"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Supports glob patterns like *. Example: ~/.aws/credentials
+                        </p>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsDenyPathDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddDenyPath} disabled={!newDenyPath.trim()}>
+                        Add Path
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <ItemList
+                items={denyPaths}
+                onRemove={handleRemoveDenyPath}
+                emptyMessage="No read deny paths configured"
+              />
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <Globe className="h-5 w-5" />
-              Network Allowed Hosts
-            </CardTitle>
-            <CardDescription>
-              Hosts that Claude can connect to. {inProject && "Shows hosts from all sources."}
-            </CardDescription>
-          </div>
-          <Dialog open={isHostDialogOpen} onOpenChange={setIsHostDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="mr-2 h-4 w-4" />
-                Add Host
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add Allowed Host</DialogTitle>
-                <DialogDescription>
-                  Add a hostname that Claude can connect to.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Hostname</Label>
-                  <Input
-                    value={newHost}
-                    onChange={(e) => setNewHost(e.target.value)}
-                    placeholder="api.example.com"
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setIsHostDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={handleAddHost} disabled={!newHost.trim()}>
-                  Add Host
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Globe className="h-5 w-5" />
+            Network Access
+          </CardTitle>
+          <CardDescription>
+            Control network connections Claude can make.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {allowedHosts.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No allowed hosts configured
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {allowedHosts.map((item, index) => (
-                <div
-                  key={`${item.source}-${item.value}-${index}`}
-                  className={`flex items-center justify-between p-3 rounded-lg border ${
-                    isInherited(item.source) ? "bg-muted/30" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <code className="text-sm">{item.value}</code>
-                    <ScopeBadge scope={item.source} />
-                    {isInherited(item.source) && (
-                      <span className="text-xs text-muted-foreground">← inherited</span>
-                    )}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemoveHost(item)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              Unix Sockets
-            </CardTitle>
-            <CardDescription>
-              Unix socket paths that Claude can access. {inProject && "Shows sockets from all sources."}
-            </CardDescription>
-          </div>
-          <Dialog open={isSocketDialogOpen} onOpenChange={setIsSocketDialogOpen}>
-            <DialogTrigger asChild>
-              <Button size="sm">
-                <Plus className="mr-2 h-4 w-4" />
-                Add Socket
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add Unix Socket</DialogTitle>
-                <DialogDescription>
-                  Add a unix socket path that Claude can access.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Socket Path</Label>
-                  <Input
-                    value={newSocket}
-                    onChange={(e) => setNewSocket(e.target.value)}
-                    placeholder="/path/to/socket/*"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Use * for wildcards. Example: ~/.gnupg/*
-                  </p>
-                </div>
+          <Tabs defaultValue="hosts">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="hosts">
+                Allowed Hosts ({allowedHosts.length})
+              </TabsTrigger>
+              <TabsTrigger value="sockets">
+                Unix Sockets ({unixSockets.length})
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="hosts" className="mt-4">
+              <div className="flex justify-end mb-4">
+                <Dialog open={isHostDialogOpen} onOpenChange={setIsHostDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Host
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add Allowed Host</DialogTitle>
+                      <DialogDescription>
+                        Add a hostname that Claude can connect to.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Hostname</Label>
+                        <Input
+                          value={newHost}
+                          onChange={(e) => setNewHost(e.target.value)}
+                          placeholder="api.example.com"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsHostDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddHost} disabled={!newHost.trim()}>
+                        Add Host
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setIsSocketDialogOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={handleAddSocket} disabled={!newSocket.trim()}>
-                  Add Socket
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </CardHeader>
-        <CardContent>
-          {unixSockets.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              No unix sockets configured
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {unixSockets.map((item, index) => (
-                <div
-                  key={`${item.source}-${item.value}-${index}`}
-                  className={`flex items-center justify-between p-3 rounded-lg border ${
-                    isInherited(item.source) ? "bg-muted/30" : ""
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <code className="text-sm">{item.value}</code>
-                    <ScopeBadge scope={item.source} />
-                    {isInherited(item.source) && (
-                      <span className="text-xs text-muted-foreground">← inherited</span>
-                    )}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemoveSocket(item)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          )}
+              <ItemList
+                items={allowedHosts}
+                onRemove={handleRemoveHost}
+                emptyMessage="No allowed hosts configured"
+              />
+            </TabsContent>
+            <TabsContent value="sockets" className="mt-4">
+              <div className="flex justify-end mb-4">
+                <Dialog open={isSocketDialogOpen} onOpenChange={setIsSocketDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Add Socket
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add Unix Socket</DialogTitle>
+                      <DialogDescription>
+                        Add a unix socket path that Claude can access.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label>Socket Path</Label>
+                        <Input
+                          value={newSocket}
+                          onChange={(e) => setNewSocket(e.target.value)}
+                          placeholder="/path/to/socket/*"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Use * for wildcards. Example: ~/.gnupg/*
+                        </p>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => setIsSocketDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button onClick={handleAddSocket} disabled={!newSocket.trim()}>
+                        Add Socket
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+              <ItemList
+                items={unixSockets}
+                onRemove={handleRemoveSocket}
+                emptyMessage="No unix sockets configured"
+              />
+            </TabsContent>
+          </Tabs>
         </CardContent>
       </Card>
     </div>

@@ -19,6 +19,9 @@
 
 # production
 /build
+/dist
+/.standalone-build
+/Claude Settings.app
 
 # misc
 .DS_Store

@@ -18,6 +18,7 @@ import {
   ChevronRight,
   User,
   Users,
+  Terminal,
 } from "lucide-react";
 
 const navigation = [
@@ -28,6 +29,7 @@ const navigation = [
   { name: "Sandbox", href: "/sandbox", icon: Box },
   { name: "Hooks", href: "/hooks", icon: Webhook },
   { name: "Plugins", href: "/plugins", icon: Puzzle },
+  { name: "Commands", href: "/commands", icon: Terminal },
   { name: "Advanced", href: "/advanced", icon: Wrench },
   { name: "Stats", href: "/stats", icon: BarChart3 },
 ];

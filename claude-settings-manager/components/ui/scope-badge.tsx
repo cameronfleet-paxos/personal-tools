@@ -21,6 +21,7 @@ interface ScopeConfigItem {
   borderStyle?: string;
 }
 
+// Note: user-local removed - doesn't exist per Claude Code docs
 const scopeConfig: Record<Scope, ScopeConfigItem> = {
   user: {
     label: "User",
@@ -28,14 +29,6 @@ const scopeConfig: Record<Scope, ScopeConfigItem> = {
     bgColor: "bg-blue-500/10",
     textColor: "text-blue-600 dark:text-blue-400",
     borderColor: "border-blue-500/30",
-  },
-  "user-local": {
-    label: "User Local",
-    icon: User,
-    bgColor: "bg-transparent",
-    textColor: "text-blue-600 dark:text-blue-400",
-    borderColor: "border-blue-500/50",
-    borderStyle: "border-dashed",
   },
   project: {
     label: "Project",
@@ -90,8 +83,6 @@ export function getScopeDescription(scope: Scope, isInProject: boolean): string 
   switch (scope) {
     case "user":
       return "Applies to all projects (saved in ~/.claude/settings.json)";
-    case "user-local":
-      return "Personal user settings, not shared (saved in ~/.claude/settings.local.json)";
     case "project":
       return "Shared with team, committed to git (saved in project/.claude/settings.json)";
     case "project-local":

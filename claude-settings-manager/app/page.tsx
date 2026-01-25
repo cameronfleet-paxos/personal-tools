@@ -1,14 +1,83 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useSettingsStore } from "@/lib/store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import Link from "next/link";
-import { Brain, Shield, Box, Puzzle, BarChart3, ArrowRight } from "lucide-react";
+import {
+  Brain,
+  Shield,
+  Box,
+  Puzzle,
+  BarChart3,
+  ArrowRight,
+  Lightbulb,
+  ChevronDown,
+  ChevronUp,
+  ArrowUpRight,
+  Loader2,
+} from "lucide-react";
+import type { RecommendationType } from "@/types/settings";
+
+function getTypeLabel(type: RecommendationType): string {
+  switch (type) {
+    case "permission-allow":
+      return "Allow";
+    case "permission-deny":
+      return "Deny";
+    case "permission-ask":
+      return "Ask";
+    case "sandbox-host":
+      return "Host";
+    case "sandbox-path":
+      return "Path";
+    case "sandbox-socket":
+      return "Socket";
+    default:
+      return type;
+  }
+}
+
+function getTypeColor(type: RecommendationType): string {
+  switch (type) {
+    case "permission-allow":
+      return "bg-green-500/10 text-green-500";
+    case "permission-deny":
+      return "bg-red-500/10 text-red-500";
+    case "permission-ask":
+      return "bg-yellow-500/10 text-yellow-500";
+    case "sandbox-host":
+    case "sandbox-path":
+    case "sandbox-socket":
+      return "bg-blue-500/10 text-blue-500";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
 
 export default function DashboardPage() {
-  const { localSettings, plugins, stats, isLoading, effectiveGlobal } =
-    useSettingsStore();
+  const {
+    localSettings,
+    plugins,
+    stats,
+    isLoading,
+    effectiveGlobal,
+    recommendations,
+    recommendationsLoading,
+    analyzedProjects,
+    loadRecommendations,
+    applyRecommendation,
+  } = useSettingsStore();
+
+  const [expandedRec, setExpandedRec] = useState<string | null>(null);
+  const [applyingId, setApplyingId] = useState<string | null>(null);
+
+  // Load recommendations on mount
+  useEffect(() => {
+    loadRecommendations();
+  }, [loadRecommendations]);
 
   if (isLoading) {
     return (
@@ -106,6 +175,109 @@ export default function DashboardPage() {
           </Card>
         </Link>
       </div>
+
+      {/* Recommendations Section */}
+      {recommendations.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <div className="flex items-center gap-2">
+              <Lightbulb className="h-5 w-5 text-yellow-500" />
+              <CardTitle className="text-lg">Recommendations</CardTitle>
+              <Badge variant="secondary" className="ml-2">
+                {recommendations.length}
+              </Badge>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              Analyzed {analyzedProjects} projects
+            </span>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground mb-4">
+              These settings appear in multiple projects. Promote them to user scope for consistency.
+            </p>
+            {recommendations.slice(0, 5).map((rec) => {
+              const isExpanded = expandedRec === rec.id;
+              const isApplying = applyingId === rec.id;
+              const uniqueProjects = new Set(rec.occurrences.map((o) => o.projectPath));
+
+              return (
+                <div
+                  key={rec.id}
+                  className="border rounded-lg p-3 space-y-2"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <Badge
+                        variant="outline"
+                        className={`shrink-0 ${getTypeColor(rec.settingType)}`}
+                      >
+                        {getTypeLabel(rec.settingType)}
+                      </Badge>
+                      <code className="text-sm font-mono truncate">{rec.value}</code>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="secondary">
+                        {uniqueProjects.size} projects
+                      </Badge>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setExpandedRec(isExpanded ? null : rec.id)}
+                      >
+                        {isExpanded ? (
+                          <ChevronUp className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={rec.alreadyInUser || isApplying || recommendationsLoading}
+                        onClick={async () => {
+                          setApplyingId(rec.id);
+                          await applyRecommendation(rec.id);
+                          setApplyingId(null);
+                        }}
+                      >
+                        {isApplying ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : rec.alreadyInUser ? (
+                          "Already in User"
+                        ) : (
+                          <>
+                            <ArrowUpRight className="h-4 w-4 mr-1" />
+                            Promote
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                  {isExpanded && (
+                    <div className="mt-2 pl-2 border-l-2 border-muted space-y-1">
+                      {rec.occurrences.map((occ, idx) => (
+                        <div
+                          key={`${occ.projectPath}-${occ.scope}-${idx}`}
+                          className="text-sm text-muted-foreground flex items-center gap-2"
+                        >
+                          <span className="font-medium">{occ.projectName}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {occ.scope}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {recommendations.length > 5 && (
+              <p className="text-sm text-muted-foreground text-center pt-2">
+                +{recommendations.length - 5} more recommendations
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
