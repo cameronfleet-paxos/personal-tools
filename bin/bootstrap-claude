@@ -17,7 +17,7 @@ tell application "iTerm2"
             set name to "white"
             set variable named "user.badge" to "WHITE"
             set background color to {26214, 26214, 26214}
-            write text "cd ~/dev && clear"
+            write text "cd ~/dev && clear && claude --dangerously-skip-permissions"
 
             -- Create vertical split for badge agent
             set badgeSession to (split vertically with default profile)
@@ -27,7 +27,7 @@ tell application "iTerm2"
             set name to "badge"
             set variable named "user.badge" to "BADGE"
             set background color to {32767, 29490, 13107}
-            write text "cd ~/dev/pax && clear"
+            write text "cd ~/dev/pax && clear && claude --dangerously-skip-permissions"
         end tell
     end tell
 
@@ -39,7 +39,7 @@ tell application "iTerm2"
             set name to "blue"
             set variable named "user.badge" to "BLUE"
             set background color to {13107, 19660, 32767}
-            write text "cd ~/dev/pax-agent1 && clear"
+            write text "cd ~/dev/pax-agent1 && clear && claude --dangerously-skip-permissions"
 
             -- Create vertical split for red agent
             set redSession to (split vertically with default profile)
@@ -49,7 +49,7 @@ tell application "iTerm2"
             set name to "red"
             set variable named "user.badge" to "RED"
             set background color to {32767, 16383, 16383}
-            write text "cd ~/dev/pax-worktrees && clear"
+            write text "cd ~/dev/pax-worktrees && clear && claude --dangerously-skip-permissions"
         end tell
     end tell
 
