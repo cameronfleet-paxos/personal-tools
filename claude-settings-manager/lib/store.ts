@@ -124,7 +124,11 @@ interface SettingsStore {
   isLoading: boolean;
   isSaving: boolean;
   isIndexing: boolean;
+  isSyncing: boolean;
   error: string | null;
+
+  // Sync state
+  lastSyncedAt: Date | null;
 
   // Computed helpers
   getGlobalScopeLabel: () => "user" | "project";
@@ -216,7 +220,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   isLoading: false,
   isSaving: false,
   isIndexing: false,
+  isSyncing: false,
   error: null,
+
+  // Sync state
+  lastSyncedAt: null,
 
   // Returns "user" when viewing ~/.claude, "project" when viewing a project
   getGlobalScopeLabel: () => {
@@ -256,7 +264,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   loadSettings: async () => {
     const state = get();
-    set({ isLoading: true, error: null });
+    set({ isLoading: true, isSyncing: true, error: null });
     try {
       const url = state.selectedProjectPath
         ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
@@ -286,6 +294,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           effectiveGlobal: multiData.project || {},
           effectiveLocal: multiData.projectLocal || {},
           isLoading: false,
+          isSyncing: false,
+          lastSyncedAt: new Date(),
           pendingChanges: [],
         });
       } else {
@@ -306,6 +316,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           effectiveGlobal: data.global || {},
           effectiveLocal: {},
           isLoading: false,
+          isSyncing: false,
+          lastSyncedAt: new Date(),
           pendingChanges: [],
         });
       }
@@ -313,6 +325,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set({
         error: err instanceof Error ? err.message : "Unknown error",
         isLoading: false,
+        isSyncing: false,
       });
     }
   },

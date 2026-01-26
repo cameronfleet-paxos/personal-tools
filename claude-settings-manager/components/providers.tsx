@@ -8,6 +8,13 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     loadSettings();
+
+    // Auto-sync every 30 minutes
+    const interval = setInterval(() => {
+      loadSettings();
+    }, 30 * 60 * 1000);
+
+    return () => clearInterval(interval);
   }, [loadSettings]);
 
   return <>{children}</>;
