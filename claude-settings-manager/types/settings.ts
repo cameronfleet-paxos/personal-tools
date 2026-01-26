@@ -56,6 +56,7 @@ export interface Sandbox {
   autoAllowBashIfSandboxed?: boolean;
   filesystem?: SandboxFilesystem;
   network?: SandboxNetwork;
+  excludedCommands?: string[];
 }
 
 export interface FeedbackSurveyState {
@@ -251,4 +252,37 @@ export interface RecommendationsResponse {
 export interface ApplyRecommendationResponse {
   success: boolean;
   errors?: Array<{ project: string; error: string }>;
+}
+
+// Security recommendations types
+export type SecuritySeverity = "critical" | "high" | "medium";
+
+export interface SecurityRecommendation {
+  id: string;
+  severity: SecuritySeverity;
+  title: string;
+  description: string;
+  pattern: string;
+  location: "allow" | "deny" | "ask";
+  scope: SettingsTarget;
+  projectPath?: string;
+  projectName?: string;
+  remediation: string;
+}
+
+export interface SecurityRecommendationsResponse {
+  recommendations: SecurityRecommendation[];
+  checkedScopes: SettingsTarget[];
+}
+
+export interface FixSecurityRecommendationRequest {
+  pattern: string;
+  scope: SettingsTarget;
+  location: "allow" | "deny" | "ask";
+  projectPath?: string;
+}
+
+export interface FixSecurityRecommendationResponse {
+  success: boolean;
+  error?: string;
 }

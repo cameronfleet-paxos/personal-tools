@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./scripts/deploy-local.sh)"
+    ]
+  },
+  "sandbox": {
+    "excludedCommands": [
+      "./scripts/deploy-local.sh"
+    ]
+  }
+}

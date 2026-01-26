@@ -5,7 +5,8 @@
 After making any code changes, always rebuild and deploy the Electron app:
 
 ```bash
-pnpm electron:build && cp -R dist/mac-arm64/Claude\ Settings.app /Users/cameronfleet/Applications/
+pnpm electron:build
+./scripts/deploy-local.sh
 ```
 
 This builds the Next.js app, prepares the standalone build, packages the Electron app, and installs it to Applications.

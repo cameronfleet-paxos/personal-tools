@@ -18,8 +18,10 @@ import {
   ChevronUp,
   ArrowUpRight,
   Loader2,
+  AlertTriangle,
+  Wrench,
 } from "lucide-react";
-import type { RecommendationType } from "@/types/settings";
+import type { RecommendationType, SecuritySeverity } from "@/types/settings";
 
 function getTypeLabel(type: RecommendationType): string {
   switch (type) {
@@ -57,6 +59,30 @@ function getTypeColor(type: RecommendationType): string {
   }
 }
 
+function getSeverityLabel(severity: SecuritySeverity): string {
+  return severity.toUpperCase();
+}
+
+function getSeverityColor(severity: SecuritySeverity): string {
+  switch (severity) {
+    case "critical":
+      return "bg-red-500/10 text-red-500 border-red-500/20";
+    case "high":
+      return "bg-orange-500/10 text-orange-500 border-orange-500/20";
+    case "medium":
+      return "bg-yellow-500/10 text-yellow-500 border-yellow-500/20";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
+function getScopeLabel(scope: string, projectName?: string): string {
+  if (scope === "user") return "User settings";
+  if (scope === "project" && projectName) return `${projectName} (project)`;
+  if (scope === "project-local" && projectName) return `${projectName} (project-local)`;
+  return scope;
+}
+
 export default function DashboardPage() {
   const {
     localSettings,
@@ -69,15 +95,21 @@ export default function DashboardPage() {
     analyzedProjects,
     loadRecommendations,
     applyRecommendation,
+    securityRecommendations,
+    securityRecommendationsLoading,
+    loadSecurityRecommendations,
+    fixSecurityRecommendation,
   } = useSettingsStore();
 
   const [expandedRec, setExpandedRec] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
+  const [fixingSecurityId, setFixingSecurityId] = useState<string | null>(null);
 
   // Load recommendations on mount
   useEffect(() => {
     loadRecommendations();
-  }, [loadRecommendations]);
+    loadSecurityRecommendations();
+  }, [loadRecommendations, loadSecurityRecommendations]);
 
   if (isLoading) {
     return (
@@ -275,6 +307,80 @@ export default function DashboardPage() {
                 +{recommendations.length - 5} more recommendations
               </p>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Security Recommendations Section */}
+      {securityRecommendations.length > 0 && (
+        <Card className="border-orange-500/20">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-orange-500" />
+              <CardTitle className="text-lg">Security Recommendations</CardTitle>
+              <Badge variant="secondary" className="ml-2 bg-orange-500/10 text-orange-500">
+                {securityRecommendations.length}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground mb-4">
+              Review these potential security issues in your settings.
+            </p>
+            {securityRecommendations.map((rec) => {
+              const isFixing = fixingSecurityId === rec.id;
+
+              return (
+                <div
+                  key={rec.id}
+                  className="border rounded-lg p-4 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className={`shrink-0 font-semibold ${getSeverityColor(rec.severity)}`}
+                        >
+                          {getSeverityLabel(rec.severity)}
+                        </Badge>
+                        <span className="font-medium text-sm">{rec.title}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Found in: {getScopeLabel(rec.scope, rec.projectName)}
+                      </p>
+                      <code className="block text-xs bg-muted px-2 py-1 rounded font-mono">
+                        {rec.pattern}
+                      </code>
+                      <p className="text-sm text-muted-foreground">
+                        {rec.remediation}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={isFixing || securityRecommendationsLoading}
+                        onClick={async () => {
+                          setFixingSecurityId(rec.id);
+                          await fixSecurityRecommendation(rec.id);
+                          setFixingSecurityId(null);
+                        }}
+                      >
+                        {isFixing ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Wrench className="h-4 w-4 mr-1" />
+                            Fix
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}

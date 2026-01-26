@@ -56,10 +56,12 @@ export default function SandboxPage() {
   const [newDenyPath, setNewDenyPath] = useState("");
   const [newHost, setNewHost] = useState("");
   const [newSocket, setNewSocket] = useState("");
+  const [newCommand, setNewCommand] = useState("");
   const [isPathDialogOpen, setIsPathDialogOpen] = useState(false);
   const [isDenyPathDialogOpen, setIsDenyPathDialogOpen] = useState(false);
   const [isHostDialogOpen, setIsHostDialogOpen] = useState(false);
   const [isSocketDialogOpen, setIsSocketDialogOpen] = useState(false);
+  const [isCommandDialogOpen, setIsCommandDialogOpen] = useState(false);
 
   if (isLoading) {
     return (
@@ -93,6 +95,13 @@ export default function SandboxPage() {
 
   const getSocketsFromSource = (settings: Settings | null, source: SettingsTarget): SandboxItem[] => {
     return (settings?.sandbox?.network?.allowUnixSockets || []).map((value) => ({
+      value,
+      source,
+    }));
+  };
+
+  const getExcludedCommandsFromSource = (settings: Settings | null, source: SettingsTarget): SandboxItem[] => {
+    return (settings?.sandbox?.excludedCommands || []).map((value) => ({
       value,
       source,
     }));
@@ -151,6 +160,19 @@ export default function SandboxPage() {
     ];
   };
 
+  const getAllExcludedCommands = (): SandboxItem[] => {
+    if (inProject) {
+      return [
+        ...getExcludedCommandsFromSource(effectiveUser, "user"),
+        ...getExcludedCommandsFromSource(effectiveProject, "project"),
+        ...getExcludedCommandsFromSource(effectiveProjectLocal, "project-local"),
+      ];
+    }
+    return [
+      ...getExcludedCommandsFromSource(effectiveUser, "user"),
+    ];
+  };
+
   // Get settings object for a given target (user-local removed)
   const getSettingsForTarget = (target: SettingsTarget): Settings => {
     switch (target) {
@@ -206,6 +228,7 @@ export default function SandboxPage() {
   const denyPaths = getAllDenyPaths();
   const allowedHosts = getAllHosts();
   const unixSockets = getAllSockets();
+  const excludedCommands = getAllExcludedCommands();
 
   // Check if inherited
   const isInherited = (source: SettingsTarget): boolean => {
@@ -341,6 +364,33 @@ export default function SandboxPage() {
     );
   };
 
+  const handleAddCommand = () => {
+    if (!newCommand.trim()) return;
+    const settings = getSettingsForTarget(defaultTarget);
+    const currentCommands = settings?.sandbox?.excludedCommands || [];
+    const updatedCommands = [...currentCommands, newCommand.trim()];
+    updateSetting(
+      ["sandbox", "excludedCommands"],
+      updatedCommands,
+      defaultTarget,
+      `Added excluded command: ${newCommand}`
+    );
+    setNewCommand("");
+    setIsCommandDialogOpen(false);
+  };
+
+  const handleRemoveCommand = (item: SandboxItem) => {
+    const settings = getSettingsForTarget(item.source);
+    const currentCommands = settings?.sandbox?.excludedCommands || [];
+    const updatedCommands = currentCommands.filter((c) => c !== item.value);
+    updateSetting(
+      ["sandbox", "excludedCommands"],
+      updatedCommands,
+      item.source,
+      `Removed excluded command: ${item.value}`
+    );
+  };
+
   // Reusable list component for items
   const ItemList = ({
     items,
@@ -454,6 +504,62 @@ export default function SandboxPage() {
             <Switch
               checked={autoAllowBash}
               onCheckedChange={handleToggleAutoAllowBash}
+            />
+          </div>
+
+          <div className="rounded-lg border p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label className="font-medium">Excluded Commands ({excludedCommands.length})</Label>
+                <p className="text-sm text-muted-foreground">
+                  Commands that bypass sandbox restrictions entirely.
+                </p>
+              </div>
+              <Dialog open={isCommandDialogOpen} onOpenChange={setIsCommandDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm">
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Command
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add Excluded Command</DialogTitle>
+                    <DialogDescription>
+                      Add a command that should bypass sandbox restrictions.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-4">
+                    <div className="space-y-2">
+                      <Label>Command</Label>
+                      <Input
+                        value={newCommand}
+                        onChange={(e) => setNewCommand(e.target.value)}
+                        placeholder="git"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Example: git, gh, npm
+                      </p>
+                    </div>
+                  </div>
+                  <DialogFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => setIsCommandDialogOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button onClick={handleAddCommand} disabled={!newCommand.trim()}>
+                      Add Command
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </div>
+            <ItemList
+              items={excludedCommands}
+              onRemove={handleRemoveCommand}
+              emptyMessage="No excluded commands configured"
             />
           </div>
         </CardContent>

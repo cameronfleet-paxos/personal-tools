@@ -11,6 +11,7 @@ import type {
   MultiSourceSettingsResponse,
   CommandEntry,
   SettingRecommendation,
+  SecurityRecommendation,
 } from "@/types/settings";
 
 function generateId(): string {
@@ -107,6 +108,10 @@ interface SettingsStore {
   recommendationsLoading: boolean;
   analyzedProjects: number;
 
+  // Security recommendations state
+  securityRecommendations: SecurityRecommendation[];
+  securityRecommendationsLoading: boolean;
+
   // UI State
   isLoading: boolean;
   isSaving: boolean;
@@ -139,6 +144,10 @@ interface SettingsStore {
   // Recommendations actions
   loadRecommendations: () => Promise<void>;
   applyRecommendation: (id: string) => Promise<void>;
+
+  // Security recommendations actions
+  loadSecurityRecommendations: () => Promise<void>;
+  fixSecurityRecommendation: (id: string) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -178,6 +187,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   recommendations: [],
   recommendationsLoading: false,
   analyzedProjects: 0,
+
+  // Security recommendations state
+  securityRecommendations: [],
+  securityRecommendationsLoading: false,
 
   isLoading: false,
   isSaving: false,
@@ -599,4 +612,66 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set({ recommendationsLoading: false });
     }
   },
+
+  loadSecurityRecommendations: async () => {
+    set({ securityRecommendationsLoading: true });
+    try {
+      const response = await fetch("/api/security-recommendations");
+      if (!response.ok) {
+        throw new Error("Failed to load security recommendations");
+      }
+      const data = await response.json();
+      set({
+        securityRecommendations: data.recommendations,
+        securityRecommendationsLoading: false,
+      });
+    } catch (err) {
+      console.error("Error loading security recommendations:", err);
+      set({ securityRecommendationsLoading: false });
+    }
+  },
+
+  fixSecurityRecommendation: async (id: string) => {
+    const state = get();
+    const recommendation = state.securityRecommendations.find((r) => r.id === id);
+    if (!recommendation) return;
+
+    set({ securityRecommendationsLoading: true });
+    try {
+      const response = await fetch("/api/security-recommendations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pattern: recommendation.pattern,
+          scope: recommendation.scope,
+          location: recommendation.location,
+          projectPath: recommendation.projectPath,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to fix security recommendation");
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        console.error("Error fixing security recommendation:", result.error);
+        set({ securityRecommendationsLoading: false });
+        return;
+      }
+
+      // Remove the fixed recommendation from the list
+      set({
+        securityRecommendations: state.securityRecommendations.filter((r) => r.id !== id),
+        securityRecommendationsLoading: false,
+      });
+
+      // Reload settings to reflect changes
+      await get().loadSettings();
+    } catch (err) {
+      console.error("Error fixing security recommendation:", err);
+      set({ securityRecommendationsLoading: false });
+    }
+  },
+
 }));
