@@ -3,14 +3,31 @@
 import { useEffect, useCallback, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { Button } from '@/components/ui/button';
 import { ScheduleItemRow } from '@/components/schedule-item';
 import { SplashScreen } from '@/components/splash-screen';
 import { CompletionDialog } from '@/components/completion-dialog';
+import { ScheduleEditorDialog } from '@/components/schedule-editor-dialog';
 import { HistoryMenu } from '@/components/history-menu';
 import { useScheduleStore } from '@/lib/store';
 import { scheduleNotifications, clearAllNotifications } from '@/lib/notifications';
 import { timeToMinutes, getCurrentTimeMinutes, getTodayDate } from '@/lib/utils';
 import { ScheduleItem } from '@/types/schedule';
+import { Plus } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 
 // Extend window type for Electron API
 declare global {
@@ -25,6 +42,8 @@ declare global {
 
 export default function Home() {
   const [showSplash, setShowSplash] = useState(true);
+  const [editorDialogOpen, setEditorDialogOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<ScheduleItem | undefined>(undefined);
   const {
     schedule,
     dailyLog,
@@ -32,16 +51,66 @@ export default function Home() {
     isLoading,
     pendingCompletion,
     viewingDate,
+    isEditMode,
     toggleComplete,
     confirmCompletion,
     cancelCompletion,
     updateItemTime,
     setEditingId,
     loadData,
+    addItem,
+    updateItem,
+    removeItem,
+    reorderItems,
   } = useScheduleStore();
+
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      reorderItems(active.id as string, over.id as string);
+    }
+  };
 
   // Determine if we're viewing historical data (read-only mode)
   const isHistorical = viewingDate !== null;
+
+  // Handlers for schedule editing
+  const handleAddNewItem = () => {
+    setEditingItem(undefined);
+    setEditorDialogOpen(true);
+  };
+
+  const handleEditItem = (item: ScheduleItem) => {
+    setEditingItem(item);
+    setEditorDialogOpen(true);
+  };
+
+  const handleSaveItem = (data: Omit<ScheduleItem, 'id'>) => {
+    if (editingItem) {
+      updateItem(editingItem.id, data);
+    } else {
+      addItem(data);
+    }
+    setEditorDialogOpen(false);
+    setEditingItem(undefined);
+  };
+
+  const handleCancelEditor = () => {
+    setEditorDialogOpen(false);
+    setEditingItem(undefined);
+  };
 
   // Load data on mount
   useEffect(() => {
@@ -141,11 +210,16 @@ export default function Home() {
                 )}
               </CardDescription>
             </div>
-            <HistoryMenu />
+            <HistoryMenu onAddItem={handleAddNewItem} />
           </div>
           {isHistorical && (
             <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-2 py-1 rounded">
               Read-only: Viewing historical data
+            </div>
+          )}
+          {isEditMode && (
+            <div className="mt-2 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950 px-2 py-1 rounded">
+              Edit mode: Drag to reorder, tap to edit, X to delete
             </div>
           )}
           <div className="mt-4 space-y-2">
@@ -157,29 +231,76 @@ export default function Home() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {schedule.map((item) => {
-            const completedItem = dailyLog.completedItems.find(c => c.itemId === item.id);
-            return (
-              <ScheduleItemRow
-                key={item.id}
-                item={item}
-                isCompleted={!!completedItem}
-                completionData={completedItem}
-                isNext={!isHistorical && item.id === nextItemId}
-                isEditing={!isHistorical && editingId === item.id}
-                disabled={isHistorical}
-                onToggle={() => !isHistorical && toggleComplete(item.id)}
-                onEditStart={() => !isHistorical && setEditingId(item.id)}
-                onEditSave={(time, endTime) => {
-                  if (!isHistorical) {
-                    updateItemTime(item.id, time, endTime);
-                    setEditingId(null);
-                  }
-                }}
-                onEditCancel={() => setEditingId(null)}
-              />
-            );
-          })}
+          {isEditMode ? (
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={schedule.map(item => item.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {schedule.map((item) => {
+                  const completedItem = dailyLog.completedItems.find(c => c.itemId === item.id);
+                  return (
+                    <ScheduleItemRow
+                      key={item.id}
+                      item={item}
+                      isCompleted={!!completedItem}
+                      completionData={completedItem}
+                      isNext={false}
+                      isEditing={false}
+                      disabled={true}
+                      isEditMode={true}
+                      onToggle={() => {}}
+                      onEditStart={() => {}}
+                      onEditSave={() => {}}
+                      onEditCancel={() => {}}
+                      onEditItem={() => handleEditItem(item)}
+                      onDeleteItem={() => removeItem(item.id)}
+                    />
+                  );
+                })}
+              </SortableContext>
+            </DndContext>
+          ) : (
+            schedule.map((item) => {
+              const completedItem = dailyLog.completedItems.find(c => c.itemId === item.id);
+              return (
+                <ScheduleItemRow
+                  key={item.id}
+                  item={item}
+                  isCompleted={!!completedItem}
+                  completionData={completedItem}
+                  isNext={!isHistorical && item.id === nextItemId}
+                  isEditing={!isHistorical && editingId === item.id}
+                  disabled={isHistorical}
+                  isEditMode={false}
+                  onToggle={() => !isHistorical && toggleComplete(item.id)}
+                  onEditStart={() => !isHistorical && setEditingId(item.id)}
+                  onEditSave={(time, endTime) => {
+                    if (!isHistorical) {
+                      updateItemTime(item.id, time, endTime);
+                      setEditingId(null);
+                    }
+                  }}
+                  onEditCancel={() => setEditingId(null)}
+                  onEditItem={() => handleEditItem(item)}
+                  onDeleteItem={() => removeItem(item.id)}
+                />
+              );
+            })
+          )}
+          {isEditMode && (
+            <Button
+              onClick={handleAddNewItem}
+              className="w-full mt-4"
+              variant="outline"
+            >
+              <Plus className="mr-2 h-4 w-4" /> Add New Item
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -192,6 +313,13 @@ export default function Home() {
           }
         }}
         onCancel={cancelCompletion}
+      />
+
+      <ScheduleEditorDialog
+        open={editorDialogOpen}
+        item={editingItem}
+        onSave={handleSaveItem}
+        onCancel={handleCancelEditor}
       />
     </div>
   );

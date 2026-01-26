@@ -11,6 +11,8 @@ export interface ScheduleItem {
 export interface CompletedItem {
   itemId: string;
   completedAt: string;    // ISO timestamp
+  actualTime: string;     // "07:30" format - when actually completed
+  notes?: string;         // Optional notes about completion
 }
 
 export interface DailyLog {

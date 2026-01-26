@@ -1,6 +1,6 @@
 'use client';
 
-import { Menu } from 'lucide-react';
+import { Menu, Pencil, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -24,8 +24,12 @@ function formatDate(dateStr: string): string {
   });
 }
 
-export function HistoryMenu() {
-  const { availableDates, viewingDate, viewDate } = useScheduleStore();
+interface HistoryMenuProps {
+  onAddItem?: () => void;
+}
+
+export function HistoryMenu({ onAddItem }: HistoryMenuProps) {
+  const { availableDates, viewingDate, viewDate, isEditMode, setEditMode } = useScheduleStore();
   const today = getTodayDate();
 
   // Filter out today from historical dates
@@ -41,6 +45,23 @@ export function HistoryMenu() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuLabel>Schedule</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuCheckboxItem
+          checked={isEditMode}
+          onCheckedChange={(checked) => setEditMode(checked)}
+        >
+          <Pencil className="mr-2 h-4 w-4" />
+          Edit Schedule
+        </DropdownMenuCheckboxItem>
+        {isEditMode && onAddItem && (
+          <DropdownMenuItem onClick={onAddItem}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add New Item
+          </DropdownMenuItem>
+        )}
+
+        <DropdownMenuSeparator />
         <DropdownMenuLabel>View Date</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuCheckboxItem

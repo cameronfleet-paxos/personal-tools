@@ -16,6 +16,7 @@ interface ScheduleState {
   pendingCompletion: PendingCompletion | null;
   viewingDate: string | null; // null means "today", otherwise ISO date string
   availableDates: string[]; // list of dates with logs
+  isEditMode: boolean; // edit mode for modifying schedule
 
   // Actions
   setSchedule: (schedule: ScheduleItem[]) => void;
@@ -31,7 +32,26 @@ interface ScheduleState {
   saveLog: () => Promise<void>;
   loadAvailableDates: () => Promise<void>;
   viewDate: (date: string | null) => Promise<void>;
+  setEditMode: (editing: boolean) => void;
+  addItem: (item: Omit<ScheduleItem, 'id'>) => void;
+  removeItem: (itemId: string) => void;
+  updateItem: (itemId: string, updates: Partial<ScheduleItem>) => void;
+  reorderItems: (activeId: string, overId: string) => void;
 }
+
+// Helper to sort schedule items by time
+const sortByTime = (items: ScheduleItem[]): ScheduleItem[] => {
+  return [...items].sort((a, b) => {
+    const [aHours, aMinutes] = a.time.split(':').map(Number);
+    const [bHours, bMinutes] = b.time.split(':').map(Number);
+    return (aHours * 60 + aMinutes) - (bHours * 60 + bMinutes);
+  });
+};
+
+// Generate unique ID
+const generateId = (): string => {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+};
 
 export const useScheduleStore = create<ScheduleState>((set, get) => ({
   schedule: defaultSchedule,
@@ -44,6 +64,7 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
   pendingCompletion: null,
   viewingDate: null,
   availableDates: [],
+  isEditMode: false,
 
   setSchedule: (schedule) => set({ schedule }),
 
@@ -240,5 +261,69 @@ export const useScheduleStore = create<ScheduleState>((set, get) => ({
 
     // Refresh available dates
     loadAvailableDates();
+  },
+
+  setEditMode: (editing: boolean) => {
+    set({ isEditMode: editing, editingId: null });
+  },
+
+  addItem: (item: Omit<ScheduleItem, 'id'>) => {
+    const { schedule, saveSchedule } = get();
+    const newItem: ScheduleItem = {
+      ...item,
+      id: generateId(),
+    };
+    const newSchedule = sortByTime([...schedule, newItem]);
+    set({ schedule: newSchedule });
+    saveSchedule();
+  },
+
+  removeItem: (itemId: string) => {
+    const { schedule, dailyLog, saveSchedule, saveLog } = get();
+    const newSchedule = schedule.filter(item => item.id !== itemId);
+    // Also remove any completion data for this item
+    const newCompletedItems = dailyLog.completedItems.filter(c => c.itemId !== itemId);
+    set({
+      schedule: newSchedule,
+      dailyLog: {
+        ...dailyLog,
+        completedItems: newCompletedItems,
+      },
+    });
+    saveSchedule();
+    if (newCompletedItems.length !== dailyLog.completedItems.length) {
+      saveLog();
+    }
+  },
+
+  updateItem: (itemId: string, updates: Partial<ScheduleItem>) => {
+    const { schedule, saveSchedule } = get();
+    const newSchedule = schedule.map(item => {
+      if (item.id === itemId) {
+        return { ...item, ...updates };
+      }
+      return item;
+    });
+    // Re-sort if time was updated
+    const sortedSchedule = updates.time ? sortByTime(newSchedule) : newSchedule;
+    set({ schedule: sortedSchedule });
+    saveSchedule();
+  },
+
+  reorderItems: (activeId: string, overId: string) => {
+    const { schedule, saveSchedule } = get();
+    const oldIndex = schedule.findIndex(item => item.id === activeId);
+    const newIndex = schedule.findIndex(item => item.id === overId);
+
+    if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) {
+      return;
+    }
+
+    const newSchedule = [...schedule];
+    const [movedItem] = newSchedule.splice(oldIndex, 1);
+    newSchedule.splice(newIndex, 0, movedItem);
+
+    set({ schedule: newSchedule });
+    saveSchedule();
   },
 }));
