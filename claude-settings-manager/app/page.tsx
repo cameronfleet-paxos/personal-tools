@@ -20,8 +20,21 @@ import {
   Loader2,
   AlertTriangle,
   Wrench,
+  ShieldAlert,
+  Check,
+  X,
+  RotateCcw,
+  Eye,
+  EyeOff,
 } from "lucide-react";
-import type { RecommendationType, SecuritySeverity } from "@/types/settings";
+import type { RecommendationType, SecuritySeverity, PermissionTimeFilter, ToolExample } from "@/types/settings";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 function getTypeLabel(type: RecommendationType): string {
   switch (type) {
@@ -83,6 +96,81 @@ function getScopeLabel(scope: string, projectName?: string): string {
   return scope;
 }
 
+function formatToolInput(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case "Bash":
+      return (input.command as string) || JSON.stringify(input);
+    case "Read":
+      return (input.file_path as string) || JSON.stringify(input);
+    case "Edit":
+      return `editing ${input.file_path as string}`;
+    case "Write":
+      return `writing ${input.file_path as string}`;
+    case "Grep":
+      return input.path
+        ? `${input.pattern} in ${input.path}`
+        : (input.pattern as string) || JSON.stringify(input);
+    case "Glob":
+      return (input.pattern as string) || JSON.stringify(input);
+    case "WebFetch":
+      return (input.url as string) || JSON.stringify(input);
+    default:
+      // For other tools, show a condensed JSON
+      const keys = Object.keys(input);
+      if (keys.length === 1) {
+        const value = input[keys[0]];
+        return typeof value === "string" ? value : JSON.stringify(value);
+      }
+      return JSON.stringify(input).slice(0, 100);
+  }
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / (1000 * 60));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
+}
+
+function isDangerousPattern(pattern: string): boolean {
+  // Check for overly broad patterns that could be security risks
+  const dangerousPatterns = [
+    "*",
+    "Bash(*)",
+    "Bash:*",
+    "bash:*",
+    "Edit(*)",
+    "Write(*)",
+  ];
+  return dangerousPatterns.some((p) => pattern.includes(p) || pattern === p);
+}
+
+function getToolColor(toolName: string): string {
+  switch (toolName) {
+    case "Bash":
+      return "bg-orange-500/10 text-orange-500 border-orange-500/20";
+    case "Read":
+      return "bg-blue-500/10 text-blue-500 border-blue-500/20";
+    case "Edit":
+      return "bg-yellow-500/10 text-yellow-500 border-yellow-500/20";
+    case "Write":
+      return "bg-green-500/10 text-green-500 border-green-500/20";
+    case "Grep":
+      return "bg-cyan-500/10 text-cyan-500 border-cyan-500/20";
+    case "Glob":
+      return "bg-teal-500/10 text-teal-500 border-teal-500/20";
+    case "WebFetch":
+      return "bg-indigo-500/10 text-indigo-500 border-indigo-500/20";
+    default:
+      return "bg-purple-500/10 text-purple-500 border-purple-500/20";
+  }
+}
+
 export default function DashboardPage() {
   const {
     localSettings,
@@ -99,17 +187,36 @@ export default function DashboardPage() {
     securityRecommendationsLoading,
     loadSecurityRecommendations,
     fixSecurityRecommendation,
+    permissionInterruptions,
+    permissionInterruptionsLoading,
+    permissionInterruptionsFilter,
+    permissionInterruptionsTotalEvents,
+    loadPermissionInterruptions,
+    setPermissionInterruptionsFilter,
+    allowPermissionPattern,
+    dismissPermissionInterruption,
+    resetDismissedInterruptions,
   } = useSettingsStore();
 
   const [expandedRec, setExpandedRec] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [fixingSecurityId, setFixingSecurityId] = useState<string | null>(null);
+  const [allowingPatternId, setAllowingPatternId] = useState<string | null>(null);
+  const [dismissingPatternId, setDismissingPatternId] = useState<string | null>(null);
+  const [expandedInterruption, setExpandedInterruption] = useState<string | null>(null);
+  const [showAllowed, setShowAllowed] = useState(false);
+
+  // Filter interruptions based on showAllowed toggle
+  const filteredInterruptions = showAllowed
+    ? permissionInterruptions
+    : permissionInterruptions.filter(i => !i.alreadyInUserScope);
 
   // Load recommendations on mount
   useEffect(() => {
     loadRecommendations();
     loadSecurityRecommendations();
-  }, [loadRecommendations, loadSecurityRecommendations]);
+    loadPermissionInterruptions();
+  }, [loadRecommendations, loadSecurityRecommendations, loadPermissionInterruptions]);
 
   if (isLoading) {
     return (
@@ -381,6 +488,236 @@ export default function DashboardPage() {
                 </div>
               );
             })}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Permission Interruptions Section */}
+      {(filteredInterruptions.length > 0 || permissionInterruptionsLoading) && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-blue-500" />
+              <CardTitle className="text-lg">Top Blocked Commands</CardTitle>
+              {permissionInterruptionsTotalEvents > 0 && (
+                <Badge variant="secondary" className="ml-2">
+                  {permissionInterruptionsTotalEvents} events
+                </Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAllowed(!showAllowed)}
+              >
+                {showAllowed ? <EyeOff className="h-4 w-4 mr-1" /> : <Eye className="h-4 w-4 mr-1" />}
+                {showAllowed ? "Hide Allowed" : "Show Allowed"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => resetDismissedInterruptions()}
+                disabled={permissionInterruptionsLoading}
+                title="Restore dismissed items"
+              >
+                <RotateCcw className="h-4 w-4 mr-1" />
+                Reset
+              </Button>
+              <Select
+                value={permissionInterruptionsFilter}
+                onValueChange={(value) =>
+                  setPermissionInterruptionsFilter(value as PermissionTimeFilter)
+                }
+              >
+                <SelectTrigger className="w-[120px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day">Last Day</SelectItem>
+                  <SelectItem value="week">Last Week</SelectItem>
+                  <SelectItem value="month">Last Month</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {permissionInterruptionsLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : filteredInterruptions.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No permission interruptions found in the selected time period.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Commands that required permission prompts. Allow at user level to reduce interruptions.
+                </p>
+                {filteredInterruptions.slice(0, 5).map((interruption) => {
+                  const isExpanded = expandedInterruption === interruption.id;
+                  const isAllowing = allowingPatternId === interruption.id;
+                  const isDismissing = dismissingPatternId === interruption.id;
+                  const projectCount = interruption.projects.length;
+
+                  return (
+                    <div
+                      key={interruption.id}
+                      className="border rounded-lg p-3 space-y-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                          <Badge variant="outline" className={`shrink-0 ${getToolColor(interruption.toolName)}`}>
+                            {interruption.toolName}
+                          </Badge>
+                          <code className="text-sm font-mono truncate">
+                            {interruption.pattern}
+                          </code>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="secondary">
+                            {interruption.occurrences}x
+                          </Badge>
+                          {projectCount > 0 && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                setExpandedInterruption(isExpanded ? null : interruption.id)
+                              }
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="h-4 w-4" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4" />
+                              )}
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            disabled={interruption.alreadyInUserScope || isAllowing || permissionInterruptionsLoading}
+                            onClick={async () => {
+                              setAllowingPatternId(interruption.id);
+                              await allowPermissionPattern(interruption.id);
+                              setAllowingPatternId(null);
+                            }}
+                          >
+                            {isAllowing ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : interruption.alreadyInUserScope ? (
+                              <>
+                                <Check className="h-4 w-4 mr-1" />
+                                Allowed
+                              </>
+                            ) : (
+                              "Allow"
+                            )}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={isDismissing || permissionInterruptionsLoading}
+                            onClick={async () => {
+                              setDismissingPatternId(interruption.id);
+                              await dismissPermissionInterruption(interruption.id);
+                              setDismissingPatternId(null);
+                            }}
+                            title="Dismiss this recommendation"
+                          >
+                            {isDismissing ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <X className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                      {isExpanded && (
+                        <div className="mt-3 space-y-3">
+                          {/* Dangerous pattern warning */}
+                          {isDangerousPattern(interruption.pattern) && (
+                            <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3">
+                              <div className="flex items-start gap-2">
+                                <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                                <div className="text-sm">
+                                  <span className="font-medium text-yellow-500">Tip:</span>{" "}
+                                  <span className="text-muted-foreground">
+                                    Instead of allowing broad patterns like{" "}
+                                    <code className="bg-muted px-1 rounded">{interruption.pattern}</code>,
+                                    consider creating specific rules for the commands you need.
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Conversation examples */}
+                          {interruption.examples && interruption.examples.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="text-xs text-muted-foreground font-medium">
+                                Recent examples:
+                              </div>
+                              {interruption.examples.map((example: ToolExample, idx: number) => (
+                                <div
+                                  key={`example-${idx}`}
+                                  className="bg-muted/50 rounded-md p-3 space-y-2"
+                                >
+                                  <div className="text-xs text-muted-foreground">
+                                    {formatRelativeTime(example.timestamp)}
+                                  </div>
+                                  {example.userPrompt && (
+                                    <div className="text-sm">
+                                      <span className="text-muted-foreground">User: </span>
+                                      <span className="italic">&quot;{example.userPrompt}&quot;</span>
+                                    </div>
+                                  )}
+                                  <div className="flex items-start gap-2">
+                                    <Badge variant="outline" className="shrink-0 text-xs">
+                                      {interruption.toolName}
+                                    </Badge>
+                                    <code className="text-xs font-mono break-all">
+                                      {formatToolInput(interruption.toolName, example.toolInput)}
+                                    </code>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Projects affected */}
+                          {projectCount > 0 && (
+                            <div className="pl-2 border-l-2 border-muted space-y-1">
+                              <div className="text-xs text-muted-foreground mb-1">
+                                Projects affected:
+                              </div>
+                              {interruption.projects.slice(0, 5).map((project, idx) => (
+                                <div
+                                  key={`${project}-${idx}`}
+                                  className="text-sm text-muted-foreground font-mono truncate"
+                                >
+                                  {project}
+                                </div>
+                              ))}
+                              {projectCount > 5 && (
+                                <div className="text-xs text-muted-foreground">
+                                  +{projectCount - 5} more projects
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {filteredInterruptions.length > 5 && (
+                  <p className="text-sm text-muted-foreground text-center pt-2">
+                    +{filteredInterruptions.length - 5} more commands
+                  </p>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
       )}

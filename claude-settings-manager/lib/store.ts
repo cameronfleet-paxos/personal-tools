@@ -12,6 +12,8 @@ import type {
   CommandEntry,
   SettingRecommendation,
   SecurityRecommendation,
+  AggregatedInterruption,
+  PermissionTimeFilter,
 } from "@/types/settings";
 
 function generateId(): string {
@@ -112,6 +114,12 @@ interface SettingsStore {
   securityRecommendations: SecurityRecommendation[];
   securityRecommendationsLoading: boolean;
 
+  // Permission interruptions state
+  permissionInterruptions: AggregatedInterruption[];
+  permissionInterruptionsLoading: boolean;
+  permissionInterruptionsFilter: PermissionTimeFilter;
+  permissionInterruptionsTotalEvents: number;
+
   // UI State
   isLoading: boolean;
   isSaving: boolean;
@@ -148,6 +156,13 @@ interface SettingsStore {
   // Security recommendations actions
   loadSecurityRecommendations: () => Promise<void>;
   fixSecurityRecommendation: (id: string) => Promise<void>;
+
+  // Permission interruptions actions
+  loadPermissionInterruptions: () => Promise<void>;
+  setPermissionInterruptionsFilter: (filter: PermissionTimeFilter) => Promise<void>;
+  allowPermissionPattern: (id: string) => Promise<void>;
+  dismissPermissionInterruption: (id: string) => Promise<void>;
+  resetDismissedInterruptions: () => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -191,6 +206,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Security recommendations state
   securityRecommendations: [],
   securityRecommendationsLoading: false,
+
+  // Permission interruptions state
+  permissionInterruptions: [],
+  permissionInterruptionsLoading: false,
+  permissionInterruptionsFilter: "week",
+  permissionInterruptionsTotalEvents: 0,
 
   isLoading: false,
   isSaving: false,
@@ -671,6 +692,133 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (err) {
       console.error("Error fixing security recommendation:", err);
       set({ securityRecommendationsLoading: false });
+    }
+  },
+
+  loadPermissionInterruptions: async () => {
+    const state = get();
+    set({ permissionInterruptionsLoading: true });
+    try {
+      const response = await fetch(
+        `/api/permission-interruptions?filter=${state.permissionInterruptionsFilter}`
+      );
+      if (!response.ok) {
+        throw new Error("Failed to load permission interruptions");
+      }
+      const data = await response.json();
+      set({
+        permissionInterruptions: data.interruptions,
+        permissionInterruptionsTotalEvents: data.totalEvents,
+        permissionInterruptionsLoading: false,
+      });
+    } catch (err) {
+      console.error("Error loading permission interruptions:", err);
+      set({ permissionInterruptionsLoading: false });
+    }
+  },
+
+  setPermissionInterruptionsFilter: async (filter: PermissionTimeFilter) => {
+    set({ permissionInterruptionsFilter: filter });
+    await get().loadPermissionInterruptions();
+  },
+
+  allowPermissionPattern: async (id: string) => {
+    const state = get();
+    const interruption = state.permissionInterruptions.find((i) => i.id === id);
+    if (!interruption) return;
+
+    set({ permissionInterruptionsLoading: true });
+    try {
+      const response = await fetch("/api/permission-interruptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: interruption.fullPattern }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to allow permission pattern");
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        console.error("Error allowing permission pattern:", result.error);
+        set({ permissionInterruptionsLoading: false });
+        return;
+      }
+
+      // Update the interruption to show it's now in user scope
+      set({
+        permissionInterruptions: state.permissionInterruptions.map((i) =>
+          i.id === id ? { ...i, alreadyInUserScope: true } : i
+        ),
+        permissionInterruptionsLoading: false,
+      });
+
+      // Reload settings to reflect changes
+      await get().loadSettings();
+    } catch (err) {
+      console.error("Error allowing permission pattern:", err);
+      set({ permissionInterruptionsLoading: false });
+    }
+  },
+
+  dismissPermissionInterruption: async (id: string) => {
+    const state = get();
+    const interruption = state.permissionInterruptions.find((i) => i.id === id);
+    if (!interruption) return;
+
+    try {
+      const response = await fetch("/api/permission-interruptions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pattern: interruption.fullPattern }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to dismiss permission interruption");
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        console.error("Error dismissing permission interruption:", result.error);
+        return;
+      }
+
+      // Remove the dismissed interruption from the list
+      set({
+        permissionInterruptions: state.permissionInterruptions.filter((i) => i.id !== id),
+      });
+    } catch (err) {
+      console.error("Error dismissing permission interruption:", err);
+    }
+  },
+
+  resetDismissedInterruptions: async () => {
+    set({ permissionInterruptionsLoading: true });
+
+    try {
+      const response = await fetch("/api/permission-interruptions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reset: true }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to reset dismissed interruptions");
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        console.error("Error resetting dismissed interruptions:", result.error);
+        set({ permissionInterruptionsLoading: false });
+        return;
+      }
+
+      // Reload to show all interruptions again
+      await get().loadPermissionInterruptions();
+    } catch (err) {
+      console.error("Error resetting dismissed interruptions:", err);
+      set({ permissionInterruptionsLoading: false });
     }
   },
 

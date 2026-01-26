@@ -2,21 +2,19 @@
 
 ## Build Instructions
 
-After making any code changes, always rebuild and deploy the Electron app:
+After making any code changes, deploy the Electron app:
 
 ```bash
-pnpm electron:build
 ./scripts/deploy-local.sh
 ```
 
-This builds the Next.js app, prepares the standalone build, packages the Electron app, and installs it to Applications.
+This cleans build artifacts, builds the Next.js app, packages the Electron app, and installs it to Applications.
 
 ## Development
 
 - `pnpm dev` - Run Next.js dev server
 - `pnpm electron:dev` - Run in Electron with hot reload
 - `pnpm build` - Build Next.js only
-- `pnpm electron:build` - Full production build (always run this after changes)
 
 ## Project Structure
 

@@ -286,3 +286,30 @@ export interface FixSecurityRecommendationResponse {
   success: boolean;
   error?: string;
 }
+
+// Permission interruptions types (for tracking frequently blocked commands)
+export type PermissionTimeFilter = "day" | "week" | "month";
+
+export interface ToolExample {
+  toolInput: Record<string, unknown>; // The actual tool input (e.g., {command: "git commit -m 'foo'"})
+  userPrompt?: string; // What the user asked (if available nearby)
+  timestamp: number;
+}
+
+export interface AggregatedInterruption {
+  id: string;
+  toolName: string; // "Bash", "Read", etc.
+  pattern: string; // "git add:*"
+  fullPattern: string; // "Bash(git add:*)"
+  occurrences: number;
+  lastOccurrence: number; // timestamp
+  projects: string[]; // affected project paths
+  alreadyInUserScope: boolean;
+  examples: ToolExample[]; // Up to 3 recent examples with context
+}
+
+export interface PermissionInterruptionsResponse {
+  interruptions: AggregatedInterruption[];
+  timeFilter: PermissionTimeFilter;
+  totalEvents: number;
+}
