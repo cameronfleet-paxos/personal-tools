@@ -33,29 +33,34 @@ function getLogPath(date: string): string {
   return path.join(getLogsDir(), `${date}.json`);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     await ensureLogsDir();
-    const today = getTodayDate();
-    const logPath = getLogPath(today);
+
+    // Check for date query parameter
+    const url = new URL(request.url);
+    const dateParam = url.searchParams.get('date');
+    const date = dateParam || getTodayDate();
+
+    const logPath = getLogPath(date);
 
     try {
       const data = await fs.readFile(logPath, 'utf-8');
       const log: DailyLog = JSON.parse(data);
       return NextResponse.json(log);
     } catch {
-      // No log for today yet, return empty log
+      // No log for this date yet, return empty log
       const emptyLog: DailyLog = {
-        date: today,
+        date,
         completedItems: [],
       };
       return NextResponse.json(emptyLog);
     }
   } catch (error) {
     console.error('Failed to read log:', error);
-    const today = getTodayDate();
+    const date = getTodayDate();
     return NextResponse.json({
-      date: today,
+      date,
       completedItems: [],
     });
   }

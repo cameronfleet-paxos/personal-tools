@@ -34,6 +34,11 @@ function copyRecursive(src, dest) {
     // Copy the target of the symlink
     copyRecursive(realPath, dest);
   } else if (stat.isDirectory()) {
+    // Skip dist directory to avoid including previous Electron builds
+    const basename = path.basename(src);
+    if (basename === 'dist' || basename === '.standalone-build') {
+      return;
+    }
     fs.mkdirSync(dest, { recursive: true });
     for (const entry of fs.readdirSync(src)) {
       copyRecursive(path.join(src, entry), path.join(dest, entry));

@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { ScheduleItemRow } from '@/components/schedule-item';
 import { SplashScreen } from '@/components/splash-screen';
+import { CompletionDialog } from '@/components/completion-dialog';
+import { HistoryMenu } from '@/components/history-menu';
 import { useScheduleStore } from '@/lib/store';
 import { scheduleNotifications, clearAllNotifications } from '@/lib/notifications';
 import { timeToMinutes, getCurrentTimeMinutes, getTodayDate } from '@/lib/utils';
@@ -28,11 +30,18 @@ export default function Home() {
     dailyLog,
     editingId,
     isLoading,
+    pendingCompletion,
+    viewingDate,
     toggleComplete,
+    confirmCompletion,
+    cancelCompletion,
     updateItemTime,
     setEditingId,
     loadData,
   } = useScheduleStore();
+
+  // Determine if we're viewing historical data (read-only mode)
+  const isHistorical = viewingDate !== null;
 
   // Load data on mount
   useEffect(() => {
@@ -105,12 +114,40 @@ export default function Home() {
     );
   }
 
+  // Get the pending item for the completion dialog
+  const pendingItem = pendingCompletion
+    ? schedule.find(item => item.id === pendingCompletion.itemId)
+    : undefined;
+
   return (
     <div className="max-w-lg mx-auto">
       <Card>
         <CardHeader>
-          <CardTitle className="text-2xl">Otto&apos;s Schedule</CardTitle>
-          <CardDescription>{getTodayDate()}</CardDescription>
+          <div className="flex items-start justify-between">
+            <div>
+              <CardTitle className="text-2xl">Otto&apos;s Schedule</CardTitle>
+              <CardDescription>
+                {isHistorical ? (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    Viewing: {new Date(viewingDate + 'T00:00:00').toLocaleDateString('en-US', {
+                      weekday: 'long',
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </span>
+                ) : (
+                  getTodayDate()
+                )}
+              </CardDescription>
+            </div>
+            <HistoryMenu />
+          </div>
+          {isHistorical && (
+            <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-2 py-1 rounded">
+              Read-only: Viewing historical data
+            </div>
+          )}
           <div className="mt-4 space-y-2">
             <div className="flex justify-between text-sm">
               <span>{completedCount} of {totalCount} completed</span>
@@ -120,24 +157,42 @@ export default function Home() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          {schedule.map((item) => (
-            <ScheduleItemRow
-              key={item.id}
-              item={item}
-              isCompleted={dailyLog.completedItems.some(c => c.itemId === item.id)}
-              isNext={item.id === nextItemId}
-              isEditing={editingId === item.id}
-              onToggle={() => toggleComplete(item.id)}
-              onEditStart={() => setEditingId(item.id)}
-              onEditSave={(time, endTime) => {
-                updateItemTime(item.id, time, endTime);
-                setEditingId(null);
-              }}
-              onEditCancel={() => setEditingId(null)}
-            />
-          ))}
+          {schedule.map((item) => {
+            const completedItem = dailyLog.completedItems.find(c => c.itemId === item.id);
+            return (
+              <ScheduleItemRow
+                key={item.id}
+                item={item}
+                isCompleted={!!completedItem}
+                completionData={completedItem}
+                isNext={!isHistorical && item.id === nextItemId}
+                isEditing={!isHistorical && editingId === item.id}
+                disabled={isHistorical}
+                onToggle={() => !isHistorical && toggleComplete(item.id)}
+                onEditStart={() => !isHistorical && setEditingId(item.id)}
+                onEditSave={(time, endTime) => {
+                  if (!isHistorical) {
+                    updateItemTime(item.id, time, endTime);
+                    setEditingId(null);
+                  }
+                }}
+                onEditCancel={() => setEditingId(null)}
+              />
+            );
+          })}
         </CardContent>
       </Card>
+
+      <CompletionDialog
+        open={!!pendingCompletion}
+        item={pendingItem}
+        onConfirm={(actualTime, notes) => {
+          if (pendingCompletion) {
+            confirmCompletion(pendingCompletion.itemId, actualTime, notes);
+          }
+        }}
+        onCancel={cancelCompletion}
+      />
     </div>
   );
 }
