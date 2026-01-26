@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Puzzle, Info, Calendar, FolderOpen } from "lucide-react";
+import { LoadingOverlay } from "@/components/loading-overlay";
 import type { SettingsTarget } from "@/types/settings";
 
 export default function PluginsPage() {
@@ -20,7 +21,11 @@ export default function PluginsPage() {
 
   const inProject = isInProjectContext();
 
-  if (isLoading) {
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = effectiveUser !== null || plugins !== null;
+
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading settings...</div>
@@ -48,9 +53,11 @@ export default function PluginsPage() {
   const pluginEntries = Object.entries(installedPlugins);
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-semibold">Plugins</h1>
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
+      <div className="space-y-6 max-w-3xl">
+        <div>
+          <h1 className="text-2xl font-semibold">Plugins</h1>
         <p className="text-muted-foreground">
           Manage your installed Claude Code plugins.
         </p>
@@ -133,6 +140,7 @@ export default function PluginsPage() {
           )}
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

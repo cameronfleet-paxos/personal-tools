@@ -36,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SyncButton } from "@/components/sync-button";
+import { LoadingOverlay } from "@/components/loading-overlay";
 
 function getTypeLabel(type: RecommendationType): string {
   switch (type) {
@@ -219,13 +220,8 @@ export default function DashboardPage() {
     loadPermissionInterruptions();
   }, [loadRecommendations, loadSecurityRecommendations, loadPermissionInterruptions]);
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading settings...</div>
-      </div>
-    );
-  }
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = effectiveGlobal !== null || localSettings !== null;
 
   const currentModel = effectiveGlobal?.model || "sonnet";
   const enabledPlugins = Object.values(
@@ -237,9 +233,20 @@ export default function DashboardPage() {
     (effectiveGlobal?.permissions?.allow?.length || 0) +
     (localSettings?.permissions?.allow?.length || 0);
 
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading settings...</div>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Dashboard</h1>
           <p className="text-muted-foreground">
@@ -792,5 +799,6 @@ export default function DashboardPage() {
         )}
       </div>
     </div>
+    </>
   );
 }

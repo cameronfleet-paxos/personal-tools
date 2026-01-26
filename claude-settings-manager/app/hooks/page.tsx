@@ -31,6 +31,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Plus, Trash2, Terminal, MessageSquare } from "lucide-react";
+import { LoadingOverlay } from "@/components/loading-overlay";
 import type { HookType, HookMatcher, Hook, SettingsTarget, Settings } from "@/types/settings";
 
 interface HookItem {
@@ -91,7 +92,11 @@ export default function HooksPage() {
   const [newMatcher, setNewMatcher] = useState("");
   const [newTimeout, setNewTimeout] = useState("");
 
-  if (isLoading) {
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = effectiveUser !== null;
+
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading settings...</div>
@@ -222,9 +227,11 @@ export default function HooksPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-semibold">Hooks</h1>
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
+      <div className="space-y-6 max-w-3xl">
+        <div>
+          <h1 className="text-2xl font-semibold">Hooks</h1>
         <p className="text-muted-foreground">
           Configure commands that run at specific lifecycle events.
         </p>
@@ -435,6 +442,7 @@ export default function HooksPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+      </div>
+    </>
   );
 }

@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Plus, Trash2, Terminal, Wrench } from "lucide-react";
 import { ScopeBadge } from "@/components/ui/scope-badge";
+import { LoadingOverlay } from "@/components/loading-overlay";
 import type { SettingsTarget, Settings } from "@/types/settings";
 
 interface PatternItem {
@@ -46,7 +47,11 @@ export default function AdvancedPage() {
   const [newPattern, setNewPattern] = useState("");
   const [isPatternDialogOpen, setIsPatternDialogOpen] = useState(false);
 
-  if (isLoading) {
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = effectiveUser !== null;
+
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading settings...</div>
@@ -129,9 +134,11 @@ export default function AdvancedPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-semibold">Advanced Settings</h1>
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
+      <div className="space-y-6 max-w-3xl">
+        <div>
+          <h1 className="text-2xl font-semibold">Advanced Settings</h1>
         <p className="text-muted-foreground">
           Additional configuration options for power users.
         </p>
@@ -281,6 +288,7 @@ export default function AdvancedPage() {
           </div>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

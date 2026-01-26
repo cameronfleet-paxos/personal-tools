@@ -33,6 +33,7 @@ import {
   AlertTriangle,
   Shield,
 } from "lucide-react";
+import { LoadingOverlay } from "@/components/loading-overlay";
 import type { SettingsTarget, Settings } from "@/types/settings";
 
 interface SandboxItem {
@@ -63,7 +64,11 @@ export default function SandboxPage() {
   const [isSocketDialogOpen, setIsSocketDialogOpen] = useState(false);
   const [isCommandDialogOpen, setIsCommandDialogOpen] = useState(false);
 
-  if (isLoading) {
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = effectiveUser !== null;
+
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading settings...</div>
@@ -439,9 +444,11 @@ export default function SandboxPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <div>
-        <h1 className="text-2xl font-semibold">Sandbox Settings</h1>
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
+      <div className="space-y-6 max-w-3xl">
+        <div>
+          <h1 className="text-2xl font-semibold">Sandbox Settings</h1>
         <p className="text-muted-foreground">
           Control execution restrictions for Claude.
         </p>
@@ -805,6 +812,7 @@ export default function SandboxPage() {
           </Tabs>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

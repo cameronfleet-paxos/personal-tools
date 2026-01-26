@@ -461,6 +461,31 @@ export async function reindex(): Promise<SettingsIndex> {
   return index;
 }
 
+/**
+ * Refresh the index by re-reading commands/skills from existing locations
+ * without scanning the filesystem for new projects
+ */
+export async function refreshIndex(): Promise<SettingsIndex> {
+  const existing = await loadIndex();
+
+  if (!existing) {
+    // No existing index - fall back to full reindex
+    return reindex();
+  }
+
+  // Re-scan commands from existing locations (without filesystem discovery)
+  const commands = scanAllCommands(existing.locations);
+
+  const refreshedIndex: SettingsIndex = {
+    lastIndexed: new Date().toISOString(),
+    locations: existing.locations, // Keep existing locations
+    commands,
+  };
+
+  await saveIndex(refreshedIndex);
+  return refreshedIndex;
+}
+
 export async function getOrCreateIndex(): Promise<{
   index: SettingsIndex;
   isFirstRun: boolean;

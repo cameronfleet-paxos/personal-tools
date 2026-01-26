@@ -17,11 +17,16 @@ import {
   Activity,
   Coins,
 } from "lucide-react";
+import { LoadingOverlay } from "@/components/loading-overlay";
 
 export default function StatsPage() {
   const { stats, isLoading } = useSettingsStore();
 
-  if (isLoading) {
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = stats !== null;
+
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading settings...</div>
@@ -80,15 +85,17 @@ export default function StatsPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Usage Statistics</h1>
-        <p className="text-muted-foreground">
-          Last computed: {stats.lastComputedDate || "N/A"}
-        </p>
-      </div>
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold">Usage Statistics</h1>
+          <p className="text-muted-foreground">
+            Last computed: {stats.lastComputedDate || "N/A"}
+          </p>
+        </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Total Sessions</CardTitle>
@@ -285,6 +292,7 @@ export default function StatsPage() {
           </div>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

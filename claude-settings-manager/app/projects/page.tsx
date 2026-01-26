@@ -14,6 +14,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { ScopeBadge } from "@/components/ui/scope-badge";
+import { LoadingOverlay } from "@/components/loading-overlay";
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -58,7 +59,11 @@ export default function ProjectsPage() {
     }
   };
 
-  if (isIndexing && !settingsIndex) {
+  // Check if we have data (for initial load vs subsequent re-indexing)
+  const hasData = settingsIndex !== null;
+
+  // Show skeleton on initial load when there's no data
+  if (isIndexing && !hasData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex items-center gap-2 text-muted-foreground">
@@ -70,8 +75,10 @@ export default function ProjectsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
+    <>
+      <LoadingOverlay isVisible={isIndexing && hasData} />
+      <div className="space-y-6">
+        <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Projects</h1>
           <p className="text-muted-foreground">
@@ -192,6 +199,7 @@ export default function ProjectsPage() {
           </Card>
         ))}
       </div>
-    </div>
+      </div>
+    </>
   );
 }

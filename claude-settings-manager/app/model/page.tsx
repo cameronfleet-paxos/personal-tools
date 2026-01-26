@@ -10,6 +10,7 @@ import { ScopeBadge, getScopeDescription } from "@/components/ui/scope-badge";
 import type { Scope } from "@/components/ui/scope-badge";
 import type { SettingsTarget } from "@/types/settings";
 import { Brain, Zap, Sparkles, Lightbulb } from "lucide-react";
+import { LoadingOverlay } from "@/components/loading-overlay";
 
 const models = [
   {
@@ -89,7 +90,11 @@ export default function ModelPage() {
     return inProject && source === "user";
   };
 
-  if (isLoading) {
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = effectiveUser !== null;
+
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-muted-foreground">Loading settings...</div>
@@ -98,6 +103,8 @@ export default function ModelPage() {
   }
 
   return (
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
     <div className="max-w-2xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Model Settings</h1>
@@ -204,6 +211,7 @@ export default function ModelPage() {
           </div>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

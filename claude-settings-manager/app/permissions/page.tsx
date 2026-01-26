@@ -43,6 +43,7 @@ import {
   Edit3,
   Server,
 } from "lucide-react";
+import { LoadingOverlay } from "@/components/loading-overlay";
 
 type RuleType = "allow" | "deny" | "ask";
 type ToolCategory = "bash" | "webfetch" | "websearch" | "read" | "edit" | "mcp" | "other";
@@ -94,13 +95,8 @@ export default function PermissionsPage() {
     inProject ? "project" : "user"
   );
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Loading settings...</div>
-      </div>
-    );
-  }
+  // Check if we have data (for initial load vs subsequent syncs)
+  const hasData = effectiveUser !== null || effectiveGlobal !== null;
 
   // Helper to get rules from a settings source
   const getRulesFromSource = (
@@ -132,6 +128,15 @@ export default function PermissionsPage() {
       ];
     }
   };
+
+  // Show skeleton on initial load when there's no data
+  if (isLoading && !hasData) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading settings...</div>
+      </div>
+    );
+  }
 
   const allowRules = getAllRules("allow");
   const askRules = getAllRules("ask");
@@ -283,10 +288,12 @@ export default function PermissionsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Permissions</h1>
+    <>
+      <LoadingOverlay isVisible={isLoading && hasData} />
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">Permissions</h1>
           <p className="text-muted-foreground">
             Control what Claude can do automatically.
           </p>
@@ -521,6 +528,7 @@ export default function PermissionsPage() {
           </Tabs>
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </>
   );
 }

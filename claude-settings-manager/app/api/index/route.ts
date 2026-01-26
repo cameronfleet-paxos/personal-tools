@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { IndexResponse, ReindexResponse } from "@/types/settings";
-import { getOrCreateIndex, reindex } from "@/lib/indexer";
+import { getOrCreateIndex, reindex, refreshIndex } from "@/lib/indexer";
 
 export async function GET(): Promise<NextResponse<IndexResponse>> {
   try {
@@ -34,6 +34,31 @@ export async function POST(): Promise<NextResponse<ReindexResponse>> {
   } catch (error) {
     const duration = Date.now() - startTime;
     console.error("Error during reindex:", error);
+
+    return NextResponse.json({
+      success: false,
+      index: { lastIndexed: new Date().toISOString(), locations: [] },
+      duration,
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+}
+
+export async function PUT(): Promise<NextResponse<ReindexResponse>> {
+  const startTime = Date.now();
+
+  try {
+    const index = await refreshIndex();
+    const duration = Date.now() - startTime;
+
+    return NextResponse.json({
+      success: true,
+      index,
+      duration,
+    });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error("Error during refresh:", error);
 
     return NextResponse.json({
       success: false,

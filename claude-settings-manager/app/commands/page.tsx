@@ -28,6 +28,7 @@ import {
   Clock,
   Sparkles,
 } from "lucide-react";
+import { LoadingOverlay } from "@/components/loading-overlay";
 import type { CommandEntry } from "@/types/settings";
 
 function truncatePath(filePath: string): string {
@@ -82,6 +83,9 @@ export default function CommandsPage() {
   const commandCount = commands.filter((c) => c.type === "command").length;
   const skillCount = commands.filter((c) => c.type === "skill").length;
 
+  // Check if we have data (for initial load vs subsequent re-indexing)
+  const hasData = commands.length > 0 || commandsLastIndexed !== null;
+
   // Sort namespace keys: empty string (ungrouped) last, then alphabetically
   const sortedNamespaces = Array.from(grouped.keys()).sort((a, b) => {
     if (a === "" && b !== "") return 1;
@@ -90,9 +94,11 @@ export default function CommandsPage() {
   });
 
   return (
-    <div className="space-y-6 max-w-4xl">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+    <>
+      <LoadingOverlay isVisible={isIndexing && hasData} />
+      <div className="space-y-6 max-w-4xl">
+        {/* Header */}
+        <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Commands & Skills</h1>
           <p className="text-muted-foreground">
@@ -276,6 +282,7 @@ export default function CommandsPage() {
           })}
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

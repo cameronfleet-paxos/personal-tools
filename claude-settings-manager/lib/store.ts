@@ -148,6 +148,7 @@ interface SettingsStore {
   saveChanges: () => Promise<void>;
   loadIndex: () => Promise<void>;
   reindex: () => Promise<void>;
+  refreshIndex: () => Promise<void>;
   selectProject: (path: string | null) => Promise<void>;
   setCommandsSearchQuery: (query: string) => void;
   setCommandsSourceFilter: (filter: "all" | "user" | "project") => void;
@@ -264,16 +265,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   loadSettings: async () => {
     const state = get();
-    set({ isLoading: true, isSyncing: true, error: null });
+    set({ isLoading: true, isSyncing: true, isIndexing: true, error: null });
     try {
-      const url = state.selectedProjectPath
+      const settingsUrl = state.selectedProjectPath
         ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
         : "/api/settings";
-      const response = await fetch(url);
-      if (!response.ok) {
+
+      // Fetch settings and refresh index in parallel
+      const [settingsResponse, indexResponse] = await Promise.all([
+        fetch(settingsUrl),
+        fetch("/api/index", { method: "PUT" }),
+      ]);
+
+      if (!settingsResponse.ok) {
         throw new Error("Failed to load settings");
       }
-      const data = await response.json();
+      const data = await settingsResponse.json();
+
+      // Process index response
+      let indexData = null;
+      if (indexResponse.ok) {
+        indexData = await indexResponse.json();
+      }
 
       if (state.selectedProjectPath) {
         // Multi-source response (project context) - userLocal removed
@@ -293,8 +306,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           // Legacy aliases
           effectiveGlobal: multiData.project || {},
           effectiveLocal: multiData.projectLocal || {},
+          // Update index data if refresh succeeded
+          settingsIndex: indexData?.success ? indexData.index : state.settingsIndex,
+          commands: indexData?.success ? (indexData.index?.commands?.commands || []) : state.commands,
+          commandsLastIndexed: indexData?.success ? (indexData.index?.lastIndexed || null) : state.commandsLastIndexed,
           isLoading: false,
           isSyncing: false,
+          isIndexing: false,
           lastSyncedAt: new Date(),
           pendingChanges: [],
         });
@@ -315,8 +333,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           // Legacy aliases
           effectiveGlobal: data.global || {},
           effectiveLocal: {},
+          // Update index data if refresh succeeded
+          settingsIndex: indexData?.success ? indexData.index : state.settingsIndex,
+          commands: indexData?.success ? (indexData.index?.commands?.commands || []) : state.commands,
+          commandsLastIndexed: indexData?.success ? (indexData.index?.lastIndexed || null) : state.commandsLastIndexed,
           isLoading: false,
           isSyncing: false,
+          isIndexing: false,
           lastSyncedAt: new Date(),
           pendingChanges: [],
         });
@@ -326,6 +349,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         error: err instanceof Error ? err.message : "Unknown error",
         isLoading: false,
         isSyncing: false,
+        isIndexing: false,
       });
     }
   },
@@ -570,6 +594,33 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Reindex failed",
+        isIndexing: false,
+      });
+    }
+  },
+
+  refreshIndex: async () => {
+    set({ isIndexing: true, error: null });
+    try {
+      const response = await fetch("/api/index", { method: "PUT" });
+      if (!response.ok) {
+        throw new Error("Failed to refresh index");
+      }
+      const data = await response.json();
+      if (data.success) {
+        const index = data.index;
+        set({
+          settingsIndex: index,
+          commands: index?.commands?.commands || [],
+          commandsLastIndexed: index?.lastIndexed || null,
+          isIndexing: false,
+        });
+      } else {
+        throw new Error(data.error || "Refresh failed");
+      }
+    } catch (err) {
+      set({
+        error: err instanceof Error ? err.message : "Refresh failed",
         isIndexing: false,
       });
     }
