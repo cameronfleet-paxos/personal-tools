@@ -19,11 +19,13 @@ import {
   User,
   Users,
   Terminal,
+  MessageSquare,
 } from "lucide-react";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: Home },
   { name: "Projects", href: "/projects", icon: FolderOpen },
+  { name: "Discussions", href: "/discussions", icon: MessageSquare },
   { name: "Model", href: "/model", icon: Brain },
   { name: "Permissions", href: "/permissions", icon: Shield },
   { name: "Sandbox", href: "/sandbox", icon: Box },

@@ -14,6 +14,7 @@ import type {
   SecurityRecommendation,
   AggregatedInterruption,
   PermissionTimeFilter,
+  SessionMetadata,
 } from "@/types/settings";
 
 function generateId(): string {
@@ -120,6 +121,11 @@ interface SettingsStore {
   permissionInterruptionsFilter: PermissionTimeFilter;
   permissionInterruptionsTotalEvents: number;
 
+  // Discussions state
+  discussions: SessionMetadata[];
+  discussionsLoading: boolean;
+  discussionsTotalCount: number;
+
   // UI State
   isLoading: boolean;
   isSaving: boolean;
@@ -168,6 +174,9 @@ interface SettingsStore {
   allowPermissionPattern: (id: string) => Promise<void>;
   dismissPermissionInterruption: (id: string) => Promise<void>;
   resetDismissedInterruptions: () => Promise<void>;
+
+  // Discussions actions
+  loadDiscussions: (limit?: number) => Promise<void>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -217,6 +226,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   permissionInterruptionsLoading: false,
   permissionInterruptionsFilter: "week",
   permissionInterruptionsTotalEvents: 0,
+
+  // Discussions state
+  discussions: [],
+  discussionsLoading: false,
+  discussionsTotalCount: 0,
 
   isLoading: false,
   isSaving: false,
@@ -883,6 +897,25 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (err) {
       console.error("Error resetting dismissed interruptions:", err);
       set({ permissionInterruptionsLoading: false });
+    }
+  },
+
+  loadDiscussions: async (limit: number = 50) => {
+    set({ discussionsLoading: true });
+    try {
+      const response = await fetch(`/api/discussions?limit=${limit}`);
+      if (!response.ok) {
+        throw new Error("Failed to load discussions");
+      }
+      const data = await response.json();
+      set({
+        discussions: data.sessions,
+        discussionsTotalCount: data.totalCount,
+        discussionsLoading: false,
+      });
+    } catch (err) {
+      console.error("Error loading discussions:", err);
+      set({ discussionsLoading: false });
     }
   },
 

@@ -313,3 +313,45 @@ export interface PermissionInterruptionsResponse {
   timeFilter: PermissionTimeFilter;
   totalEvents: number;
 }
+
+// Discussions types (for browsing conversation history)
+export interface SessionMetadata {
+  sessionId: string;
+  projectPath: string; // Decoded path
+  projectName: string; // Display name (derived from path)
+  timestamp: number; // File mtime (for sorting)
+  firstUserPrompt: string; // Snippet (~150 chars)
+}
+
+export interface ConversationMessage {
+  uuid: string;
+  type: "user" | "assistant";
+  subtype?: "prompt" | "tool_result";
+  timestamp: string;
+  content: string | ContentBlock[];
+}
+
+export interface ContentBlock {
+  type: string;
+  id?: string;
+  name?: string;
+  text?: string;
+  input?: Record<string, unknown>;
+}
+
+export interface SessionConversation {
+  sessionId: string;
+  projectPath: string;
+  projectName: string;
+  messages: ConversationMessage[];
+}
+
+export interface DiscussionsResponse {
+  sessions: SessionMetadata[];
+  totalCount: number;
+}
+
+export interface SessionConversationResponse {
+  conversation: SessionConversation | null;
+  error?: string;
+}
