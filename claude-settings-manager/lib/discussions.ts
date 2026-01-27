@@ -1,7 +1,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as readline from "readline";
-import { createReadStream } from "fs";
+import { createReadStream, existsSync } from "fs";
 import type {
   SessionMetadata,
   SessionConversation,
@@ -27,11 +27,104 @@ interface JournalEntry {
 }
 
 /**
- * Decode a project directory name to a readable path
- * e.g., "-Users-cameronfleet-dev-pax" -> "/Users/cameronfleet/dev/pax"
+ * macOS folders that trigger permission prompts when accessed.
+ * We should avoid calling existsSync() on paths inside these folders.
+ */
+const SENSITIVE_MACOS_FOLDERS = [
+  "Downloads",
+  "Documents",
+  "Desktop",
+  "Pictures",
+  "Movies",
+  "Music",
+];
+
+/**
+ * Check if a path is inside a sensitive macOS folder that would trigger permission prompts.
+ */
+function isInSensitiveFolder(pathToCheck: string): boolean {
+  const parts = pathToCheck.split("/");
+  // Check if any path component is a sensitive folder (typically at /Users/username/SensitiveFolder)
+  return parts.some((part) => SENSITIVE_MACOS_FOLDERS.includes(part));
+}
+
+/**
+ * Decode a project directory name to a readable path.
+ * Claude Code encodes paths by replacing "/" with "-", but this is ambiguous
+ * when folder names contain hyphens. We resolve ambiguity by checking which
+ * paths actually exist on disk.
+ *
+ * Strategy: Try to find the longest valid hyphenated path at each step.
+ * For example, if both /dev/pax and /dev/pax-agent1 exist, and we're decoding
+ * "dev-pax-agent1", we should prefer pax-agent1 over pax/agent1.
+ *
+ * e.g., "-Users-cameronfleet-dev-personal-tools" -> "/Users/cameronfleet/dev/personal-tools"
  */
 function decodeProjectPath(dirName: string): string {
-  return "/" + dirName.replace(/-/g, "/").replace(/^\/+/, "");
+  // For paths in sensitive folders, fall back to simple decode to avoid permission prompts
+  if (SENSITIVE_MACOS_FOLDERS.some((folder) => dirName.includes(`-${folder}-`) || dirName.endsWith(`-${folder}`))) {
+    return "/" + dirName.replace(/-/g, "/").replace(/^\/+/, "");
+  }
+
+  // Remove leading dash and split by dash
+  const segments = dirName.replace(/^-/, "").split("-");
+
+  if (segments.length === 0) return dirName;
+
+  let currentPath = "";
+  let i = 0;
+
+  while (i < segments.length) {
+    const segment = segments[i];
+    const testPath = currentPath + "/" + segment;
+
+    // Skip existsSync for sensitive folders to avoid permission prompts
+    if (isInSensitiveFolder(testPath)) {
+      const remaining = segments.slice(i).join("/");
+      return currentPath + "/" + remaining;
+    }
+
+    // Try to find the longest valid hyphenated path starting from this segment
+    // Check from longest to shortest to prefer longer matches
+    let bestMatch = "";
+    let bestMatchEndIndex = i;
+
+    // First check if the single segment works
+    if (existsSync(testPath)) {
+      bestMatch = testPath;
+      bestMatchEndIndex = i + 1;
+    }
+
+    // Then try joining with subsequent segments (longer paths)
+    let joined = segment;
+    for (let j = i + 1; j < segments.length; j++) {
+      joined += "-" + segments[j];
+      const joinedPath = currentPath + "/" + joined;
+
+      // Skip existsSync for sensitive folders
+      if (isInSensitiveFolder(joinedPath)) {
+        break;
+      }
+
+      if (existsSync(joinedPath)) {
+        // Found a longer valid path - prefer this one
+        bestMatch = joinedPath;
+        bestMatchEndIndex = j + 1;
+      }
+    }
+
+    if (bestMatch) {
+      currentPath = bestMatch;
+      i = bestMatchEndIndex;
+    } else {
+      // Couldn't find any valid path, fall back to simple replacement
+      // for remaining segments
+      const remaining = segments.slice(i).join("/");
+      return currentPath + "/" + remaining;
+    }
+  }
+
+  return currentPath || "/" + dirName.replace(/-/g, "/").replace(/^\/+/, "");
 }
 
 /**
