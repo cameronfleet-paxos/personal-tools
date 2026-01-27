@@ -28,6 +28,12 @@ const EXCLUDED_DIRS = new Set([
   ".next",
   ".nuxt",
   ".turbo",
+  // macOS system folders that trigger permission prompts
+  "Downloads",
+  "Music",
+  "Movies",
+  "Pictures",
+  "Public",
 ]);
 
 // Max depth from home directory
