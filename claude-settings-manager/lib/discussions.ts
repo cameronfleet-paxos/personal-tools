@@ -175,15 +175,44 @@ async function extractFirstUserPrompt(
         if (
           entry.type === "user" &&
           !entry.isMeta &&
-          entry.message?.role === "user" &&
-          typeof entry.message.content === "string"
+          entry.message?.role === "user"
         ) {
-          const content = entry.message.content;
+          let content: string | null = null;
 
-          // Skip tool results and system tags
+          // Handle string content
+          if (typeof entry.message.content === "string") {
+            content = entry.message.content;
+          }
+          // Handle array content (e.g., when images are present)
+          else if (Array.isArray(entry.message.content)) {
+            // Find the first text block
+            const textBlock = entry.message.content.find(
+              (block) => block.type === "text" && typeof block.text === "string"
+            );
+            if (textBlock && textBlock.text) {
+              content = textBlock.text;
+            }
+          }
+
+          if (!content) return;
+
+          // Handle slash command messages - extract command-args if present
+          if (content.startsWith("<command-name>")) {
+            const argsMatch =
+              content.match(/<command-args>([\s\S]*?)<\/command-args>/);
+            if (argsMatch && argsMatch[1].trim()) {
+              // Use the command args as the prompt
+              content = argsMatch[1].trim();
+            } else {
+              // No meaningful args (e.g., /clear), skip this message
+              return;
+            }
+          }
+
+          // Skip other system tags and tool results
           if (
-            content.startsWith("<") ||
-            content.includes("tool_result") ||
+            content.startsWith("<local-command") ||
+            content.startsWith("<tool_result>") ||
             content.startsWith("[")
           ) {
             return;
