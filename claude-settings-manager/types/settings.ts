@@ -306,8 +306,8 @@ export interface ToolExample {
 export interface AggregatedInterruption {
   id: string;
   toolName: string; // "Bash", "Read", etc.
-  pattern: string; // "git add:*"
-  fullPattern: string; // "Bash(git add:*)"
+  pattern: string; // "git add *"
+  fullPattern: string; // "Bash(git add *)"
   occurrences: number;
   lastOccurrence: number; // timestamp
   projects: string[]; // affected project paths

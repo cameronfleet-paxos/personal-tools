@@ -292,7 +292,7 @@ export default function PermissionsPage() {
   const getPatternPlaceholder = () => {
     switch (newRuleCategory) {
       case "bash":
-        return "npm run:*";
+        return "npm run *";
       case "webfetch":
         return "domain:example.com";
       case "read":
@@ -308,7 +308,7 @@ export default function PermissionsPage() {
   const getPatternHelp = () => {
     switch (newRuleCategory) {
       case "bash":
-        return "Use * as wildcard. Examples: npm run:*, git push, chmod:*";
+        return "Use * as wildcard. Examples: npm run *, git push, chmod *";
       case "webfetch":
         return "Format: domain:example.com. Examples: domain:github.com";
       case "websearch":

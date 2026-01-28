@@ -147,6 +147,8 @@ function isDangerousPattern(pattern: string): boolean {
     "Bash(*)",
     "Bash:*",
     "bash:*",
+    "Bash *",
+    "bash *",
     "Edit(*)",
     "Write(*)",
   ];
