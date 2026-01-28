@@ -736,8 +736,32 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         recommendationsLoading: false,
       });
 
-      // Reload settings to reflect changes
-      await get().loadSettings();
+      // Silently reload settings without triggering loading states
+      // This avoids the jarring skeleton reload after promoting a recommendation
+      try {
+        const settingsUrl = state.selectedProjectPath
+          ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
+          : "/api/settings";
+        const settingsResponse = await fetch(settingsUrl);
+        if (settingsResponse.ok) {
+          const data = await settingsResponse.json();
+          if (state.selectedProjectPath) {
+            set({
+              userSettings: data.user,
+              effectiveUser: data.user || {},
+            });
+          } else {
+            set({
+              userSettings: data.global,
+              globalSettings: data.global,
+              effectiveUser: data.global || {},
+              effectiveGlobal: data.global || {},
+            });
+          }
+        }
+      } catch {
+        // Silent fail - settings will refresh on next full load
+      }
     } catch (err) {
       console.error("Error applying recommendation:", err);
       set({ recommendationsLoading: false });
@@ -797,8 +821,31 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         securityRecommendationsLoading: false,
       });
 
-      // Reload settings to reflect changes
-      await get().loadSettings();
+      // Silently reload settings without triggering loading states
+      try {
+        const settingsUrl = state.selectedProjectPath
+          ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
+          : "/api/settings";
+        const settingsResponse = await fetch(settingsUrl);
+        if (settingsResponse.ok) {
+          const data = await settingsResponse.json();
+          if (state.selectedProjectPath) {
+            set({
+              userSettings: data.user,
+              effectiveUser: data.user || {},
+            });
+          } else {
+            set({
+              userSettings: data.global,
+              globalSettings: data.global,
+              effectiveUser: data.global || {},
+              effectiveGlobal: data.global || {},
+            });
+          }
+        }
+      } catch {
+        // Silent fail - settings will refresh on next full load
+      }
     } catch (err) {
       console.error("Error fixing security recommendation:", err);
       set({ securityRecommendationsLoading: false });
@@ -864,8 +911,31 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         permissionInterruptionsLoading: false,
       });
 
-      // Reload settings to reflect changes
-      await get().loadSettings();
+      // Silently reload settings without triggering loading states
+      try {
+        const settingsUrl = state.selectedProjectPath
+          ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
+          : "/api/settings";
+        const settingsResponse = await fetch(settingsUrl);
+        if (settingsResponse.ok) {
+          const data = await settingsResponse.json();
+          if (state.selectedProjectPath) {
+            set({
+              userSettings: data.user,
+              effectiveUser: data.user || {},
+            });
+          } else {
+            set({
+              userSettings: data.global,
+              globalSettings: data.global,
+              effectiveUser: data.global || {},
+              effectiveGlobal: data.global || {},
+            });
+          }
+        }
+      } catch {
+        // Silent fail - settings will refresh on next full load
+      }
     } catch (err) {
       console.error("Error allowing permission pattern:", err);
       set({ permissionInterruptionsLoading: false });

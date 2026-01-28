@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/select";
 import { SyncButton } from "@/components/sync-button";
 import { LoadingOverlay } from "@/components/loading-overlay";
+import { Skeleton } from "@/components/ui/skeleton";
 
 function getTypeLabel(type: RecommendationType): string {
   switch (type) {
@@ -327,7 +328,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Recommendations Section */}
-      {recommendations.length > 0 && (
+      {(recommendations.length > 0 || recommendationsLoading) && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <div className="flex items-center gap-2">
@@ -342,6 +343,25 @@ export default function DashboardPage() {
             </span>
           </CardHeader>
           <CardContent className="space-y-3">
+            {recommendationsLoading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-1">
+                        <Skeleton className="h-5 w-20" />
+                        <Skeleton className="h-4 w-48" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-5 w-16" />
+                        <Skeleton className="h-8 w-20" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
             <p className="text-sm text-muted-foreground mb-4">
               These settings appear in multiple projects. Promote them to user scope for consistency.
             </p>
@@ -425,83 +445,133 @@ export default function DashboardPage() {
                 +{recommendations.length - 5} more recommendations
               </p>
             )}
+              </>
+            )}
           </CardContent>
         </Card>
       )}
 
       {/* Security Recommendations Section */}
-      {securityRecommendations.length > 0 && (
-        <Card className="border-orange-500/20">
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <div className="flex items-center gap-2">
+      <Card className={securityRecommendations.length > 0 ? "border-orange-500/20" : "border-green-500/20"}>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <div className="flex items-center gap-2">
+            {securityRecommendations.length > 0 ? (
               <AlertTriangle className="h-5 w-5 text-orange-500" />
-              <CardTitle className="text-lg">Security Recommendations</CardTitle>
-              <Badge variant="secondary" className="ml-2 bg-orange-500/10 text-orange-500">
-                {securityRecommendations.length}
+            ) : (
+              <Shield className="h-5 w-5 text-green-500" />
+            )}
+            <CardTitle className="text-lg">Security</CardTitle>
+            {!securityRecommendationsLoading && (
+              <Badge
+                variant="secondary"
+                className={securityRecommendations.length > 0
+                  ? "ml-2 bg-orange-500/10 text-orange-500"
+                  : "ml-2 bg-green-500/10 text-green-500"
+                }
+              >
+                {securityRecommendations.length > 0
+                  ? `${securityRecommendations.length} issues`
+                  : "All clear"
+                }
               </Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-sm text-muted-foreground mb-4">
-              Review these potential security issues in your settings.
-            </p>
-            {securityRecommendations.map((rec) => {
-              const isFixing = fixingSecurityId === rec.id;
-
-              return (
-                <div
-                  key={rec.id}
-                  className="border rounded-lg p-4 space-y-3"
-                >
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {securityRecommendationsLoading ? (
+            <div className="space-y-3">
+              {[1, 2].map((i) => (
+                <div key={i} className="border rounded-lg p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 space-y-2">
                       <div className="flex items-center gap-2">
-                        <Badge
-                          variant="outline"
-                          className={`shrink-0 font-semibold ${getSeverityColor(rec.severity)}`}
-                        >
-                          {getSeverityLabel(rec.severity)}
-                        </Badge>
-                        <span className="font-medium text-sm">{rec.title}</span>
+                        <Skeleton className="h-5 w-16" />
+                        <Skeleton className="h-4 w-32" />
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        Found in: {getScopeLabel(rec.scope, rec.projectName)}
-                      </p>
-                      <code className="block text-xs bg-muted px-2 py-1 rounded font-mono">
-                        {rec.pattern}
-                      </code>
-                      <p className="text-sm text-muted-foreground">
-                        {rec.remediation}
-                      </p>
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-6 w-full" />
+                      <Skeleton className="h-4 w-56" />
                     </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        disabled={isFixing || securityRecommendationsLoading}
-                        onClick={async () => {
-                          setFixingSecurityId(rec.id);
-                          await fixSecurityRecommendation(rec.id);
-                          setFixingSecurityId(null);
-                        }}
-                      >
-                        {isFixing ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <Wrench className="h-4 w-4 mr-1" />
-                            Fix
-                          </>
-                        )}
-                      </Button>
-                    </div>
+                    <Skeleton className="h-8 w-16" />
                   </div>
                 </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
+              ))}
+            </div>
+          ) : securityRecommendations.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-6 text-center">
+              <div className="rounded-full bg-green-500/10 p-3 mb-3">
+                <Check className="h-6 w-6 text-green-500" />
+              </div>
+              <p className="text-sm font-medium text-green-600 dark:text-green-400">
+                Looking good! No security issues detected.
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Your settings are configured safely.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground mb-4">
+                Review these potential security issues in your settings.
+              </p>
+              {securityRecommendations.map((rec) => {
+                const isFixing = fixingSecurityId === rec.id;
+
+                return (
+                  <div
+                    key={rec.id}
+                    className="border rounded-lg p-4 space-y-3"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="outline"
+                            className={`shrink-0 font-semibold ${getSeverityColor(rec.severity)}`}
+                          >
+                            {getSeverityLabel(rec.severity)}
+                          </Badge>
+                          <span className="font-medium text-sm">{rec.title}</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          Found in: {getScopeLabel(rec.scope, rec.projectName)}
+                        </p>
+                        <code className="block text-xs bg-muted px-2 py-1 rounded font-mono">
+                          {rec.pattern}
+                        </code>
+                        <p className="text-sm text-muted-foreground">
+                          {rec.remediation}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          disabled={isFixing || securityRecommendationsLoading}
+                          onClick={async () => {
+                            setFixingSecurityId(rec.id);
+                            await fixSecurityRecommendation(rec.id);
+                            setFixingSecurityId(null);
+                          }}
+                        >
+                          {isFixing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Wrench className="h-4 w-4 mr-1" />
+                              Fix
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Permission Interruptions Section */}
       {(filteredInterruptions.length > 0 || permissionInterruptionsLoading) && (
@@ -554,8 +624,22 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {permissionInterruptionsLoading ? (
-              <div className="flex items-center justify-center py-4">
-                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 flex-1">
+                        <Skeleton className="h-5 w-16" />
+                        <Skeleton className="h-4 w-40" />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Skeleton className="h-5 w-10" />
+                        <Skeleton className="h-8 w-16" />
+                        <Skeleton className="h-8 w-8" />
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : filteredInterruptions.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">
