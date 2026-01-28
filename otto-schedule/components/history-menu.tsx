@@ -1,6 +1,7 @@
 'use client';
 
-import { Menu, Pencil, Plus } from 'lucide-react';
+import Link from 'next/link';
+import { Menu, Pencil, Plus, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -61,6 +62,13 @@ export function HistoryMenu({ onAddItem }: HistoryMenuProps) {
           </DropdownMenuItem>
         )}
 
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/vitals">
+            <Activity className="mr-2 h-4 w-4" />
+            Vitals
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel>View Date</DropdownMenuLabel>
         <DropdownMenuSeparator />
