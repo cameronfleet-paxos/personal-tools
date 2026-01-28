@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { IndexResponse, ReindexResponse } from "@/types/settings";
-import { getOrCreateIndex, reindex, refreshIndex } from "@/lib/indexer";
+import { getOrCreateIndex, reindex, refreshIndexFast } from "@/lib/indexer";
 
 export async function GET(): Promise<NextResponse<IndexResponse>> {
   try {
@@ -44,11 +44,12 @@ export async function POST(): Promise<NextResponse<ReindexResponse>> {
   }
 }
 
+// Fast refresh - skips MCP scan, returns cached MCPs
 export async function PUT(): Promise<NextResponse<ReindexResponse>> {
   const startTime = Date.now();
 
   try {
-    const index = await refreshIndex();
+    const index = await refreshIndexFast();
     const duration = Date.now() - startTime;
 
     return NextResponse.json({

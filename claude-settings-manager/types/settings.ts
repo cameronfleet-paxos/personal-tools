@@ -203,10 +203,17 @@ export interface CommandsData {
   totalCount: number;
 }
 
+export interface MCPIndexData {
+  enabled: MCPServerEntry[];  // From claude mcp list (enabled and attempted connection)
+  available: MCPServerEntry[]; // From plugin .mcp.json files (not enabled yet)
+  health: MCPHealthStatus[];  // Health status for enabled MCPs
+}
+
 export interface SettingsIndex {
   lastIndexed: string; // ISO timestamp
   locations: SettingsLocation[];
   commands?: CommandsData; // Optional for backward compatibility
+  mcps?: MCPIndexData; // Optional for backward compatibility
 }
 
 export interface IndexResponse {
@@ -353,5 +360,74 @@ export interface DiscussionsResponse {
 
 export interface SessionConversationResponse {
   conversation: SessionConversation | null;
+  error?: string;
+}
+
+// MCP (Model Context Protocol) types
+export type MCPServerType = 'stdio' | 'http' | 'sse' | 'ws';
+
+export interface MCPServerStdio {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+
+export interface MCPServerRemote {
+  type: 'http' | 'sse' | 'ws';
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export type MCPServerConfig = MCPServerStdio | MCPServerRemote;
+
+export type MCPSource = 'user' | 'project' | 'plugin';
+
+export interface MCPServerEntry {
+  name: string;
+  config: MCPServerConfig;
+  source: MCPSource;
+  pluginName?: string; // For plugin sources
+}
+
+export interface MCPHealthStatus {
+  name: string;
+  status: 'connected' | 'failed' | 'unknown';
+  transport?: string;
+}
+
+export type MCPConfigFile = Record<string, MCPServerConfig>;
+
+export interface MCPsResponse {
+  servers: MCPServerEntry[];
+  health: MCPHealthStatus[];
+}
+
+export interface SaveMCPRequest {
+  name: string;
+  config: MCPServerConfig;
+  scope: 'user' | 'project';
+  projectPath?: string;
+}
+
+export interface SaveMCPResponse {
+  success: boolean;
+  error?: string;
+}
+
+export interface DeleteMCPRequest {
+  name: string;
+  scope: 'user' | 'project';
+  projectPath?: string;
+}
+
+export interface DeleteMCPResponse {
+  success: boolean;
+  error?: string;
+}
+
+// Async MCP refresh response
+export interface MCPRefreshResponse {
+  success: boolean;
+  mcps?: MCPIndexData;
   error?: string;
 }

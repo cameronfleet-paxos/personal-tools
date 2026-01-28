@@ -1,7 +1,20 @@
 import * as fs from "fs";
 import * as path from "path";
 import { execSync } from "child_process";
-import { SettingsIndex, SettingsLocation, CommandEntry, CommandsData, CommandMetadata } from "@/types/settings";
+import {
+  SettingsIndex,
+  SettingsLocation,
+  CommandEntry,
+  CommandsData,
+  CommandMetadata,
+  MCPIndexData,
+  MCPServerEntry,
+  MCPHealthStatus,
+  MCPConfigFile,
+  MCPServerConfig,
+  MCPServerStdio,
+  MCPServerRemote,
+} from "@/types/settings";
 import os from "os";
 import matter from "gray-matter";
 
@@ -353,6 +366,273 @@ function scanAllCommands(projectLocations: SettingsLocation[]): CommandsData {
   };
 }
 
+// MCP scanning functions
+
+const PLUGINS_DIR = path.join(getGlobalClaudeDir(), "plugins", "marketplaces");
+
+function readJsonFileSync<T>(filePath: string): T | null {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    return JSON.parse(content) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Scan plugin directories for available (not-yet-enabled) MCP servers
+ */
+function scanAvailableMCPs(): MCPServerEntry[] {
+  const entries: MCPServerEntry[] = [];
+
+  try {
+    if (!fs.existsSync(PLUGINS_DIR)) {
+      return entries;
+    }
+
+    const marketplaces = fs.readdirSync(PLUGINS_DIR);
+
+    for (const marketplace of marketplaces) {
+      const externalPluginsDir = path.join(PLUGINS_DIR, marketplace, "external_plugins");
+      try {
+        if (!fs.existsSync(externalPluginsDir)) continue;
+        const plugins = fs.readdirSync(externalPluginsDir);
+        for (const plugin of plugins) {
+          const mcpPath = path.join(externalPluginsDir, plugin, ".mcp.json");
+          const mcpConfig = readJsonFileSync<MCPConfigFile>(mcpPath);
+          if (mcpConfig) {
+            for (const [name, config] of Object.entries(mcpConfig)) {
+              entries.push({
+                name,
+                config: config as MCPServerConfig,
+                source: "plugin",
+                pluginName: `${plugin}@${marketplace}`,
+              });
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist or can't be read
+      }
+    }
+  } catch {
+    // Plugins directory doesn't exist
+  }
+
+  return entries;
+}
+
+/**
+ * Parse claude mcp list output to get enabled MCPs with health status
+ * Output format:
+ *   mcp-server-datadog: npx -y @winor30/mcp-server-datadog - ✗ Failed to connect
+ *   glean_default: https://paxos-be.glean.com/mcp/default (HTTP) - ✓ Connected
+ */
+function scanEnabledMCPs(): { enabled: MCPServerEntry[]; health: MCPHealthStatus[] } {
+  const enabled: MCPServerEntry[] = [];
+  const health: MCPHealthStatus[] = [];
+
+  try {
+    const stdout = execSync("claude mcp list 2>/dev/null", {
+      encoding: "utf-8",
+      timeout: 15000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const lines = stdout.split("\n");
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      // Parse server name (everything before first colon)
+      const colonIndex = line.indexOf(":");
+      if (colonIndex === -1) continue;
+
+      const name = line.substring(0, colonIndex).trim();
+      const rest = line.substring(colonIndex + 1).trim();
+
+      // Determine health status
+      const isConnected = rest.includes("✓") && rest.includes("Connected");
+      const isFailed = rest.includes("✗") && rest.includes("Failed");
+
+      // Determine transport type
+      let transport: string | undefined;
+      if (rest.includes("(HTTP)")) transport = "http";
+      else if (rest.includes("(SSE)")) transport = "sse";
+      else if (rest.includes("(WS)")) transport = "ws";
+      else transport = "stdio";
+
+      // Add health status
+      health.push({
+        name,
+        status: isConnected ? "connected" : isFailed ? "failed" : "unknown",
+        transport,
+      });
+
+      // Create a minimal MCPServerEntry - we don't have full config from mcp list
+      // but we know it's enabled at user scope
+      enabled.push({
+        name,
+        config: { command: "" }, // Placeholder - actual config not available from mcp list
+        source: "user", // claude mcp list shows user-enabled MCPs
+      });
+    }
+  } catch {
+    // claude mcp list failed - return empty arrays
+  }
+
+  return { enabled, health };
+}
+
+/**
+ * Parse the output of `claude mcp get <name>` to extract config
+ *
+ * Example stdio output:
+ *   mcp-server-datadog:
+ *     Scope: User config (available in all your projects)
+ *     Status: ✗ Failed to connect
+ *     Type: stdio
+ *     Command: npx
+ *     Args: -y @winor30/mcp-server-datadog
+ *     Environment:
+ *       DATADOG_API_KEY=xxx
+ *       DATADOG_APP_KEY=xxx
+ *
+ * Example http output:
+ *   glean_default:
+ *     Scope: User config
+ *     Status: ✓ Connected
+ *     Type: http
+ *     URL: https://paxos-be.glean.com/mcp/default
+ */
+function parseMCPGetOutput(output: string): MCPServerConfig | null {
+  const lines = output.split("\n");
+  const data: Record<string, string> = {};
+  const envVars: Record<string, string> = {};
+  const headers: Record<string, string> = {};
+  let currentSection: "none" | "env" | "headers" = "none";
+
+  for (const line of lines) {
+    if (line.startsWith("  Type:")) {
+      data.type = line.replace("  Type:", "").trim();
+      currentSection = "none";
+    } else if (line.startsWith("  Command:")) {
+      data.command = line.replace("  Command:", "").trim();
+      currentSection = "none";
+    } else if (line.startsWith("  Args:")) {
+      data.args = line.replace("  Args:", "").trim();
+      currentSection = "none";
+    } else if (line.startsWith("  URL:")) {
+      data.url = line.replace("  URL:", "").trim();
+      currentSection = "none";
+    } else if (line.startsWith("  Environment:")) {
+      currentSection = "env";
+    } else if (line.startsWith("  Headers:")) {
+      currentSection = "headers";
+    } else if (currentSection === "env" && line.match(/^\s{4}\w+=/)) {
+      const [key, ...valueParts] = line.trim().split("=");
+      envVars[key] = valueParts.join("=");
+    } else if (currentSection === "headers" && line.match(/^\s{4}\w+:/)) {
+      // Headers format: "    KEY: value"
+      const colonIdx = line.indexOf(":");
+      if (colonIdx > 0) {
+        const key = line.substring(0, colonIdx).trim();
+        const value = line.substring(colonIdx + 1).trim();
+        headers[key] = value;
+      }
+    } else if (line.startsWith("  ") && !line.startsWith("    ")) {
+      // New top-level field, exit section
+      currentSection = "none";
+    }
+  }
+
+  // Build config based on type
+  if (data.type === "stdio" && data.command) {
+    const config: MCPServerStdio = { command: data.command };
+    if (data.args) config.args = data.args.split(" ");
+    if (Object.keys(envVars).length > 0) config.env = envVars;
+    return config;
+  }
+
+  if (["http", "sse", "ws"].includes(data.type) && data.url) {
+    const config: MCPServerRemote = { type: data.type as "http" | "sse" | "ws", url: data.url };
+    if (Object.keys(headers).length > 0) config.headers = headers;
+    return config;
+  }
+
+  return null;
+}
+
+/**
+ * Read user MCPs by calling claude CLI commands
+ * Uses `claude mcp list` to get names, then `claude mcp get <name>` for full config
+ */
+function readUserMCPs(): MCPServerEntry[] {
+  const entries: MCPServerEntry[] = [];
+
+  try {
+    // Get list of MCP names from claude mcp list
+    const listOutput = execSync("claude mcp list 2>/dev/null", {
+      encoding: "utf-8",
+      timeout: 15000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const names: string[] = [];
+    for (const line of listOutput.split("\n")) {
+      const colonIdx = line.indexOf(":");
+      if (colonIdx > 0) {
+        names.push(line.substring(0, colonIdx).trim());
+      }
+    }
+
+    // Get full config for each MCP using claude mcp get
+    for (const name of names) {
+      try {
+        const getOutput = execSync(`claude mcp get "${name}" 2>/dev/null`, {
+          encoding: "utf-8",
+          timeout: 5000,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const config = parseMCPGetOutput(getOutput);
+        if (config) {
+          entries.push({ name, config, source: "user" });
+        }
+      } catch {
+        // Skip MCPs that fail to get config
+      }
+    }
+  } catch {
+    // claude mcp list failed - return empty array
+  }
+
+  return entries;
+}
+
+/**
+ * Scan all MCP sources and compile index data
+ */
+function scanAllMCPs(): MCPIndexData {
+  // Get enabled MCPs and health from claude mcp list
+  const { health } = scanEnabledMCPs();
+
+  // Get user-configured MCPs with full config
+  const userMCPs = readUserMCPs();
+
+  // Get available plugin MCPs
+  const pluginMCPs = scanAvailableMCPs();
+
+  // Separate available (plugin MCPs not in user config) from enabled (user MCPs)
+  const enabledNames = new Set(userMCPs.map((m) => m.name));
+  const available = pluginMCPs.filter((m) => !enabledNames.has(m.name));
+
+  return {
+    enabled: userMCPs,
+    available,
+    health,
+  };
+}
+
 function createSettingsLocation(claudeDir: string): SettingsLocation | null {
   const settingsPath = path.join(claudeDir, "settings.json");
   const localSettingsPath = path.join(claudeDir, "settings.local.json");
@@ -454,10 +734,14 @@ export async function scanForSettings(
   // Scan commands from user and all project directories
   const commands = scanAllCommands(locations);
 
+  // Scan MCPs (enabled and available)
+  const mcps = scanAllMCPs();
+
   return {
     lastIndexed: new Date().toISOString(),
     locations,
     commands,
+    mcps,
   };
 }
 
@@ -482,14 +766,72 @@ export async function refreshIndex(): Promise<SettingsIndex> {
   // Re-scan commands from existing locations (without filesystem discovery)
   const commands = scanAllCommands(existing.locations);
 
+  // Re-scan MCPs (enabled and available)
+  const mcps = scanAllMCPs();
+
   const refreshedIndex: SettingsIndex = {
     lastIndexed: new Date().toISOString(),
     locations: existing.locations, // Keep existing locations
     commands,
+    mcps,
   };
 
   await saveIndex(refreshedIndex);
   return refreshedIndex;
+}
+
+/**
+ * Fast refresh - refreshes commands/locations only, skips MCPs
+ * Returns immediately with cached MCPs (non-blocking for MCP sync)
+ */
+export async function refreshIndexFast(): Promise<SettingsIndex> {
+  const existing = await loadIndex();
+
+  if (!existing) {
+    // No existing index - fall back to full reindex
+    return reindex();
+  }
+
+  // Re-scan commands from existing locations (without MCP scan)
+  const commands = scanAllCommands(existing.locations);
+
+  const refreshedIndex: SettingsIndex = {
+    lastIndexed: new Date().toISOString(),
+    locations: existing.locations,
+    commands,
+    mcps: existing.mcps, // Keep cached MCPs - don't block
+  };
+
+  await saveIndex(refreshedIndex);
+  return refreshedIndex;
+}
+
+/**
+ * Async MCP-only scan (exported separately for background refresh)
+ * This is the slow operation - calls claude CLI commands
+ */
+export async function scanMCPsAsync(): Promise<MCPIndexData> {
+  return scanAllMCPs();
+}
+
+/**
+ * Update just the MCPs in an existing index
+ */
+export async function updateIndexMCPs(mcps: MCPIndexData): Promise<SettingsIndex> {
+  const existing = await loadIndex();
+
+  if (!existing) {
+    throw new Error("No index to update");
+  }
+
+  const updated: SettingsIndex = {
+    ...existing,
+    mcps,
+    lastIndexed: new Date().toISOString(),
+  };
+
+  await saveIndex(updated);
+  return updated;
 }
 
 export async function getOrCreateIndex(): Promise<{

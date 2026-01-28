@@ -2,61 +2,111 @@
 # bootstrap-claude: Set up 6 iTerm2 panes with named/colored Claude agents
 #
 # Layout (distinct muted backgrounds):
-#   Window 1: gray (~/dev) | brown (~/dev/pax)
-#   Window 2: blue (~/dev/pax-agent1) | red (~/dev/pax-worktrees)
+#   Window 1: brown (~/dev/pax) | blue (~/dev/pax-agent1)
+#             [claude 80%]      | [claude 80%]
+#             [terminal 20%]    | [terminal 20%]
+#   Window 2: red (~/dev/pax-worktrees) | gray (~/dev)
+#             [claude 80%]              | [claude 80%]
+#             [terminal 20%]            | [terminal 20%]
 #   Window 3: green (~/dev/cameron-musings) | purple (~/dev/personal-tools)
+#             [claude 80%]                  | [claude 80%]
+#             [terminal 20%]                | [terminal 20%]
 
 osascript <<'APPLESCRIPT'
 tell application "iTerm2"
     activate
 
-    -- Create Window 1 with vertical split (white | badge)
+    -- Create Window 1 with vertical split (brown | blue)
     set win1 to (create window with default profile)
     tell win1
         tell current session of current tab
-            -- Configure gray agent
-            set name to "gray"
-            set variable named "user.badge" to "GRAY"
-            set background color to {8738, 8738, 8738}
-            set foreground color to {65535, 65535, 65535}
-            write text "cd ~/dev && clear && claude"
-
-            -- Create vertical split for badge agent
-            set badgeSession to (split vertically with default profile)
-        end tell
-
-        tell badgeSession
-            -- Configure brown agent
+            -- Configure brown agent (Claude pane)
             set name to "brown"
             set variable named "user.badge" to "BROWN"
             set background color to {10794, 7710, 5140}
             set foreground color to {65535, 65535, 65535}
             write text "cd ~/dev/pax && clear && claude"
-        end tell
-    end tell
 
-    -- Create Window 2 with vertical split (blue | red)
-    set win2 to (create window with default profile)
-    tell win2
-        tell current session of current tab
-            -- Configure blue agent
+            -- Create vertical split for blue agent
+            set blueSession to (split vertically with default profile)
+
+            -- Create horizontal split below brown for terminal
+            set brownTerminal to (split horizontally with default profile)
+        end tell
+
+        tell brownTerminal
+            -- Configure brown terminal (no Claude)
+            set name to "brown-term"
+            set background color to {10794, 7710, 5140}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/pax && clear"
+        end tell
+
+        tell blueSession
+            -- Configure blue agent (Claude pane)
             set name to "blue"
             set variable named "user.badge" to "BLUE"
             set background color to {3855, 5140, 12850}
             set foreground color to {65535, 65535, 65535}
             write text "cd ~/dev/pax-agent1 && clear && claude"
 
-            -- Create vertical split for red agent
-            set redSession to (split vertically with default profile)
+            -- Create horizontal split below blue for terminal
+            set blueTerminal to (split horizontally with default profile)
         end tell
 
-        tell redSession
-            -- Configure red agent
+        tell blueTerminal
+            -- Configure blue terminal (no Claude)
+            set name to "blue-term"
+            set background color to {3855, 5140, 12850}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/pax-agent1 && clear"
+        end tell
+    end tell
+
+    -- Create Window 2 with vertical split (red | gray)
+    set win2 to (create window with default profile)
+    tell win2
+        tell current session of current tab
+            -- Configure red agent (Claude pane)
             set name to "red"
             set variable named "user.badge" to "RED"
             set background color to {12850, 3855, 3855}
             set foreground color to {65535, 65535, 65535}
             write text "cd ~/dev/pax-worktrees && clear && claude"
+
+            -- Create vertical split for gray agent
+            set graySession to (split vertically with default profile)
+
+            -- Create horizontal split below red for terminal
+            set redTerminal to (split horizontally with default profile)
+        end tell
+
+        tell redTerminal
+            -- Configure red terminal (no Claude)
+            set name to "red-term"
+            set background color to {12850, 3855, 3855}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/pax-worktrees && clear"
+        end tell
+
+        tell graySession
+            -- Configure gray agent (Claude pane)
+            set name to "gray"
+            set variable named "user.badge" to "GRAY"
+            set background color to {8738, 8738, 8738}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev && clear && claude"
+
+            -- Create horizontal split below gray for terminal
+            set grayTerminal to (split horizontally with default profile)
+        end tell
+
+        tell grayTerminal
+            -- Configure gray terminal (no Claude)
+            set name to "gray-term"
+            set background color to {8738, 8738, 8738}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev && clear"
         end tell
     end tell
 
@@ -64,7 +114,7 @@ tell application "iTerm2"
     set win3 to (create window with default profile)
     tell win3
         tell current session of current tab
-            -- Configure green agent
+            -- Configure green agent (Claude pane)
             set name to "green"
             set variable named "user.badge" to "GREEN"
             set background color to {3855, 10280, 5140}
@@ -73,19 +123,41 @@ tell application "iTerm2"
 
             -- Create vertical split for purple agent
             set purpleSession to (split vertically with default profile)
+
+            -- Create horizontal split below green for terminal
+            set greenTerminal to (split horizontally with default profile)
+        end tell
+
+        tell greenTerminal
+            -- Configure green terminal (no Claude)
+            set name to "green-term"
+            set background color to {3855, 10280, 5140}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/cameron-musings && clear"
         end tell
 
         tell purpleSession
-            -- Configure purple agent
+            -- Configure purple agent (Claude pane)
             set name to "purple"
             set variable named "user.badge" to "PURPLE"
             set background color to {10280, 3855, 12850}
             set foreground color to {65535, 65535, 65535}
             write text "cd ~/dev/personal-tools && clear && claude"
+
+            -- Create horizontal split below purple for terminal
+            set purpleTerminal to (split horizontally with default profile)
+        end tell
+
+        tell purpleTerminal
+            -- Configure purple terminal (no Claude)
+            set name to "purple-term"
+            set background color to {10280, 3855, 12850}
+            set foreground color to {65535, 65535, 65535}
+            write text "cd ~/dev/personal-tools && clear"
         end tell
     end tell
 
 end tell
 APPLESCRIPT
 
-echo "✓ Launched 6 Claude agent panes across 3 windows"
+echo "✓ Launched 12 panes (6 Claude + 6 terminal) across 3 windows"

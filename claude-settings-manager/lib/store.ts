@@ -131,6 +131,7 @@ interface SettingsStore {
   isSaving: boolean;
   isIndexing: boolean;
   isSyncing: boolean;
+  isMCPsSyncing: boolean;
   error: string | null;
 
   // Sync state
@@ -155,6 +156,7 @@ interface SettingsStore {
   loadIndex: () => Promise<void>;
   reindex: () => Promise<void>;
   refreshIndex: () => Promise<void>;
+  refreshMCPs: () => Promise<void>;
   selectProject: (path: string | null) => Promise<void>;
   setCommandsSearchQuery: (query: string) => void;
   setCommandsSourceFilter: (filter: "all" | "user" | "project") => void;
@@ -236,6 +238,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   isSaving: false,
   isIndexing: false,
   isSyncing: false,
+  isMCPsSyncing: false,
   error: null,
 
   // Sync state
@@ -358,6 +361,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           pendingChanges: [],
         });
       }
+
+      // Slow path - background MCP refresh (non-blocking)
+      // Fire and forget - don't await, let it run in background
+      get().refreshMCPs();
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Unknown error",
@@ -637,6 +644,31 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         error: err instanceof Error ? err.message : "Refresh failed",
         isIndexing: false,
       });
+    }
+  },
+
+  refreshMCPs: async () => {
+    set({ isMCPsSyncing: true });
+    try {
+      const response = await fetch("/api/mcps/refresh", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Failed to refresh MCPs");
+      }
+      const data = await response.json();
+      if (data.success && data.mcps) {
+        // Update store with new MCPs
+        set((state) => ({
+          settingsIndex: state.settingsIndex
+            ? { ...state.settingsIndex, mcps: data.mcps }
+            : state.settingsIndex,
+          isMCPsSyncing: false,
+        }));
+      } else {
+        set({ isMCPsSyncing: false });
+      }
+    } catch (err) {
+      console.error("Error refreshing MCPs:", err);
+      set({ isMCPsSyncing: false });
     }
   },
 
