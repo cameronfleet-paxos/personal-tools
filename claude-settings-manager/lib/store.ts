@@ -106,6 +106,11 @@ interface SettingsStore {
   commandsSourceFilter: "all" | "user" | "project";
   commandsTypeFilter: "all" | "command" | "skill";
 
+  // Permissions filter state
+  permissionsSearchQuery: string;
+  permissionsSourceFilter: "all" | SettingsTarget;
+  permissionsToolTypeFilter: "all" | "bash" | "webfetch" | "websearch" | "read" | "edit" | "mcp" | "other";
+
   // Recommendations state
   recommendations: SettingRecommendation[];
   recommendationsLoading: boolean;
@@ -162,6 +167,11 @@ interface SettingsStore {
   setCommandsSourceFilter: (filter: "all" | "user" | "project") => void;
   setCommandsTypeFilter: (filter: "all" | "command" | "skill") => void;
 
+  // Permissions filter actions
+  setPermissionsSearchQuery: (query: string) => void;
+  setPermissionsSourceFilter: (filter: "all" | SettingsTarget) => void;
+  setPermissionsToolTypeFilter: (filter: "all" | "bash" | "webfetch" | "websearch" | "read" | "edit" | "mcp" | "other") => void;
+
   // Recommendations actions
   loadRecommendations: () => Promise<void>;
   applyRecommendation: (id: string) => Promise<void>;
@@ -213,6 +223,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   commandsSearchQuery: "",
   commandsSourceFilter: "all",
   commandsTypeFilter: "all",
+
+  // Permissions filter state
+  permissionsSearchQuery: "",
+  permissionsSourceFilter: "all",
+  permissionsToolTypeFilter: "all",
 
   // Recommendations state
   recommendations: [],
@@ -687,6 +702,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setCommandsTypeFilter: (filter) => {
     set({ commandsTypeFilter: filter });
+  },
+
+  setPermissionsSearchQuery: (query) => {
+    set({ permissionsSearchQuery: query });
+  },
+
+  setPermissionsSourceFilter: (filter) => {
+    set({ permissionsSourceFilter: filter });
+  },
+
+  setPermissionsToolTypeFilter: (filter) => {
+    set({ permissionsToolTypeFilter: filter });
   },
 
   loadRecommendations: async () => {

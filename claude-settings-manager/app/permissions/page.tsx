@@ -74,6 +74,16 @@ function getToolIcon(rule: string) {
   return Terminal;
 }
 
+function getToolType(rule: string): ToolCategory {
+  if (rule.startsWith("Bash(") || rule === "Bash") return "bash";
+  if (rule.startsWith("WebFetch(") || rule === "WebFetch") return "webfetch";
+  if (rule.startsWith("WebSearch") || rule === "WebSearch") return "websearch";
+  if (rule.startsWith("Read(") || rule === "Read") return "read";
+  if (rule.startsWith("Edit(") || rule === "Edit") return "edit";
+  if (rule.startsWith("mcp__")) return "mcp";
+  return "other";
+}
+
 export default function PermissionsPage() {
   const {
     updateSetting,
@@ -83,6 +93,12 @@ export default function PermissionsPage() {
     effectiveProjectLocal,
     effectiveGlobal,
     isInProjectContext,
+    permissionsSearchQuery,
+    permissionsSourceFilter,
+    permissionsToolTypeFilter,
+    setPermissionsSearchQuery,
+    setPermissionsSourceFilter,
+    setPermissionsToolTypeFilter,
   } = useSettingsStore();
 
   const inProject = isInProjectContext();
@@ -141,6 +157,26 @@ export default function PermissionsPage() {
   const allowRules = getAllRules("allow");
   const askRules = getAllRules("ask");
   const denyRules = getAllRules("deny");
+
+  // Filter function
+  const filterRules = (rules: ParsedRule[]) => {
+    const query = permissionsSearchQuery.toLowerCase();
+    return rules.filter((rule) => {
+      // Source filter
+      if (permissionsSourceFilter !== "all" && rule.source !== permissionsSourceFilter) return false;
+      // Tool type filter
+      if (permissionsToolTypeFilter !== "all" && getToolType(rule.rule) !== permissionsToolTypeFilter) return false;
+      // Search query (case-insensitive)
+      if (query && !rule.rule.toLowerCase().includes(query)) return false;
+      return true;
+    });
+  };
+
+  const filteredAllowRules = filterRules(allowRules);
+  const filteredAskRules = filterRules(askRules);
+  const filteredDenyRules = filterRules(denyRules);
+
+  const hasActiveFilters = permissionsSearchQuery || permissionsSourceFilter !== "all" || permissionsToolTypeFilter !== "all";
 
   // Get settings object for a given target (user-local removed)
   const getSettingsForTarget = (target: SettingsTarget): Settings => {
@@ -201,11 +237,11 @@ export default function PermissionsPage() {
     setIsDialogOpen(false);
   };
 
-  const RuleList = ({ rules }: { rules: ParsedRule[] }) => {
+  const RuleList = ({ rules, totalCount }: { rules: ParsedRule[]; totalCount: number }) => {
     if (rules.length === 0) {
       return (
         <div className="text-center py-8 text-muted-foreground">
-          No rules configured
+          {totalCount > 0 ? "No matching rules" : "No rules configured"}
         </div>
       );
     }
@@ -499,6 +535,53 @@ export default function PermissionsPage() {
         </Dialog>
       </div>
 
+      {/* Search and Filters */}
+      <div className="flex gap-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Search rules..."
+            value={permissionsSearchQuery}
+            onChange={(e) => setPermissionsSearchQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Select
+          value={permissionsToolTypeFilter}
+          onValueChange={(v) => setPermissionsToolTypeFilter(v as typeof permissionsToolTypeFilter)}
+        >
+          <SelectTrigger className="w-[140px]">
+            <SelectValue placeholder="Tool type" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="bash">Bash</SelectItem>
+            <SelectItem value="webfetch">WebFetch</SelectItem>
+            <SelectItem value="websearch">WebSearch</SelectItem>
+            <SelectItem value="read">Read</SelectItem>
+            <SelectItem value="edit">Edit</SelectItem>
+            <SelectItem value="mcp">MCP</SelectItem>
+            <SelectItem value="other">Other</SelectItem>
+          </SelectContent>
+        </Select>
+        {inProject && (
+          <Select
+            value={permissionsSourceFilter}
+            onValueChange={(v) => setPermissionsSourceFilter(v as typeof permissionsSourceFilter)}
+          >
+            <SelectTrigger className="w-[160px]">
+              <SelectValue placeholder="Source" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Sources</SelectItem>
+              <SelectItem value="user">User</SelectItem>
+              <SelectItem value="project">Project</SelectItem>
+              <SelectItem value="project-local">Project Local</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>Permission Rules</CardTitle>
@@ -511,19 +594,23 @@ export default function PermissionsPage() {
           <Tabs defaultValue="allow">
             <TabsList className="grid w-full grid-cols-3">
               <TabsTrigger value="allow">
-                Allow ({allowRules.length})
+                Allow ({hasActiveFilters ? `${filteredAllowRules.length}/${allowRules.length}` : allowRules.length})
               </TabsTrigger>
-              <TabsTrigger value="ask">Ask ({askRules.length})</TabsTrigger>
-              <TabsTrigger value="deny">Deny ({denyRules.length})</TabsTrigger>
+              <TabsTrigger value="ask">
+                Ask ({hasActiveFilters ? `${filteredAskRules.length}/${askRules.length}` : askRules.length})
+              </TabsTrigger>
+              <TabsTrigger value="deny">
+                Deny ({hasActiveFilters ? `${filteredDenyRules.length}/${denyRules.length}` : denyRules.length})
+              </TabsTrigger>
             </TabsList>
             <TabsContent value="allow" className="mt-4">
-              <RuleList rules={allowRules} />
+              <RuleList rules={filteredAllowRules} totalCount={allowRules.length} />
             </TabsContent>
             <TabsContent value="ask" className="mt-4">
-              <RuleList rules={askRules} />
+              <RuleList rules={filteredAskRules} totalCount={askRules.length} />
             </TabsContent>
             <TabsContent value="deny" className="mt-4">
-              <RuleList rules={denyRules} />
+              <RuleList rules={filteredDenyRules} totalCount={denyRules.length} />
             </TabsContent>
           </Tabs>
         </CardContent>
