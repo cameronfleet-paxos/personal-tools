@@ -34,9 +34,13 @@ function copyRecursive(src, dest) {
     // Copy the target of the symlink
     copyRecursive(realPath, dest);
   } else if (stat.isDirectory()) {
-    // Skip dist directory to avoid including previous Electron builds
+    // Skip .standalone-build to avoid recursion, but NOT 'dist' folders in node_modules
     const basename = path.basename(src);
-    if (basename === 'dist' || basename === '.standalone-build') {
+    if (basename === '.standalone-build') {
+      return;
+    }
+    // Skip project root dist folder (Electron builds) but not dist inside node_modules
+    if (basename === 'dist' && !src.includes('node_modules')) {
       return;
     }
     fs.mkdirSync(dest, { recursive: true });

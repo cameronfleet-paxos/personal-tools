@@ -75,12 +75,33 @@ async function startServer() {
   const serverJs = path.join(standaloneDir, 'server.js');
 
   // Find node - GUI apps don't have PATH set
+  // asdf shims don't work without shell initialization, so we need to find the actual binary
+  const fs = require('fs');
+  const asdfNodeVersions = [];
+  try {
+    const asdfNodeDir = path.join(process.env.HOME, '.asdf/installs/nodejs');
+    if (fs.existsSync(asdfNodeDir)) {
+      const versions = fs.readdirSync(asdfNodeDir)
+        .filter(v => /^\d+\.\d+\.\d+$/.test(v))
+        .sort((a, b) => {
+          // Sort by major version descending to prefer newer versions
+          const aMajor = parseInt(a.split('.')[0], 10);
+          const bMajor = parseInt(b.split('.')[0], 10);
+          return bMajor - aMajor;
+        });
+      for (const v of versions) {
+        asdfNodeVersions.push(path.join(asdfNodeDir, v, 'bin/node'));
+      }
+    }
+  } catch (e) {}
+
   const nodePaths = [
     '/usr/local/bin/node',
     '/opt/homebrew/bin/node',
     '/usr/bin/node',
     process.env.HOME + '/.nvm/current/bin/node',
     process.env.HOME + '/.volta/bin/node',
+    ...asdfNodeVersions,
     process.env.HOME + '/.asdf/shims/node',
   ];
 
