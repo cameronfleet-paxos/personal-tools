@@ -6,6 +6,7 @@ node_modules/
 .next/
 out/
 .standalone-build/
+tsconfig.tsbuildinfo
 
 # Electron
 dist/
