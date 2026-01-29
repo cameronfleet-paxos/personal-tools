@@ -84,10 +84,8 @@ export function createSocketServer(workspaceId: string): void {
   const server = net.createServer((socket) => {
     let buffer = ''
 
-    socket.on('data', (data) => {
-      buffer += data.toString()
-
-      // Try to parse complete JSON messages
+    const processLines = (): void => {
+      // Try to parse complete JSON messages (newline-delimited)
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
 
@@ -96,12 +94,36 @@ export function createSocketServer(workspaceId: string): void {
           try {
             const event = JSON.parse(line) as StopEvent
             if (event.event === 'stop') {
+              console.log(`Received stop event for workspace ${workspaceId}`)
               handleStopEvent(event)
             }
           } catch (e) {
-            console.error('Failed to parse socket message:', e)
+            console.error('Failed to parse socket message:', line, e)
           }
         }
+      }
+    }
+
+    socket.on('data', (data) => {
+      buffer += data.toString()
+      processLines()
+    })
+
+    socket.on('end', () => {
+      // Process any remaining data when socket closes (handles messages without trailing newline)
+      if (buffer.trim()) {
+        try {
+          const event = JSON.parse(buffer) as StopEvent
+          if (event.event === 'stop') {
+            console.log(
+              `Received stop event (on close) for workspace ${workspaceId}`
+            )
+            handleStopEvent(event)
+          }
+        } catch (e) {
+          console.error('Failed to parse final buffer:', buffer, e)
+        }
+        buffer = ''
       }
     })
 

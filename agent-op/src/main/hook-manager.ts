@@ -39,9 +39,22 @@ export function createHookScript(): void {
 
 WORKSPACE_ID="$AGENTOP_WORKSPACE_ID"
 SOCKET_PATH="$HOME/.agent-operator/sockets/agent-\${WORKSPACE_ID}.sock"
+DEBUG_LOG="$HOME/.agent-operator/hooks/debug.log"
+
+# Debug logging
+echo "$(date): Hook called for workspace '$WORKSPACE_ID'" >> "$DEBUG_LOG"
+
+if [ -z "$WORKSPACE_ID" ]; then
+  echo "$(date): ERROR - WORKSPACE_ID is empty" >> "$DEBUG_LOG"
+  exit 0
+fi
 
 if [ -S "$SOCKET_PATH" ]; then
-  echo '{"event":"stop","reason":"input_required","workspaceId":"'"$WORKSPACE_ID"'"}' | nc -U "$SOCKET_PATH"
+  # Use printf with explicit newline and nc -q0 to quit after sending
+  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U -q0 "$SOCKET_PATH" 2>/dev/null
+  echo "$(date): Sent to socket $SOCKET_PATH (exit code: $?)" >> "$DEBUG_LOG"
+else
+  echo "$(date): Socket not found at $SOCKET_PATH" >> "$DEBUG_LOG"
 fi
 `
 
