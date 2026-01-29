@@ -374,6 +374,7 @@ VERIFICATION (run after each phase):
 - npm run typecheck
 - npm run lint
 - npm run build
+- playwright MCP for verifications locally that the app is doing what is expected
 
 ESCAPE HATCH: After 20 iterations without progress:
 - Document what's blocking in the spec file under 'Implementation Notes'
