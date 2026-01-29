@@ -7,6 +7,7 @@ import { AgentModal } from '@/renderer/components/WorkspaceModal'
 import { AgentCard } from '@/renderer/components/WorkspaceCard'
 import { Terminal } from '@/renderer/components/Terminal'
 import { TabBar } from '@/renderer/components/TabBar'
+import { Logo } from '@/renderer/components/Logo'
 import type { Agent, AppState, AgentTab } from '@/shared/types'
 
 interface ActiveTerminal {
@@ -293,7 +294,9 @@ function App() {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-foreground mb-4">AgentOp</h1>
+          <h1 className="text-foreground mb-4">
+            <Logo size="lg" />
+          </h1>
           <p className="text-muted-foreground mb-6">
             No agents configured. Add one to get started.
           </p>
@@ -317,7 +320,7 @@ function App() {
       {/* Header */}
       <header className="border-b px-4 py-2 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-semibold">AgentOp</h1>
+          <Logo />
           {waitingQueue.length > 0 && (
             <span className="bg-yellow-500 text-black text-xs font-medium px-2 py-0.5 rounded-full">
               {waitingQueue.length} waiting
