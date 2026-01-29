@@ -13,7 +13,7 @@ import { useScheduleStore } from '@/lib/store';
 import { scheduleNotifications, clearAllNotifications } from '@/lib/notifications';
 import { timeToMinutes, getCurrentTimeMinutes, getTodayDate } from '@/lib/utils';
 import { ScheduleItem } from '@/types/schedule';
-import { Plus } from 'lucide-react';
+import { Plus, Copy, Check } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -44,6 +44,7 @@ export default function Home() {
   const [showSplash, setShowSplash] = useState(true);
   const [editorDialogOpen, setEditorDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ScheduleItem | undefined>(undefined);
+  const [copied, setCopied] = useState(false);
   const {
     schedule,
     dailyLog,
@@ -110,6 +111,24 @@ export default function Home() {
   const handleCancelEditor = () => {
     setEditorDialogOpen(false);
     setEditingItem(undefined);
+  };
+
+  // Copy current day's schedule data as JSON
+  const handleCopyDayJson = async () => {
+    const currentDate = viewingDate || getTodayDate();
+    const dayData = {
+      date: currentDate,
+      schedule: schedule,
+      completedItems: dailyLog.completedItems,
+    };
+
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(dayData, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
   };
 
   // Load data on mount
@@ -210,7 +229,18 @@ export default function Home() {
                 )}
               </CardDescription>
             </div>
-            <HistoryMenu onAddItem={handleAddNewItem} />
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground"
+                onClick={handleCopyDayJson}
+                title="Copy day data as JSON"
+              >
+                {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              </Button>
+              <HistoryMenu onAddItem={handleAddNewItem} />
+            </div>
           </div>
           {isHistorical && (
             <div className="mt-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950 px-2 py-1 rounded">
