@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -22,6 +22,7 @@ export function Terminal({
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const initializedRef = useRef(false)
+  const [isBooting, setIsBooting] = useState(true)
 
   useEffect(() => {
     if (!terminalRef.current || initializedRef.current) return
@@ -90,6 +91,17 @@ export function Terminal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminalId])
 
+  // Hide loading overlay after 10 seconds
+  useEffect(() => {
+    const bootTimer = setTimeout(() => {
+      setIsBooting(false)
+    }, 10000)
+
+    return () => {
+      clearTimeout(bootTimer)
+    }
+  }, [])
+
   // Update theme when it changes
   useEffect(() => {
     if (xtermRef.current) {
@@ -104,10 +116,19 @@ export function Terminal({
   }, [theme])
 
   return (
-    <div
-      ref={terminalRef}
-      className="w-full h-full overflow-hidden"
-      style={{ backgroundColor: themes[theme].bg }}
-    />
+    <div className="w-full h-full relative" style={{ backgroundColor: themes[theme].bg }}>
+      {isBooting && (
+        <div
+          className="absolute inset-0 flex items-center justify-center z-10"
+          style={{ backgroundColor: themes[theme].bg }}
+        >
+          <span style={{ color: themes[theme].fg }}>Claude is booting...</span>
+        </div>
+      )}
+      <div
+        ref={terminalRef}
+        className={`w-full h-full overflow-hidden ${isBooting ? 'invisible' : ''}`}
+      />
+    </div>
   )
 }

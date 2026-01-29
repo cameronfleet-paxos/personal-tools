@@ -113,14 +113,11 @@ function App() {
   const resumeWorkspaces = async (workspaceIds: string[]) => {
     for (const workspaceId of workspaceIds) {
       try {
-        // Use --resume to restore the conversation
-        const terminalId = await window.electronAPI.createTerminal(
-          workspaceId,
-          workspaceId // Pass workspace ID as session ID for resume
-        )
+        // Start fresh claude session (don't try to resume - workspace IDs are not valid Claude session IDs)
+        const terminalId = await window.electronAPI.createTerminal(workspaceId)
         setActiveTerminals((prev) => [...prev, { terminalId, workspaceId }])
       } catch (e) {
-        console.error(`Failed to resume workspace ${workspaceId}:`, e)
+        console.error(`Failed to start workspace ${workspaceId}:`, e)
       }
     }
   }

@@ -5,12 +5,20 @@ import { getConfigDir } from './config'
 
 const HOOK_SCRIPT_NAME = 'stop-hook.sh'
 
+interface HookCommand {
+  type: 'command'
+  command: string
+}
+
+interface HookConfig {
+  matcher?: string
+  hooks: HookCommand[]
+}
+
 interface ClaudeSettings {
   hooks?: {
-    stop?: Array<{
-      command: string
-      timeout?: number
-    }>
+    Stop?: HookConfig[]
+    [key: string]: HookConfig[] | undefined
   }
   [key: string]: unknown
 }
@@ -64,21 +72,29 @@ export function configureClaudeHook(): void {
   if (!settings.hooks) {
     settings.hooks = {}
   }
-  if (!settings.hooks.stop) {
-    settings.hooks.stop = []
-  }
 
-  // Check if our hook is already configured
-  const hookCommand = hookScriptPath
-  const existingHook = settings.hooks.stop.find((hook) =>
-    hook.command.includes('agent-operator')
+  // Check if our hook already exists in any Stop config
+  const hookExists = settings.hooks.Stop?.some((config) =>
+    config.hooks.some((hook) => hook.command.includes('agent-operator'))
   )
 
-  if (!existingHook) {
-    settings.hooks.stop.push({
-      command: hookCommand,
-      timeout: 5000,
-    })
+  if (!hookExists) {
+    const newHookCommand: HookCommand = {
+      type: 'command',
+      command: hookScriptPath,
+    }
+
+    if (settings.hooks.Stop && settings.hooks.Stop.length > 0) {
+      // Add to existing Stop[0].hooks array (alongside notify.sh, allow-sleep.sh, etc.)
+      settings.hooks.Stop[0].hooks.push(newHookCommand)
+    } else {
+      // Create new Stop config array
+      settings.hooks.Stop = [
+        {
+          hooks: [newHookCommand],
+        },
+      ]
+    }
 
     // Ensure .claude directory exists
     const claudeDir = path.dirname(settingsPath)
@@ -88,7 +104,7 @@ export function configureClaudeHook(): void {
 
     // Write updated settings
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-    console.log('Configured Claude Code StopHook for AgentOp')
+    console.log('Configured Claude Code Stop hook for AgentOp')
   }
 }
 
@@ -104,8 +120,8 @@ export function isHookConfigured(): boolean {
     const settings = JSON.parse(content) as ClaudeSettings
 
     return (
-      settings.hooks?.stop?.some((hook) =>
-        hook.command.includes('agent-operator')
+      settings.hooks?.Stop?.some((config) =>
+        config.hooks.some((hook) => hook.command.includes('agent-operator'))
       ) ?? false
     )
   } catch {

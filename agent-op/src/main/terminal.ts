@@ -50,10 +50,23 @@ export function createTerminal(
     workspaceId,
   })
 
-  // Forward data to renderer
+  // Track if we've sent the accept edits command
+  let acceptEditsSent = false
+
+  // Forward data to renderer AND detect Claude readiness
   ptyProcess.onData((data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('terminal-data', terminalId, data)
+    }
+
+    // Detect when Claude is ready (look for the prompt character or status bar)
+    // Claude shows "❯" or lines containing "Opus" when ready
+    if (!acceptEditsSent && (data.includes('❯') || data.includes('Opus'))) {
+      acceptEditsSent = true
+      // Small delay to ensure Claude is fully ready
+      setTimeout(() => {
+        ptyProcess.write('accept edits on\n')
+      }, 100)
     }
   })
 
