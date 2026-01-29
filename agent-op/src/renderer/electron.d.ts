@@ -1,4 +1,4 @@
-import type { Workspace, AppState } from '../shared/types'
+import type { Workspace, AppState, AgentTab } from '../shared/types'
 
 export interface ElectronAPI {
   // Workspace management
@@ -22,8 +22,15 @@ export interface ElectronAPI {
 
   // State management
   getState: () => Promise<AppState>
-  setLayout: (layout: 'grid' | 'tabs') => Promise<void>
   setFocusedWorkspace: (workspaceId: string | undefined) => Promise<void>
+
+  // Tab management
+  createTab: (name?: string) => Promise<AgentTab>
+  renameTab: (tabId: string, name: string) => Promise<void>
+  deleteTab: (
+    tabId: string
+  ) => Promise<{ success: boolean; workspaceIds: string[] }>
+  setActiveTab: (tabId: string) => Promise<void>
 
   // Waiting queue management
   getWaitingQueue: () => Promise<string[]>

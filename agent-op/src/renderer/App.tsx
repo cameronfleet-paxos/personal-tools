@@ -1,34 +1,30 @@
 import './index.css'
 import './electron.d.ts'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, LayoutGrid, Layers, ChevronRight } from 'lucide-react'
+import { Plus, ChevronRight } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
-import { WorkspaceModal } from '@/renderer/components/WorkspaceModal'
-import { WorkspaceCard } from '@/renderer/components/WorkspaceCard'
+import { AgentModal } from '@/renderer/components/WorkspaceModal'
+import { AgentCard } from '@/renderer/components/WorkspaceCard'
 import { Terminal } from '@/renderer/components/Terminal'
-import type { Workspace, AppState } from '@/shared/types'
+import { TabBar } from '@/renderer/components/TabBar'
+import type { Agent, AppState, AgentTab } from '@/shared/types'
 
 interface ActiveTerminal {
   terminalId: string
   workspaceId: string
 }
 
-type LayoutMode = 'grid' | 'tabs'
-
 // Type for terminal write functions
 type TerminalWriter = (data: string) => void
 
 function App() {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([])
+  const [agents, setAgents] = useState<Agent[]>([])
   const [activeTerminals, setActiveTerminals] = useState<ActiveTerminal[]>([])
-  const [focusedWorkspaceId, setFocusedWorkspaceId] = useState<string | null>(
-    null
-  )
-  const [layout, setLayout] = useState<LayoutMode>('grid')
+  const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null)
+  const [tabs, setTabs] = useState<AgentTab[]>([])
+  const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
-  const [editingWorkspace, setEditingWorkspace] = useState<
-    Workspace | undefined
-  >()
+  const [editingAgent, setEditingAgent] = useState<Agent | undefined>()
   const [waitingQueue, setWaitingQueue] = useState<string[]>([])
 
   // Central registry of terminal writers - Map of terminalId -> write function
@@ -46,9 +42,9 @@ function App() {
     terminalWritersRef.current.delete(terminalId)
   }, [])
 
-  // Load workspaces and state on mount
+  // Load agents and state on mount
   useEffect(() => {
-    loadWorkspaces()
+    loadAgents()
     setupEventListeners()
 
     return () => {
@@ -60,19 +56,20 @@ function App() {
   const setupEventListeners = () => {
     // Listen for initial state from main process
     window.electronAPI?.onInitialState?.((state: AppState) => {
-      setLayout(state.layout)
+      setTabs(state.tabs || [])
+      setActiveTabId(state.activeTabId)
       if (state.focusedWorkspaceId) {
-        setFocusedWorkspaceId(state.focusedWorkspaceId)
+        setFocusedAgentId(state.focusedWorkspaceId)
       }
-      // Resume active workspaces
+      // Resume active agents
       if (state.activeWorkspaceIds.length > 0) {
-        resumeWorkspaces(state.activeWorkspaceIds)
+        resumeAgents(state.activeWorkspaceIds)
       }
     })
 
-    // Listen for focus workspace events
-    window.electronAPI?.onFocusWorkspace?.((workspaceId: string) => {
-      setFocusedWorkspaceId(workspaceId)
+    // Listen for focus agent events
+    window.electronAPI?.onFocusWorkspace?.((agentId: string) => {
+      setFocusedAgentId(agentId)
     })
 
     // Listen for waiting queue changes
@@ -82,10 +79,10 @@ function App() {
     })
 
     // Listen for agent waiting events
-    window.electronAPI?.onAgentWaiting?.((workspaceId: string) => {
+    window.electronAPI?.onAgentWaiting?.((agentId: string) => {
       setWaitingQueue((prev) => {
-        if (!prev.includes(workspaceId)) {
-          const newQueue = [...prev, workspaceId]
+        if (!prev.includes(agentId)) {
+          const newQueue = [...prev, agentId]
           window.electronAPI?.updateTray?.(newQueue.length)
           return newQueue
         }
@@ -110,30 +107,37 @@ function App() {
     })
   }
 
-  const resumeWorkspaces = async (workspaceIds: string[]) => {
-    for (const workspaceId of workspaceIds) {
+  const resumeAgents = async (agentIds: string[]) => {
+    for (const agentId of agentIds) {
       try {
-        // Start fresh claude session (don't try to resume - workspace IDs are not valid Claude session IDs)
-        const terminalId = await window.electronAPI.createTerminal(workspaceId)
-        setActiveTerminals((prev) => [...prev, { terminalId, workspaceId }])
+        // Start fresh claude session (don't try to resume - agent IDs are not valid Claude session IDs)
+        const terminalId = await window.electronAPI.createTerminal(agentId)
+        setActiveTerminals((prev) => [
+          ...prev,
+          { terminalId, workspaceId: agentId },
+        ])
       } catch (e) {
-        console.error(`Failed to start workspace ${workspaceId}:`, e)
+        console.error(`Failed to start agent ${agentId}:`, e)
       }
     }
+    // Refresh tabs after resuming
+    const state = await window.electronAPI.getState()
+    setTabs(state.tabs || [])
+    setActiveTabId(state.activeTabId)
   }
 
-  const loadWorkspaces = async () => {
+  const loadAgents = async () => {
     const ws = await window.electronAPI.getWorkspaces()
-    setWorkspaces(ws)
+    setAgents(ws)
   }
 
-  const handleSaveWorkspace = async (workspace: Workspace) => {
-    await window.electronAPI.saveWorkspace(workspace)
-    await loadWorkspaces()
-    setEditingWorkspace(undefined)
+  const handleSaveAgent = async (agent: Agent) => {
+    await window.electronAPI.saveWorkspace(agent)
+    await loadAgents()
+    setEditingAgent(undefined)
   }
 
-  const handleDeleteWorkspace = async (id: string) => {
+  const handleDeleteAgent = async (id: string) => {
     // Stop terminal if running
     const activeTerminal = activeTerminals.find((t) => t.workspaceId === id)
     if (activeTerminal) {
@@ -142,109 +146,167 @@ function App() {
       setActiveTerminals((prev) => prev.filter((t) => t.workspaceId !== id))
     }
     await window.electronAPI.deleteWorkspace(id)
-    await loadWorkspaces()
+    await loadAgents()
     setWaitingQueue((prev) => prev.filter((wid) => wid !== id))
+    // Refresh tabs
+    const state = await window.electronAPI.getState()
+    setTabs(state.tabs || [])
   }
 
-  const handleLaunchWorkspace = async (workspaceId: string) => {
+  const handleLaunchAgent = async (agentId: string) => {
     // Check if already running
-    if (activeTerminals.some((t) => t.workspaceId === workspaceId)) {
-      setFocusedWorkspaceId(workspaceId)
-      window.electronAPI?.setFocusedWorkspace?.(workspaceId)
+    if (activeTerminals.some((t) => t.workspaceId === agentId)) {
+      // Find which tab contains this agent and switch to it
+      const tab = tabs.find((t) => t.workspaceIds.includes(agentId))
+      if (tab) {
+        setActiveTabId(tab.id)
+        await window.electronAPI?.setActiveTab?.(tab.id)
+      }
+      setFocusedAgentId(agentId)
+      window.electronAPI?.setFocusedWorkspace?.(agentId)
       return
     }
 
-    const terminalId = await window.electronAPI.createTerminal(workspaceId)
-    setActiveTerminals((prev) => [...prev, { terminalId, workspaceId }])
-    setFocusedWorkspaceId(workspaceId)
-    window.electronAPI?.setFocusedWorkspace?.(workspaceId)
+    const terminalId = await window.electronAPI.createTerminal(agentId)
+    setActiveTerminals((prev) => [...prev, { terminalId, workspaceId: agentId }])
+    setFocusedAgentId(agentId)
+    window.electronAPI?.setFocusedWorkspace?.(agentId)
+
+    // Refresh tabs to get the updated state (main process handles tab placement)
+    const state = await window.electronAPI.getState()
+    setTabs(state.tabs || [])
+    setActiveTabId(state.activeTabId)
   }
 
-  const handleStopWorkspace = async (workspaceId: string) => {
+  const handleStopAgent = async (agentId: string) => {
     const activeTerminal = activeTerminals.find(
-      (t) => t.workspaceId === workspaceId
+      (t) => t.workspaceId === agentId
     )
     if (activeTerminal) {
       await window.electronAPI.closeTerminal(activeTerminal.terminalId)
-      await window.electronAPI.stopWorkspace(workspaceId)
+      await window.electronAPI.stopWorkspace(agentId)
       setActiveTerminals((prev) =>
-        prev.filter((t) => t.workspaceId !== workspaceId)
+        prev.filter((t) => t.workspaceId !== agentId)
       )
-      setWaitingQueue((prev) => prev.filter((id) => id !== workspaceId))
-      if (focusedWorkspaceId === workspaceId) {
-        setFocusedWorkspaceId(null)
+      setWaitingQueue((prev) => prev.filter((id) => id !== agentId))
+      if (focusedAgentId === agentId) {
+        setFocusedAgentId(null)
         window.electronAPI?.setFocusedWorkspace?.(undefined)
       }
+      // Refresh tabs
+      const state = await window.electronAPI.getState()
+      setTabs(state.tabs || [])
     }
   }
 
-  const handleEditWorkspace = (workspace: Workspace) => {
-    setEditingWorkspace(workspace)
+  const handleEditAgent = (agent: Agent) => {
+    setEditingAgent(agent)
     setModalOpen(true)
   }
 
-  const handleAddWorkspace = () => {
-    setEditingWorkspace(undefined)
+  const handleAddAgent = () => {
+    setEditingAgent(undefined)
     setModalOpen(true)
   }
 
-  const handleLayoutChange = (newLayout: LayoutMode) => {
-    setLayout(newLayout)
-    window.electronAPI?.setLayout?.(newLayout)
-  }
-
-  const handleFocusWorkspace = (workspaceId: string) => {
-    setFocusedWorkspaceId(workspaceId)
-    window.electronAPI?.setFocusedWorkspace?.(workspaceId)
-    // Acknowledge if this workspace was waiting
-    if (waitingQueue.includes(workspaceId)) {
-      window.electronAPI?.acknowledgeWaiting?.(workspaceId)
-      setWaitingQueue((prev) => prev.filter((id) => id !== workspaceId))
+  const handleFocusAgent = (agentId: string) => {
+    setFocusedAgentId(agentId)
+    window.electronAPI?.setFocusedWorkspace?.(agentId)
+    // Acknowledge if this agent was waiting
+    if (waitingQueue.includes(agentId)) {
+      window.electronAPI?.acknowledgeWaiting?.(agentId)
+      setWaitingQueue((prev) => prev.filter((id) => id !== agentId))
     }
   }
 
   const handleNextWaiting = () => {
     if (waitingQueue.length > 1) {
       // Move to next in queue
-      const nextWorkspaceId = waitingQueue[1]
-      handleFocusWorkspace(nextWorkspaceId)
+      const nextAgentId = waitingQueue[1]
+      // Find which tab contains this agent
+      const tab = tabs.find((t) => t.workspaceIds.includes(nextAgentId))
+      if (tab && tab.id !== activeTabId) {
+        handleTabSelect(tab.id)
+      }
+      handleFocusAgent(nextAgentId)
     }
   }
 
-  const getTerminalForWorkspace = useCallback(
-    (workspaceId: string) => {
-      return activeTerminals.find((t) => t.workspaceId === workspaceId)
+  // Tab handlers
+  const handleTabSelect = async (tabId: string) => {
+    setActiveTabId(tabId)
+    await window.electronAPI?.setActiveTab?.(tabId)
+  }
+
+  const handleTabRename = async (tabId: string, name: string) => {
+    await window.electronAPI?.renameTab?.(tabId, name)
+    setTabs((prev) =>
+      prev.map((t) => (t.id === tabId ? { ...t, name } : t))
+    )
+  }
+
+  const handleTabDelete = async (tabId: string) => {
+    const result = await window.electronAPI?.deleteTab?.(tabId)
+    if (result?.success) {
+      // Stop all agents in the deleted tab
+      for (const workspaceId of result.workspaceIds) {
+        const terminal = activeTerminals.find(
+          (t) => t.workspaceId === workspaceId
+        )
+        if (terminal) {
+          await window.electronAPI.closeTerminal(terminal.terminalId)
+          setActiveTerminals((prev) =>
+            prev.filter((t) => t.workspaceId !== workspaceId)
+          )
+        }
+      }
+      // Refresh tabs
+      const state = await window.electronAPI.getState()
+      setTabs(state.tabs || [])
+      setActiveTabId(state.activeTabId)
+    }
+  }
+
+  const handleTabCreate = async () => {
+    const newTab = await window.electronAPI?.createTab?.()
+    if (newTab) {
+      setTabs((prev) => [...prev, newTab])
+      setActiveTabId(newTab.id)
+      await window.electronAPI?.setActiveTab?.(newTab.id)
+    }
+  }
+
+  const getTerminalForAgent = useCallback(
+    (agentId: string) => {
+      return activeTerminals.find((t) => t.workspaceId === agentId)
     },
     [activeTerminals]
   )
 
-  const focusedWorkspace = workspaces.find((w) => w.id === focusedWorkspaceId)
-  const focusedTerminal = focusedWorkspaceId
-    ? getTerminalForWorkspace(focusedWorkspaceId)
-    : null
+  const isAgentWaiting = (agentId: string) => waitingQueue.includes(agentId)
 
-  const isWorkspaceWaiting = (workspaceId: string) =>
-    waitingQueue.includes(workspaceId)
+  // Grid positions: TL (0), TR (1), BL (2), BR (3)
+  const gridPositions = [0, 1, 2, 3]
 
   // Empty state
-  if (workspaces.length === 0) {
+  if (agents.length === 0) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-foreground mb-4">AgentOp</h1>
           <p className="text-muted-foreground mb-6">
-            No workspaces configured. Add one to get started.
+            No agents configured. Add one to get started.
           </p>
-          <Button onClick={handleAddWorkspace}>
+          <Button onClick={handleAddAgent}>
             <Plus className="h-4 w-4 mr-2" />
-            Add Workspace
+            Add Agent
           </Button>
         </div>
-        <WorkspaceModal
+        <AgentModal
           open={modalOpen}
           onOpenChange={setModalOpen}
-          workspace={editingWorkspace}
-          onSave={handleSaveWorkspace}
+          agent={editingAgent}
+          onSave={handleSaveAgent}
         />
       </div>
     )
@@ -274,178 +336,149 @@ function App() {
               Next ({waitingQueue.length - 1})
             </Button>
           )}
-          <Button
-            variant={layout === 'grid' ? 'secondary' : 'ghost'}
-            size="icon-sm"
-            onClick={() => handleLayoutChange('grid')}
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </Button>
-          <Button
-            variant={layout === 'tabs' ? 'secondary' : 'ghost'}
-            size="icon-sm"
-            onClick={() => handleLayoutChange('tabs')}
-          >
-            <Layers className="h-4 w-4" />
-          </Button>
-          <Button size="sm" onClick={handleAddWorkspace}>
+          <Button size="sm" onClick={handleAddAgent}>
             <Plus className="h-4 w-4 mr-1" />
             Add
           </Button>
         </div>
       </header>
 
+      {/* Tab Bar */}
+      <TabBar
+        tabs={tabs}
+        activeTabId={activeTabId}
+        onTabSelect={handleTabSelect}
+        onTabRename={handleTabRename}
+        onTabDelete={handleTabDelete}
+        onTabCreate={handleTabCreate}
+      />
+
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar - Workspace list */}
+        {/* Sidebar - Agent list */}
         <aside className="w-64 border-r p-4 overflow-y-auto">
           <div className="space-y-3">
-            {workspaces.map((workspace) => (
-              <WorkspaceCard
-                key={workspace.id}
-                workspace={workspace}
+            {agents.map((agent) => (
+              <AgentCard
+                key={agent.id}
+                agent={agent}
                 isActive={activeTerminals.some(
-                  (t) => t.workspaceId === workspace.id
+                  (t) => t.workspaceId === agent.id
                 )}
-                isWaiting={isWorkspaceWaiting(workspace.id)}
+                isWaiting={isAgentWaiting(agent.id)}
                 onClick={() => {
-                  if (
-                    activeTerminals.some((t) => t.workspaceId === workspace.id)
-                  ) {
-                    handleFocusWorkspace(workspace.id)
+                  if (activeTerminals.some((t) => t.workspaceId === agent.id)) {
+                    // Find which tab contains this agent and switch to it
+                    const tab = tabs.find((t) =>
+                      t.workspaceIds.includes(agent.id)
+                    )
+                    if (tab && tab.id !== activeTabId) {
+                      handleTabSelect(tab.id)
+                    }
+                    handleFocusAgent(agent.id)
                   }
                 }}
-                onEdit={() => handleEditWorkspace(workspace)}
-                onDelete={() => handleDeleteWorkspace(workspace.id)}
-                onLaunch={() => handleLaunchWorkspace(workspace.id)}
-                onStop={() => handleStopWorkspace(workspace.id)}
+                onEdit={() => handleEditAgent(agent)}
+                onDelete={() => handleDeleteAgent(agent.id)}
+                onLaunch={() => handleLaunchAgent(agent.id)}
+                onStop={() => handleStopAgent(agent.id)}
               />
             ))}
           </div>
         </aside>
 
-        {/* Terminal area */}
-        <main className="flex-1 overflow-hidden">
-          {layout === 'tabs' ? (
-            // Tab view - single terminal fullscreen
-            <div className="h-full flex flex-col">
-              {activeTerminals.length > 0 && (
-                <div className="border-b flex">
-                  {activeTerminals.map((terminal) => {
-                    const workspace = workspaces.find(
-                      (w) => w.id === terminal.workspaceId
-                    )
-                    if (!workspace) return null
-                    const isWaiting = isWorkspaceWaiting(terminal.workspaceId)
-                    return (
-                      <button
-                        key={terminal.terminalId}
-                        className={`px-4 py-2 text-sm border-r transition-colors relative ${
-                          focusedWorkspaceId === terminal.workspaceId
-                            ? 'bg-muted'
-                            : 'hover:bg-muted/50'
-                        } ${isWaiting ? 'text-yellow-500' : ''}`}
-                        onClick={() =>
-                          handleFocusWorkspace(terminal.workspaceId)
-                        }
-                      >
-                        {workspace.name}
-                        {isWaiting && (
-                          <span className="absolute top-1 right-1 w-2 h-2 bg-yellow-500 rounded-full animate-pulse" />
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-              <div className="flex-1">
-                {focusedTerminal && focusedWorkspace ? (
-                  <Terminal
-                    key={focusedTerminal.terminalId}
-                    terminalId={focusedTerminal.terminalId}
-                    theme={focusedWorkspace.theme}
-                    registerWriter={registerWriter}
-                    unregisterWriter={unregisterWriter}
-                  />
-                ) : (
+        {/* Terminal area - Fixed 2x2 grid per tab */}
+        <main className="flex-1 overflow-hidden p-2 relative">
+          {/* Render all tabs, but only show the active one */}
+          {tabs.map((tab) => {
+            const isActiveTab = tab.id === activeTabId
+            const tabWorkspaceIds = tab.workspaceIds
+
+            return (
+              <div
+                key={tab.id}
+                className={`absolute inset-2 ${isActiveTab ? '' : 'invisible pointer-events-none'}`}
+              >
+                {tabWorkspaceIds.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-muted-foreground">
-                    {activeTerminals.length === 0
-                      ? 'Launch a workspace to see the terminal'
-                      : 'Select a terminal tab'}
+                    Launch an agent to see the terminal
+                  </div>
+                ) : (
+                  <div
+                    className="h-full grid gap-2"
+                    style={{
+                      gridTemplateColumns: '1fr 1fr',
+                      gridTemplateRows: '1fr 1fr',
+                    }}
+                  >
+                    {gridPositions.map((position) => {
+                      const workspaceId = tabWorkspaceIds[position]
+                      const terminal = workspaceId
+                        ? getTerminalForAgent(workspaceId)
+                        : null
+                      const agent = workspaceId
+                        ? agents.find((a) => a.id === workspaceId)
+                        : null
+
+                      if (!workspaceId || !terminal || !agent) {
+                        // Empty slot
+                        return (
+                          <div
+                            key={`empty-${tab.id}-${position}`}
+                            className="rounded-lg border border-dashed border-muted-foreground/20 flex items-center justify-center text-muted-foreground/40"
+                          >
+                            <span className="text-sm">Empty slot</span>
+                          </div>
+                        )
+                      }
+
+                      const isWaiting = isAgentWaiting(workspaceId)
+                      const isFocused = focusedAgentId === workspaceId
+
+                      return (
+                        <div
+                          key={terminal.terminalId}
+                          className={`rounded-lg border overflow-hidden ${
+                            isFocused ? 'ring-2 ring-primary' : ''
+                          } ${isWaiting ? 'ring-2 ring-yellow-500 animate-pulse' : ''}`}
+                          onClick={() => handleFocusAgent(workspaceId)}
+                        >
+                          <div
+                            className={`px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between ${
+                              isWaiting ? 'bg-yellow-500/20' : ''
+                            }`}
+                          >
+                            <span>{agent.name}</span>
+                            {isWaiting && (
+                              <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
+                                Waiting
+                              </span>
+                            )}
+                          </div>
+                          <div className="h-[calc(100%-2rem)]">
+                            <Terminal
+                              terminalId={terminal.terminalId}
+                              theme={agent.theme}
+                              registerWriter={registerWriter}
+                              unregisterWriter={unregisterWriter}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
-            </div>
-          ) : (
-            // Grid view - multiple terminals
-            <div className="h-full p-4 overflow-auto">
-              {activeTerminals.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-muted-foreground">
-                  Launch a workspace to see the terminal
-                </div>
-              ) : (
-                <div
-                  className="grid gap-4 h-full"
-                  style={{
-                    gridTemplateColumns: `repeat(${Math.min(
-                      activeTerminals.length,
-                      Math.ceil(Math.sqrt(activeTerminals.length))
-                    )}, 1fr)`,
-                  }}
-                >
-                  {activeTerminals.map((terminal) => {
-                    const workspace = workspaces.find(
-                      (w) => w.id === terminal.workspaceId
-                    )
-                    if (!workspace) return null
-                    const isWaiting = isWorkspaceWaiting(terminal.workspaceId)
-                    return (
-                      <div
-                        key={terminal.terminalId}
-                        className={`rounded-lg border overflow-hidden ${
-                          focusedWorkspaceId === terminal.workspaceId
-                            ? 'ring-2 ring-primary'
-                            : ''
-                        } ${isWaiting ? 'ring-2 ring-yellow-500 animate-pulse' : ''}`}
-                        onClick={() =>
-                          handleFocusWorkspace(terminal.workspaceId)
-                        }
-                      >
-                        <div
-                          className={`px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between ${
-                            isWaiting ? 'bg-yellow-500/20' : ''
-                          }`}
-                        >
-                          <span>{workspace.name}</span>
-                          {isWaiting && (
-                            <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
-                              Waiting
-                            </span>
-                          )}
-                        </div>
-                        <div className="h-[calc(100%-2rem)]">
-                          <Terminal
-                            terminalId={terminal.terminalId}
-                            theme={workspace.theme}
-                            registerWriter={registerWriter}
-                            unregisterWriter={unregisterWriter}
-                          />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
+            )
+          })}
         </main>
       </div>
 
-      <WorkspaceModal
+      <AgentModal
         open={modalOpen}
         onOpenChange={setModalOpen}
-        workspace={editingWorkspace}
-        onSave={handleSaveWorkspace}
+        agent={editingAgent}
+        onSave={handleSaveAgent}
       />
     </div>
   )

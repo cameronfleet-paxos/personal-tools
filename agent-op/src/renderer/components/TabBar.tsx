@@ -1,0 +1,138 @@
+import { useState, useRef, useEffect } from 'react'
+import { Plus, X, Pencil } from 'lucide-react'
+import { Button } from '@/renderer/components/ui/button'
+import type { AgentTab } from '@/shared/types'
+
+interface TabBarProps {
+  tabs: AgentTab[]
+  activeTabId: string | null
+  onTabSelect: (tabId: string) => void
+  onTabRename: (tabId: string, name: string) => void
+  onTabDelete: (tabId: string) => void
+  onTabCreate: () => void
+}
+
+export function TabBar({
+  tabs,
+  activeTabId,
+  onTabSelect,
+  onTabRename,
+  onTabDelete,
+  onTabCreate,
+}: TabBarProps) {
+  const [editingTabId, setEditingTabId] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (editingTabId && inputRef.current) {
+      inputRef.current.focus()
+      inputRef.current.select()
+    }
+  }, [editingTabId])
+
+  const handleStartRename = (tab: AgentTab) => {
+    setEditingTabId(tab.id)
+    setEditingName(tab.name)
+  }
+
+  const handleFinishRename = () => {
+    if (editingTabId && editingName.trim()) {
+      onTabRename(editingTabId, editingName.trim())
+    }
+    setEditingTabId(null)
+    setEditingName('')
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleFinishRename()
+    } else if (e.key === 'Escape') {
+      setEditingTabId(null)
+      setEditingName('')
+    }
+  }
+
+  return (
+    <div className="border-b bg-muted/30 flex items-center px-2 py-1 gap-1 overflow-x-auto">
+      {tabs.map((tab) => {
+        const isActive = tab.id === activeTabId
+        const isEditing = editingTabId === tab.id
+        const agentCount = tab.workspaceIds.length
+
+        return (
+          <div
+            key={tab.id}
+            className={`group flex items-center gap-1 px-3 py-1.5 rounded-md text-sm cursor-pointer transition-colors ${
+              isActive
+                ? 'bg-background border shadow-sm'
+                : 'hover:bg-muted/50'
+            }`}
+            onClick={() => !isEditing && onTabSelect(tab.id)}
+          >
+            {isEditing ? (
+              <input
+                ref={inputRef}
+                type="text"
+                value={editingName}
+                onChange={(e) => setEditingName(e.target.value)}
+                onBlur={handleFinishRename}
+                onKeyDown={handleKeyDown}
+                className="w-20 px-1 py-0 text-sm bg-transparent border-b border-primary outline-none"
+                onClick={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <>
+                <span
+                  onDoubleClick={(e) => {
+                    e.stopPropagation()
+                    handleStartRename(tab)
+                  }}
+                >
+                  {tab.name}
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  ({agentCount}/4)
+                </span>
+              </>
+            )}
+
+            {!isEditing && (
+              <div className="flex items-center gap-0.5 ml-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  className="p-0.5 hover:bg-muted rounded"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleStartRename(tab)
+                  }}
+                >
+                  <Pencil className="h-3 w-3 text-muted-foreground" />
+                </button>
+                {tabs.length > 1 && (
+                  <button
+                    className="p-0.5 hover:bg-destructive/20 rounded"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onTabDelete(tab.id)
+                    }}
+                  >
+                    <X className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="ml-1 h-7 w-7"
+        onClick={onTabCreate}
+      >
+        <Plus className="h-4 w-4" />
+      </Button>
+    </div>
+  )
+}

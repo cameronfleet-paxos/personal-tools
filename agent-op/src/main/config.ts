@@ -46,7 +46,8 @@ export function ensureConfigDirExists(): void {
   if (!fs.existsSync(statePath)) {
     const defaultState: AppState = {
       activeWorkspaceIds: [],
-      layout: 'grid',
+      tabs: [],
+      activeTabId: null,
     }
     writeConfigAtomic(statePath, defaultState)
   }
@@ -112,7 +113,7 @@ export function loadState(): AppState {
     const content = fs.readFileSync(statePath, 'utf-8')
     return JSON.parse(content) as AppState
   } catch {
-    return { activeWorkspaceIds: [], layout: 'grid' }
+    return { activeWorkspaceIds: [], tabs: [], activeTabId: null }
   }
 }
 

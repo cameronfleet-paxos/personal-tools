@@ -1,15 +1,27 @@
-// Workspace definition (stored in ~/.agent-operator/config.json)
-export interface Workspace {
+// Agent definition (stored in ~/.agent-operator/config.json)
+export interface Agent {
   id: string
   name: string
   directory: string
+  purpose: string
   theme: ThemeName
+}
+
+// Alias for backwards compatibility
+export type Workspace = Agent
+
+// Tab containing up to 4 agents in a 2x2 grid
+export interface AgentTab {
+  id: string
+  name: string
+  workspaceIds: string[] // Max 4, order = grid position (TL, TR, BL, BR)
 }
 
 // App state (stored in ~/.agent-operator/state.json)
 export interface AppState {
   activeWorkspaceIds: string[]
-  layout: 'grid' | 'tabs'
+  tabs: AgentTab[]
+  activeTabId: string | null
   focusedWorkspaceId?: string
 }
 

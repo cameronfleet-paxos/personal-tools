@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState } from '../shared/types'
+import type { Workspace, AppState, AgentTab } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -31,10 +31,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // State management
   getState: (): Promise<AppState> => ipcRenderer.invoke('get-state'),
-  setLayout: (layout: 'grid' | 'tabs'): Promise<void> =>
-    ipcRenderer.invoke('set-layout', layout),
   setFocusedWorkspace: (workspaceId: string | undefined): Promise<void> =>
     ipcRenderer.invoke('set-focused-workspace', workspaceId),
+
+  // Tab management
+  createTab: (name?: string): Promise<AgentTab> =>
+    ipcRenderer.invoke('create-tab', name),
+  renameTab: (tabId: string, name: string): Promise<void> =>
+    ipcRenderer.invoke('rename-tab', tabId, name),
+  deleteTab: (
+    tabId: string
+  ): Promise<{ success: boolean; workspaceIds: string[] }> =>
+    ipcRenderer.invoke('delete-tab', tabId),
+  setActiveTab: (tabId: string): Promise<void> =>
+    ipcRenderer.invoke('set-active-tab', tabId),
 
   // Waiting queue management
   getWaitingQueue: (): Promise<string[]> =>

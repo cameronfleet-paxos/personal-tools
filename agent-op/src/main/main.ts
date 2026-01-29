@@ -28,8 +28,15 @@ import {
   getState,
   addActiveWorkspace,
   removeActiveWorkspace,
-  setLayout,
   setFocusedWorkspace,
+  createTab,
+  renameTab,
+  deleteTab,
+  setActiveTab,
+  addWorkspaceToTab,
+  removeWorkspaceFromTab,
+  getOrCreateTabForWorkspace,
+  getTabForWorkspace,
 } from './state-manager'
 import type { Workspace } from '../shared/types'
 
@@ -99,6 +106,11 @@ function registerIpcHandlers() {
       // Add to active workspaces
       addActiveWorkspace(workspaceId)
 
+      // Auto-place workspace in a tab with space (or create new tab)
+      const tab = getOrCreateTabForWorkspace(workspaceId)
+      addWorkspaceToTab(workspaceId, tab.id)
+      setActiveTab(tab.id)
+
       return createTerminal(workspaceId, mainWindow, resumeSessionId)
     }
   )
@@ -123,17 +135,38 @@ function registerIpcHandlers() {
     return getState()
   })
 
-  ipcMain.handle('set-layout', (_event, layout: 'grid' | 'tabs') => {
-    setLayout(layout)
-  })
-
   ipcMain.handle('set-focused-workspace', (_event, workspaceId: string | undefined) => {
     setFocusedWorkspace(workspaceId)
   })
 
   ipcMain.handle('stop-workspace', (_event, workspaceId: string) => {
+    removeWorkspaceFromTab(workspaceId)
     removeActiveWorkspace(workspaceId)
     closeSocketServer(workspaceId)
+  })
+
+  // Tab management
+  ipcMain.handle('create-tab', (_event, name?: string) => {
+    return createTab(name)
+  })
+
+  ipcMain.handle('rename-tab', (_event, tabId: string, name: string) => {
+    renameTab(tabId, name)
+  })
+
+  ipcMain.handle('delete-tab', (_event, tabId: string) => {
+    const tab = getState().tabs.find((t) => t.id === tabId)
+    if (tab) {
+      // Return workspace IDs that need to be stopped
+      const workspaceIds = [...tab.workspaceIds]
+      const success = deleteTab(tabId)
+      return { success, workspaceIds }
+    }
+    return { success: false, workspaceIds: [] }
+  })
+
+  ipcMain.handle('set-active-tab', (_event, tabId: string) => {
+    setActiveTab(tabId)
   })
 
   // Waiting queue management
