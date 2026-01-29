@@ -1,10 +1,10 @@
 import { Pencil, Trash2, Play, Square } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
-import type { Workspace } from '@/shared/types'
+import type { Agent } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
-interface WorkspaceCardProps {
-  workspace: Workspace
+interface AgentCardProps {
+  agent: Agent
   isActive: boolean
   isWaiting?: boolean
   onEdit: () => void
@@ -14,8 +14,8 @@ interface WorkspaceCardProps {
   onClick: () => void
 }
 
-export function WorkspaceCard({
-  workspace,
+export function AgentCard({
+  agent,
   isActive,
   isWaiting,
   onEdit,
@@ -23,8 +23,8 @@ export function WorkspaceCard({
   onLaunch,
   onStop,
   onClick,
-}: WorkspaceCardProps) {
-  const themeColors = themes[workspace.theme]
+}: AgentCardProps) {
+  const themeColors = themes[agent.theme]
 
   return (
     <div
@@ -35,13 +35,13 @@ export function WorkspaceCard({
       `}
       onClick={onClick}
     >
-      <div className="flex items-start justify-between mb-3">
+      <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
           <div
             className="w-4 h-4 rounded-sm"
             style={{ backgroundColor: themeColors.bg }}
           />
-          <h3 className="font-medium">{workspace.name}</h3>
+          <h3 className="font-medium">{agent.name}</h3>
           {isWaiting && (
             <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
               Waiting
@@ -71,8 +71,13 @@ export function WorkspaceCard({
           </Button>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground truncate mb-3">
-        {workspace.directory}
+      {agent.purpose && (
+        <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+          {agent.purpose}
+        </p>
+      )}
+      <p className="text-xs text-muted-foreground/60 truncate mb-3">
+        {agent.directory}
       </p>
       <div className="flex gap-2">
         {isActive ? (
@@ -104,3 +109,6 @@ export function WorkspaceCard({
     </div>
   )
 }
+
+// Backwards compatibility export
+export { AgentCard as WorkspaceCard }

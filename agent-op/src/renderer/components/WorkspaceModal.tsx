@@ -9,6 +9,7 @@ import {
 import { Button } from '@/renderer/components/ui/button'
 import { Input } from '@/renderer/components/ui/input'
 import { Label } from '@/renderer/components/ui/label'
+import { Textarea } from '@/renderer/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -16,41 +17,44 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/renderer/components/ui/select'
-import type { Workspace, ThemeName } from '@/shared/types'
+import type { Agent, ThemeName } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
-interface WorkspaceModalProps {
+interface AgentModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  workspace?: Workspace
-  onSave: (workspace: Workspace) => void
+  agent?: Agent
+  onSave: (agent: Agent) => void
 }
 
 const themeNames = Object.keys(themes) as ThemeName[]
 
-export function WorkspaceModal({
+export function AgentModal({
   open,
   onOpenChange,
-  workspace,
+  agent,
   onSave,
-}: WorkspaceModalProps) {
+}: AgentModalProps) {
   const [name, setName] = useState('')
   const [directory, setDirectory] = useState('')
+  const [purpose, setPurpose] = useState('')
   const [theme, setTheme] = useState<ThemeName>('gray')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (workspace) {
-      setName(workspace.name)
-      setDirectory(workspace.directory)
-      setTheme(workspace.theme)
+    if (agent) {
+      setName(agent.name)
+      setDirectory(agent.directory)
+      setPurpose(agent.purpose || '')
+      setTheme(agent.theme)
     } else {
       setName('')
       setDirectory('')
+      setPurpose('')
       setTheme('gray')
     }
     setError(null)
-  }, [workspace, open])
+  }, [agent, open])
 
   const handleSave = () => {
     if (!name.trim()) {
@@ -62,24 +66,23 @@ export function WorkspaceModal({
       return
     }
 
-    const newWorkspace: Workspace = {
-      id: workspace?.id || crypto.randomUUID(),
+    const newAgent: Agent = {
+      id: agent?.id || crypto.randomUUID(),
       name: name.trim(),
       directory: directory.trim(),
+      purpose: purpose.trim(),
       theme,
     }
 
-    onSave(newWorkspace)
+    onSave(newAgent)
     onOpenChange(false)
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
-          <DialogTitle>
-            {workspace ? 'Edit Workspace' : 'Add Workspace'}
-          </DialogTitle>
+          <DialogTitle>{agent ? 'Edit Agent' : 'Add Agent'}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">
@@ -92,12 +95,22 @@ export function WorkspaceModal({
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="directory">Directory</Label>
+            <Label htmlFor="directory">Home Directory</Label>
             <Input
               id="directory"
               value={directory}
               onChange={(e) => setDirectory(e.target.value)}
               placeholder="/Users/cameron/dev/pax"
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="purpose">Purpose</Label>
+            <Textarea
+              id="purpose"
+              value={purpose}
+              onChange={(e) => setPurpose(e.target.value)}
+              placeholder="Describe what this agent is for..."
+              rows={3}
             />
           </div>
           <div className="grid gap-2">
@@ -142,3 +155,6 @@ export function WorkspaceModal({
     </Dialog>
   )
 }
+
+// Backwards compatibility export
+export { AgentModal as WorkspaceModal }

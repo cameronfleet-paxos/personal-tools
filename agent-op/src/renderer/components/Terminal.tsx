@@ -122,7 +122,20 @@ export function Terminal({
           className="absolute inset-0 flex items-center justify-center z-10"
           style={{ backgroundColor: themes[theme].bg }}
         >
-          <span style={{ color: themes[theme].fg }}>Claude is booting...</span>
+          <div className="flex flex-col items-center gap-3">
+            <pre
+              className="animate-claude-bounce font-mono text-xl leading-tight select-none"
+              style={{ color: '#D97757' }}
+            >
+              {` ▐▛███▜▌\n▝▜█████▛▘\n  ▘▘ ▝▝`}
+            </pre>
+            <span
+              className="animate-pulse text-sm"
+              style={{ color: '#D97757' }}
+            >
+              booting...
+            </span>
+          </div>
         </div>
       )}
       <div
