@@ -1,0 +1,113 @@
+import { useEffect, useRef } from 'react'
+import { Terminal as XTerm } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import type { ThemeName } from '@/shared/types'
+import { themes } from '@/shared/constants'
+
+interface TerminalProps {
+  terminalId: string
+  theme: ThemeName
+  registerWriter: (terminalId: string, writer: (data: string) => void) => void
+  unregisterWriter: (terminalId: string) => void
+}
+
+export function Terminal({
+  terminalId,
+  theme,
+  registerWriter,
+  unregisterWriter,
+}: TerminalProps) {
+  const terminalRef = useRef<HTMLDivElement>(null)
+  const xtermRef = useRef<XTerm | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
+  const initializedRef = useRef(false)
+
+  useEffect(() => {
+    if (!terminalRef.current || initializedRef.current) return
+    initializedRef.current = true
+
+    const themeColors = themes[theme]
+
+    const xterm = new XTerm({
+      theme: {
+        background: themeColors.bg,
+        foreground: themeColors.fg,
+        cursor: themeColors.fg,
+        cursorAccent: themeColors.bg,
+      },
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontSize: 13,
+      lineHeight: 1.2,
+      cursorBlink: true,
+      allowTransparency: true,
+    })
+
+    const fitAddon = new FitAddon()
+    xterm.loadAddon(fitAddon)
+
+    xterm.open(terminalRef.current)
+    fitAddon.fit()
+
+    xtermRef.current = xterm
+    fitAddonRef.current = fitAddon
+
+    // Handle user input
+    xterm.onData((data) => {
+      window.electronAPI.writeTerminal(terminalId, data)
+    })
+
+    // Register this terminal's write function with the parent
+    registerWriter(terminalId, (data: string) => {
+      if (xtermRef.current) {
+        xtermRef.current.write(data)
+      }
+    })
+
+    // Initial resize
+    const { cols, rows } = xterm
+    window.electronAPI.resizeTerminal(terminalId, cols, rows)
+
+    // Handle window resize
+    const resizeObserver = new ResizeObserver(() => {
+      if (fitAddonRef.current && xtermRef.current) {
+        fitAddonRef.current.fit()
+        const { cols, rows } = xtermRef.current
+        window.electronAPI.resizeTerminal(terminalId, cols, rows)
+      }
+    })
+
+    if (terminalRef.current) {
+      resizeObserver.observe(terminalRef.current)
+    }
+
+    return () => {
+      resizeObserver.disconnect()
+      xterm.dispose()
+      unregisterWriter(terminalId)
+      initializedRef.current = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [terminalId])
+
+  // Update theme when it changes
+  useEffect(() => {
+    if (xtermRef.current) {
+      const themeColors = themes[theme]
+      xtermRef.current.options.theme = {
+        background: themeColors.bg,
+        foreground: themeColors.fg,
+        cursor: themeColors.fg,
+        cursorAccent: themeColors.bg,
+      }
+    }
+  }, [theme])
+
+  return (
+    <div
+      ref={terminalRef}
+      className="w-full h-full overflow-hidden"
+      style={{ backgroundColor: themes[theme].bg }}
+    />
+  )
+}
