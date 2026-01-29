@@ -361,27 +361,7 @@ This feature is complete when:
 ## Ralph Loop Command
 
 ```bash
-/ralph-loop:ralph-loop "Implement AgentOp per spec at docs/specs/agentop.md
-
-PHASES:
-1. Foundation: Electron + React + Tailwind + shadcn/ui scaffold - verify with `npm run dev`
-2. Workspace Management: CRUD for workspaces + single xterm.js terminal - verify by adding workspace and running claude
-3. Multi-Agent Views: Grid/tab layouts, multiple terminals - verify by running 3+ agents
-4. Input Detection: StopHook, notifications, auto-focus queue, system tray - verify by triggering agent input request
-5. Session Persistence: Save/restore on quit/launch - verify by closing and reopening app
-
-VERIFICATION (run after each phase):
-- npm run typecheck
-- npm run lint
-- npm run build
-- playwright MCP for verifications locally that the app is doing what is expected
-
-ESCAPE HATCH: After 20 iterations without progress:
-- Document what's blocking in the spec file under 'Implementation Notes'
-- List approaches attempted
-- Stop and ask for human guidance
-
-Output <promise>COMPLETE</promise> when all phases pass verification." --max-iterations 50 --completion-promise "COMPLETE"
+/ralph-loop:ralph-loop "Implement AgentOp per spec at docs/specs/agentop.md. Work in agent-op directory. PHASES (implement ALL 5 before outputting COMPLETE): 1. Foundation: Electron+React+Tailwind+shadcn/ui scaffold 2. Workspace Management: CRUD+single xterm.js terminal 3. Multi-Agent Views: Grid/tab layouts, multiple terminals 4. Input Detection: StopHook, notifications, auto-focus queue, system tray 5. Session Persistence: Save/restore on quit/launch. VERIFICATION after each phase: npm run typecheck, npm run lint, npm run build, playwright MCP for UI verification. ESCAPE HATCH after 20 iterations without progress: Document blockers in spec under Implementation Notes, list approaches attempted, stop and ask for guidance. IMPORTANT: Only output COMPLETE after ALL 5 phases are implemented and verified." --max-iterations 50 --completion-promise "COMPLETE"
 ```
 
 ## Implementation Notes

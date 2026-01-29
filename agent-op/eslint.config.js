@@ -23,6 +23,13 @@ export default [
         __dirname: 'readonly',
         document: 'readonly',
         window: 'readonly',
+        HTMLDivElement: 'readonly',
+        ResizeObserver: 'readonly',
+        crypto: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
       },
     },
     plugins: {

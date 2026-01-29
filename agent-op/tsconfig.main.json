@@ -9,8 +9,12 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "outDir": "./dist/main",
-    "rootDir": "./src/main"
+    "rootDir": "./src",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["src/main/**/*"],
-  "exclude": ["node_modules"]
+  "include": ["src/main/**/*", "src/shared/**/*"],
+  "exclude": ["node_modules", "src/renderer/**/*"]
 }

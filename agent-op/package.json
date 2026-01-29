@@ -2,8 +2,7 @@
   "name": "agent-op",
   "version": "1.0.0",
   "description": "Desktop application for monitoring and managing Claude Code agents",
-  "type": "module",
-  "main": "dist/main/main.js",
+    "main": "dist/main/main/main.js",
   "scripts": {
     "dev": "vite",
     "dev:electron": "NODE_ENV=development electron .",
@@ -45,10 +44,18 @@
     "vite": "^7.3.1"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-slot": "^1.2.4",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.563.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^3.4.0"
   }
 }
