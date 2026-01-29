@@ -14,7 +14,7 @@ Puppy schedule tracker for Otto - track daily activities with checklist, notific
 After making any code changes, rebuild and deploy the Electron app:
 
 ```bash
-pnpm electron:build && cp -R dist/mac-arm64/Otto\ Schedule.app /Users/cameronfleet/Applications/
+pnpm electron:build && ./deploy.sh
 ```
 
 ## Project Structure

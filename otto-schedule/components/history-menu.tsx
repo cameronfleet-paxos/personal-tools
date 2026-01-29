@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Menu, Pencil, Plus, Activity } from 'lucide-react';
+import { Menu, Pencil, Plus, Activity, ClipboardCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -67,6 +67,12 @@ export function HistoryMenu({ onAddItem }: HistoryMenuProps) {
           <Link href="/vitals">
             <Activity className="mr-2 h-4 w-4" />
             Vitals
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href="/socialization">
+            <ClipboardCheck className="mr-2 h-4 w-4" />
+            Socialization
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
