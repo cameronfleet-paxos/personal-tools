@@ -1,13 +1,24 @@
 # Bismark
 
-A desktop application for monitoring and managing Claude Code agents.
+<p align="center">
+  <img src="assets/icon.svg" alt="Bismark Logo" width="128" height="128">
+</p>
+
+A desktop application for monitoring and managing Claude Code agent workspaces.
+
+## Features
+
+- **Workspace Management** - Monitor multiple Claude Code sessions from a single dashboard
+- **Real-time Updates** - Receive live status updates via Unix socket hooks
+- **Automatic Hook Configuration** - Hooks are automatically installed on first launch
+- **Session Persistence** - Workspaces persist across app restarts
 
 ## Prerequisites
 
 - Node.js 18+
 - npm
 
-## Quick Start
+## Installation
 
 ```bash
 # Install dependencies
@@ -25,44 +36,35 @@ The app will be installed to `~/Applications/Bismark.app`.
 # Install dependencies
 npm install
 
-# Start the development server
+# Start Vite dev server (terminal 1)
+npm run dev
+
+# Start Electron (terminal 2)
 npm run dev:electron
 ```
+
+## Build Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run build` | Build both main and renderer processes |
+| `npm run dist` | Create distributable package |
+| `npm run pack` | Create unpacked directory |
 
 ## Configuration
 
 Bismark stores its configuration in `~/.bismark/`:
 
 - `settings.json` - Application settings
+- `sockets/` - Unix sockets for agent communication
+- `hooks/` - Auto-generated hook scripts
 
-## Claude Code Hook Setup
+## Claude Code Integration
 
-Bismark can receive real-time updates from Claude Code sessions via hooks. To enable this:
+On first launch, Bismark automatically configures Claude Code hooks in `~/.claude/settings.json`:
 
-1. Add the following to your Claude Code hooks configuration (`~/.claude/settings.json`):
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": ".*",
-        "hooks": [
-          "curl -X POST http://localhost:3847/hook -d '{\"event\": \"PostToolUse\", \"session\": \"$CLAUDE_SESSION_ID\"}'"
-        ]
-      }
-    ]
-  }
-}
-```
-
-2. Start Bismark and it will automatically listen for hook events.
-
-## Build Commands
-
-- `npm run build` - Build both main and renderer processes
-- `npm run dist` - Create distributable package
-- `npm run pack` - Create unpacked directory
+- **Stop Hook** - Notifies when an agent stops and needs input
+- **Notification Hook** - Notifies when an agent requires permission approval
 
 ## License
 
