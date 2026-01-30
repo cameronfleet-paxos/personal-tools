@@ -7,10 +7,7 @@ export interface ElectronAPI {
   deleteWorkspace: (id: string) => Promise<void>
 
   // Terminal management
-  createTerminal: (
-    workspaceId: string,
-    resumeSessionId?: string
-  ) => Promise<string>
+  createTerminal: (workspaceId: string) => Promise<string>
   writeTerminal: (terminalId: string, data: string) => Promise<void>
   resizeTerminal: (
     terminalId: string,

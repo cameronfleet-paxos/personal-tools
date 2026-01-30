@@ -8,6 +8,7 @@ export interface Agent {
   purpose: string
   theme: ThemeName
   icon: AgentIconName
+  sessionId?: string // Claude session ID for resuming sessions across app restarts
 }
 
 // Alias for backwards compatibility

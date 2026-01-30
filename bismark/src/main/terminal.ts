@@ -1,8 +1,36 @@
 import * as pty from 'node-pty'
 import * as fs from 'fs'
 import * as os from 'os'
+import * as path from 'path'
+import * as crypto from 'crypto'
 import { BrowserWindow } from 'electron'
-import { getWorkspaceById } from './config'
+import { getWorkspaceById, saveWorkspace } from './config'
+
+/**
+ * Check if a Claude session exists with content.
+ * Claude stores sessions in ~/.claude/projects/<project-path-hash>/<session-id>.jsonl
+ */
+function claudeSessionExists(sessionId: string): boolean {
+  const claudeDir = path.join(os.homedir(), '.claude', 'projects')
+  if (!fs.existsSync(claudeDir)) return false
+
+  // Look through project directories for the session file
+  try {
+    const projectDirs = fs.readdirSync(claudeDir)
+    for (const dir of projectDirs) {
+      const sessionFile = path.join(claudeDir, dir, `${sessionId}.jsonl`)
+      if (fs.existsSync(sessionFile)) {
+        // Check if file has content (not just empty)
+        const stats = fs.statSync(sessionFile)
+        return stats.size > 0
+      }
+    }
+  } catch {
+    // If we can't read the directory, assume session doesn't exist
+    return false
+  }
+  return false
+}
 
 interface TerminalProcess {
   pty: pty.IPty
@@ -13,8 +41,7 @@ const terminals: Map<string, TerminalProcess> = new Map()
 
 export function createTerminal(
   workspaceId: string,
-  mainWindow: BrowserWindow | null,
-  resumeSessionId?: string
+  mainWindow: BrowserWindow | null
 ): string {
   const workspace = getWorkspaceById(workspaceId)
   if (!workspace) {
@@ -29,6 +56,22 @@ export function createTerminal(
   if (!fs.existsSync(cwd)) {
     console.warn(`Directory ${cwd} does not exist, using home directory`)
     cwd = os.homedir()
+  }
+
+  // Get or generate session ID for Claude session persistence
+  let sessionId = workspace.sessionId
+  let claudeCmd: string
+
+  if (sessionId && claudeSessionExists(sessionId)) {
+    // Session exists with content - resume it
+    claudeCmd = `claude --resume ${sessionId}\n`
+  } else {
+    // No session or empty session - generate ID and start new session
+    if (!sessionId) {
+      sessionId = crypto.randomUUID()
+      saveWorkspace({ ...workspace, sessionId })
+    }
+    claudeCmd = `claude --session-id ${sessionId}\n`
   }
 
   // Spawn interactive shell
@@ -59,9 +102,6 @@ export function createTerminal(
 
   // Auto-start claude after a short delay to let shell initialize
   setTimeout(() => {
-    const claudeCmd = resumeSessionId
-      ? `claude --resume ${resumeSessionId}\n`
-      : 'claude\n'
     ptyProcess.write(claudeCmd)
   }, 500)
 

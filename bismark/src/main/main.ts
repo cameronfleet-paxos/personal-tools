@@ -101,23 +101,20 @@ function registerIpcHandlers() {
   })
 
   // Terminal management
-  ipcMain.handle(
-    'create-terminal',
-    (_event, workspaceId: string, resumeSessionId?: string) => {
-      // Create socket server for this workspace
-      createSocketServer(workspaceId)
+  ipcMain.handle('create-terminal', (_event, workspaceId: string) => {
+    // Create socket server for this workspace
+    createSocketServer(workspaceId)
 
-      // Add to active workspaces
-      addActiveWorkspace(workspaceId)
+    // Add to active workspaces
+    addActiveWorkspace(workspaceId)
 
-      // Auto-place workspace in a tab with space (or create new tab)
-      const tab = getOrCreateTabForWorkspace(workspaceId)
-      addWorkspaceToTab(workspaceId, tab.id)
-      setActiveTab(tab.id)
+    // Auto-place workspace in a tab with space (or create new tab)
+    const tab = getOrCreateTabForWorkspace(workspaceId)
+    addWorkspaceToTab(workspaceId, tab.id)
+    setActiveTab(tab.id)
 
-      return createTerminal(workspaceId, mainWindow, resumeSessionId)
-    }
-  )
+    return createTerminal(workspaceId, mainWindow)
+  })
 
   ipcMain.handle('write-terminal', (_event, terminalId: string, data: string) => {
     writeTerminal(terminalId, data)
