@@ -125,6 +125,7 @@ export function Terminal({
         if (term) {
           const { cols, rows } = term
           window.electronAPI.resizeTerminal(terminalId, cols, rows)
+          term.focus()
         }
       }, 50)
       return () => clearTimeout(timer)
