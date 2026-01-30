@@ -185,6 +185,17 @@ function App() {
 
     // Global terminal data listener - routes data to the appropriate terminal writer
     window.electronAPI?.onTerminalData?.((terminalId: string, data: string) => {
+      // Detect Claude banner to end boot phase early
+      // Claude outputs "Claude Code" in its startup banner
+      if (data.includes('Claude Code')) {
+        setBootedTerminals((prev) => {
+          if (!prev.has(terminalId)) {
+            return new Set(prev).add(terminalId)
+          }
+          return prev
+        })
+      }
+
       const writer = terminalWritersRef.current.get(terminalId)
       if (writer) {
         writer(data)
