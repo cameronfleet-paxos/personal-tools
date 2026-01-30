@@ -36,6 +36,10 @@ function App() {
   // Track which terminals have finished booting (by terminalId)
   const [bootedTerminals, setBootedTerminals] = useState<Set<string>>(new Set())
 
+  // Drag-and-drop state
+  const [draggedWorkspaceId, setDraggedWorkspaceId] = useState<string | null>(null)
+  const [dropTargetPosition, setDropTargetPosition] = useState<number | null>(null)
+
   // Central registry of terminal writers - Map of terminalId -> write function
   const terminalWritersRef = useRef<Map<string, TerminalWriter>>(new Map())
 
@@ -350,6 +354,35 @@ function App() {
     }
   }
 
+  const handleMoveAgentToTab = async (agentId: string, targetTabId: string) => {
+    const success = await window.electronAPI?.moveWorkspaceToTab?.(agentId, targetTabId)
+    if (success) {
+      // Refresh tabs to get updated state
+      const state = await window.electronAPI.getState()
+      setTabs(state.tabs || [])
+      // Switch to the target tab if we moved an active agent
+      if (activeTerminals.some((t) => t.workspaceId === agentId)) {
+        setActiveTabId(targetTabId)
+        await window.electronAPI?.setActiveTab?.(targetTabId)
+      }
+    }
+  }
+
+  const handleReorderInTab = async (sourceWorkspaceId: string, targetPosition: number) => {
+    if (!activeTabId) return
+
+    const success = await window.electronAPI?.reorderWorkspaceInTab?.(
+      activeTabId,
+      sourceWorkspaceId,
+      targetPosition
+    )
+    if (success) {
+      // Refresh tabs to get updated state
+      const state = await window.electronAPI.getState()
+      setTabs(state.tabs || [])
+    }
+  }
+
   const getTerminalForAgent = useCallback(
     (agentId: string) => {
       return activeTerminals.find((t) => t.workspaceId === agentId)
@@ -441,32 +474,37 @@ function App() {
         {/* Sidebar - Agent list */}
         <aside className="w-64 border-r p-4 overflow-y-auto">
           <div className="space-y-3">
-            {agents.map((agent) => (
-              <AgentCard
-                key={agent.id}
-                agent={agent}
-                isActive={activeTerminals.some(
-                  (t) => t.workspaceId === agent.id
-                )}
-                isWaiting={isAgentWaiting(agent.id)}
-                onClick={() => {
-                  if (activeTerminals.some((t) => t.workspaceId === agent.id)) {
-                    // Find which tab contains this agent and switch to it
-                    const tab = tabs.find((t) =>
-                      t.workspaceIds.includes(agent.id)
-                    )
-                    if (tab && tab.id !== activeTabId) {
-                      handleTabSelect(tab.id)
+            {agents.map((agent) => {
+              const agentTab = tabs.find((t) =>
+                t.workspaceIds.includes(agent.id)
+              )
+              return (
+                <AgentCard
+                  key={agent.id}
+                  agent={agent}
+                  isActive={activeTerminals.some(
+                    (t) => t.workspaceId === agent.id
+                  )}
+                  isWaiting={isAgentWaiting(agent.id)}
+                  tabs={tabs}
+                  currentTabId={agentTab?.id}
+                  onClick={() => {
+                    if (activeTerminals.some((t) => t.workspaceId === agent.id)) {
+                      // Find which tab contains this agent and switch to it
+                      if (agentTab && agentTab.id !== activeTabId) {
+                        handleTabSelect(agentTab.id)
+                      }
+                      handleFocusAgent(agent.id)
                     }
-                    handleFocusAgent(agent.id)
-                  }
-                }}
-                onEdit={() => handleEditAgent(agent)}
-                onDelete={() => handleDeleteAgent(agent.id)}
-                onLaunch={() => handleLaunchAgent(agent.id)}
-                onStop={() => handleStopAgent(agent.id)}
-              />
-            ))}
+                  }}
+                  onEdit={() => handleEditAgent(agent)}
+                  onDelete={() => handleDeleteAgent(agent.id)}
+                  onLaunch={() => handleLaunchAgent(agent.id)}
+                  onStop={() => handleStopAgent(agent.id)}
+                  onMoveToTab={(tabId) => handleMoveAgentToTab(agent.id, tabId)}
+                />
+              )
+            })}
           </div>
         </aside>
 
@@ -508,16 +546,40 @@ function App() {
                         ? agents.find((a) => a.id === workspaceId)
                         : null
 
+                      const isDropTarget = dropTargetPosition === position && isActiveTab
+
                       if (!workspaceId || !terminal || !agent) {
-                        // Empty slot - hide in expand mode
+                        // Empty slot - hide in expand mode, but allow dropping
                         return (
                           <div
                             key={`empty-${tab.id}-${position}`}
-                            className={`rounded-lg border border-dashed border-muted-foreground/20 flex items-center justify-center text-muted-foreground/40 ${
+                            className={`rounded-lg border border-dashed flex items-center justify-center text-muted-foreground/40 transition-colors ${
                               isExpandModeActive ? 'invisible' : ''
+                            } ${
+                              isDropTarget
+                                ? 'border-primary bg-primary/10 border-solid'
+                                : 'border-muted-foreground/20'
                             }`}
+                            onDragOver={(e) => {
+                              e.preventDefault()
+                              if (!isExpandModeActive) {
+                                setDropTargetPosition(position)
+                              }
+                            }}
+                            onDragLeave={() => setDropTargetPosition(null)}
+                            onDrop={(e) => {
+                              e.preventDefault()
+                              const sourceId = e.dataTransfer.getData('workspaceId')
+                              if (sourceId && !isExpandModeActive) {
+                                handleReorderInTab(sourceId, position)
+                              }
+                              setDropTargetPosition(null)
+                              setDraggedWorkspaceId(null)
+                            }}
                           >
-                            <span className="text-sm">Empty slot</span>
+                            <span className="text-sm">
+                              {isDropTarget ? 'Drop here' : 'Empty slot'}
+                            </span>
                           </div>
                         )
                       }
@@ -525,15 +587,45 @@ function App() {
                       const isWaiting = isAgentWaiting(workspaceId)
                       const isFocused = focusedAgentId === workspaceId
                       const isExpanded = expandedAgentId === workspaceId
+                      const isDragging = draggedWorkspaceId === workspaceId
 
                       return (
                         <div
                           key={terminal.terminalId}
+                          draggable={!isExpandModeActive}
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('workspaceId', workspaceId)
+                            setDraggedWorkspaceId(workspaceId)
+                          }}
+                          onDragEnd={() => {
+                            setDraggedWorkspaceId(null)
+                            setDropTargetPosition(null)
+                          }}
+                          onDragOver={(e) => {
+                            e.preventDefault()
+                            if (!isExpandModeActive) {
+                              setDropTargetPosition(position)
+                            }
+                          }}
+                          onDragLeave={() => setDropTargetPosition(null)}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            const sourceId = e.dataTransfer.getData('workspaceId')
+                            if (sourceId && sourceId !== workspaceId && !isExpandModeActive) {
+                              handleReorderInTab(sourceId, position)
+                            }
+                            setDropTargetPosition(null)
+                            setDraggedWorkspaceId(null)
+                          }}
                           className={`rounded-lg border overflow-hidden transition-all duration-200 ${
                             isFocused ? 'ring-2 ring-primary' : ''
                           } ${isWaiting ? 'ring-2 ring-yellow-500' : ''} ${
                             !isExpanded && isExpandModeActive ? 'invisible' : ''
-                          } ${isExpanded ? 'absolute inset-0 z-10' : ''}`}
+                          } ${isExpanded ? 'absolute inset-0 z-10' : ''} ${
+                            isDragging ? 'opacity-50' : ''
+                          } ${isDropTarget && !isDragging ? 'ring-2 ring-primary ring-offset-2' : ''} ${
+                            !isExpandModeActive ? 'cursor-grab active:cursor-grabbing' : ''
+                          }`}
                           onClick={() => {
                             // In expand mode, clicking the terminal shouldn't dismiss it
                             // Only the Dismiss button should do that

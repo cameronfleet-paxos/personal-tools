@@ -31,6 +31,17 @@ export interface ElectronAPI {
     tabId: string
   ) => Promise<{ success: boolean; workspaceIds: string[] }>
   setActiveTab: (tabId: string) => Promise<void>
+  getTabs: () => Promise<AgentTab[]>
+  reorderWorkspaceInTab: (
+    tabId: string,
+    workspaceId: string,
+    newPosition: number
+  ) => Promise<boolean>
+  moveWorkspaceToTab: (
+    workspaceId: string,
+    targetTabId: string,
+    position?: number
+  ) => Promise<boolean>
 
   // Waiting queue management
   getWaitingQueue: () => Promise<string[]>

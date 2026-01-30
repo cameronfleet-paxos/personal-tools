@@ -45,6 +45,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('delete-tab', tabId),
   setActiveTab: (tabId: string): Promise<void> =>
     ipcRenderer.invoke('set-active-tab', tabId),
+  getTabs: (): Promise<AgentTab[]> => ipcRenderer.invoke('get-tabs'),
+  reorderWorkspaceInTab: (
+    tabId: string,
+    workspaceId: string,
+    newPosition: number
+  ): Promise<boolean> =>
+    ipcRenderer.invoke('reorder-workspace-in-tab', tabId, workspaceId, newPosition),
+  moveWorkspaceToTab: (
+    workspaceId: string,
+    targetTabId: string,
+    position?: number
+  ): Promise<boolean> =>
+    ipcRenderer.invoke('move-workspace-to-tab', workspaceId, targetTabId, position),
 
   // Waiting queue management
   getWaitingQueue: (): Promise<string[]> =>

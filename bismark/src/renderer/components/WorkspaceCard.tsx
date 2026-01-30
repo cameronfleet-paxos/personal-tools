@@ -1,28 +1,42 @@
-import { Pencil, Trash2, Play, Square } from 'lucide-react'
+import { Pencil, Trash2, Play, Square, MoreVertical } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
-import type { Agent } from '@/shared/types'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/renderer/components/ui/dropdown-menu'
+import type { Agent, AgentTab } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
 interface AgentCardProps {
   agent: Agent
   isActive: boolean
   isWaiting?: boolean
+  tabs?: AgentTab[]
+  currentTabId?: string
   onEdit: () => void
   onDelete: () => void
   onLaunch: () => void
   onStop: () => void
   onClick: () => void
+  onMoveToTab?: (tabId: string) => void
 }
 
 export function AgentCard({
   agent,
   isActive,
   isWaiting,
+  tabs,
+  currentTabId,
   onEdit,
   onDelete,
   onLaunch,
   onStop,
   onClick,
+  onMoveToTab,
 }: AgentCardProps) {
   const themeColors = themes[agent.theme]
 
@@ -69,6 +83,40 @@ export function AgentCard({
           >
             <Trash2 className="h-3 w-3" />
           </Button>
+          {tabs && tabs.length > 0 && onMoveToTab && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <MoreVertical className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuLabel>Move to Tab</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {tabs.map((tab) => (
+                  <DropdownMenuItem
+                    key={tab.id}
+                    disabled={tab.id === currentTabId}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onMoveToTab(tab.id)
+                    }}
+                  >
+                    {tab.name}
+                    {tab.id === currentTabId && (
+                      <span className="ml-auto text-xs text-muted-foreground">
+                        (current)
+                      </span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
       {agent.purpose && (

@@ -174,14 +174,33 @@ export function addWorkspaceToTab(
   tabId: string
 ): boolean {
   const tab = currentState.tabs.find((t) => t.id === tabId)
-  if (!tab || tab.workspaceIds.length >= MAX_AGENTS_PER_TAB) {
+  if (!tab) {
     return false
   }
 
-  if (!tab.workspaceIds.includes(workspaceId)) {
-    tab.workspaceIds.push(workspaceId)
-    persistState()
+  // Check if already in this tab
+  if (tab.workspaceIds.includes(workspaceId)) {
+    return true
   }
+
+  // Find first empty slot (position 0-3)
+  // workspaceIds may be sparse or shorter than 4
+  let insertPosition = -1
+  for (let i = 0; i < MAX_AGENTS_PER_TAB; i++) {
+    if (!tab.workspaceIds[i]) {
+      insertPosition = i
+      break
+    }
+  }
+
+  if (insertPosition === -1) {
+    // Tab is full
+    return false
+  }
+
+  // Insert at the empty position
+  tab.workspaceIds[insertPosition] = workspaceId
+  persistState()
   return true
 }
 
@@ -189,11 +208,115 @@ export function removeWorkspaceFromTab(workspaceId: string): void {
   for (const tab of currentState.tabs) {
     const index = tab.workspaceIds.indexOf(workspaceId)
     if (index !== -1) {
-      tab.workspaceIds.splice(index, 1)
+      // Set to undefined to keep position indices stable (sparse array)
+      // Then compact to remove trailing undefined values
+      tab.workspaceIds[index] = undefined as unknown as string
+      // Compact: remove trailing undefined values
+      while (
+        tab.workspaceIds.length > 0 &&
+        !tab.workspaceIds[tab.workspaceIds.length - 1]
+      ) {
+        tab.workspaceIds.pop()
+      }
       break
     }
   }
   persistState()
+}
+
+export function reorderWorkspaceInTab(
+  tabId: string,
+  workspaceId: string,
+  newPosition: number
+): boolean {
+  const tab = currentState.tabs.find((t) => t.id === tabId)
+  if (!tab || newPosition < 0 || newPosition >= MAX_AGENTS_PER_TAB) {
+    return false
+  }
+
+  const currentIndex = tab.workspaceIds.findIndex((id) => id === workspaceId)
+  if (currentIndex === -1) {
+    return false
+  }
+
+  // Get the workspace at the target position (may be undefined)
+  const targetWorkspaceId = tab.workspaceIds[newPosition]
+
+  // Swap positions
+  tab.workspaceIds[currentIndex] = targetWorkspaceId
+  tab.workspaceIds[newPosition] = workspaceId
+
+  // Clean up undefined values - compact trailing only
+  while (
+    tab.workspaceIds.length > 0 &&
+    !tab.workspaceIds[tab.workspaceIds.length - 1]
+  ) {
+    tab.workspaceIds.pop()
+  }
+
+  persistState()
+  return true
+}
+
+export function moveWorkspaceToTab(
+  workspaceId: string,
+  targetTabId: string,
+  position?: number
+): boolean {
+  const targetTab = currentState.tabs.find((t) => t.id === targetTabId)
+  if (!targetTab) {
+    return false
+  }
+
+  // Check if workspace is already in target tab
+  if (targetTab.workspaceIds.includes(workspaceId)) {
+    // If position specified, just reorder within the tab
+    if (position !== undefined) {
+      return reorderWorkspaceInTab(targetTabId, workspaceId, position)
+    }
+    return true
+  }
+
+  // Find the target position
+  let targetPosition = position
+  if (targetPosition === undefined) {
+    // Find first empty slot
+    for (let i = 0; i < MAX_AGENTS_PER_TAB; i++) {
+      if (!targetTab.workspaceIds[i]) {
+        targetPosition = i
+        break
+      }
+    }
+    if (targetPosition === undefined) {
+      // Tab is full
+      return false
+    }
+  } else if (targetTab.workspaceIds[targetPosition]) {
+    // Target position is occupied and no swap needed (cross-tab)
+    // Find first empty slot instead
+    for (let i = 0; i < MAX_AGENTS_PER_TAB; i++) {
+      if (!targetTab.workspaceIds[i]) {
+        targetPosition = i
+        break
+      }
+    }
+    if (
+      targetPosition === position ||
+      targetTab.workspaceIds[targetPosition!]
+    ) {
+      // Tab is full
+      return false
+    }
+  }
+
+  // Remove from current tab
+  removeWorkspaceFromTab(workspaceId)
+
+  // Add to target tab at specified position
+  targetTab.workspaceIds[targetPosition!] = workspaceId
+
+  persistState()
+  return true
 }
 
 export function getOrCreateTabForWorkspace(workspaceId: string): AgentTab {
@@ -204,9 +327,11 @@ export function getOrCreateTabForWorkspace(workspaceId: string): AgentTab {
     }
   }
 
-  // Find first tab with space
+  // Find first tab with space (account for sparse arrays)
   for (const tab of currentState.tabs) {
-    if (tab.workspaceIds.length < MAX_AGENTS_PER_TAB) {
+    // Count actual workspaces (filter out undefined/null from sparse array)
+    const actualCount = tab.workspaceIds.filter(Boolean).length
+    if (actualCount < MAX_AGENTS_PER_TAB) {
       return tab
     }
   }

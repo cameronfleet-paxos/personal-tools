@@ -36,9 +36,11 @@ import {
   addWorkspaceToTab,
   removeWorkspaceFromTab,
   getOrCreateTabForWorkspace,
-  getTabForWorkspace,
   getPreferences,
   setPreferences,
+  reorderWorkspaceInTab,
+  moveWorkspaceToTab,
+  getTabs,
 } from './state-manager'
 import type { Workspace, AppPreferences } from '../shared/types'
 
@@ -170,6 +172,24 @@ function registerIpcHandlers() {
   ipcMain.handle('set-active-tab', (_event, tabId: string) => {
     setActiveTab(tabId)
   })
+
+  ipcMain.handle('get-tabs', () => {
+    return getTabs()
+  })
+
+  ipcMain.handle(
+    'reorder-workspace-in-tab',
+    (_event, tabId: string, workspaceId: string, newPosition: number) => {
+      return reorderWorkspaceInTab(tabId, workspaceId, newPosition)
+    }
+  )
+
+  ipcMain.handle(
+    'move-workspace-to-tab',
+    (_event, workspaceId: string, targetTabId: string, position?: number) => {
+      return moveWorkspaceToTab(workspaceId, targetTabId, position)
+    }
+  )
 
   // Waiting queue management
   ipcMain.handle('get-waiting-queue', () => {
