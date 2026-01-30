@@ -1,8 +1,16 @@
 import './index.css'
 import './electron.d.ts'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, ChevronRight, Settings, Check } from 'lucide-react'
+import { Plus, ChevronRight, Settings, Check, X, Maximize2, Minimize2 } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/renderer/components/ui/dialog'
 import { AgentModal } from '@/renderer/components/WorkspaceModal'
 import { AgentCard } from '@/renderer/components/WorkspaceCard'
 import { AgentIcon } from '@/renderer/components/AgentIcon'
@@ -40,6 +48,12 @@ function App() {
   // Drag-and-drop state
   const [draggedWorkspaceId, setDraggedWorkspaceId] = useState<string | null>(null)
   const [dropTargetPosition, setDropTargetPosition] = useState<number | null>(null)
+
+  // Manual maximize state (independent of waiting queue expand mode)
+  const [maximizedAgentId, setMaximizedAgentId] = useState<string | null>(null)
+
+  // Stop confirmation dialog state
+  const [stopConfirmAgentId, setStopConfirmAgentId] = useState<string | null>(null)
 
   // Central registry of terminal writers - Map of terminalId -> write function
   const terminalWritersRef = useRef<Map<string, TerminalWriter>>(new Map())
@@ -271,6 +285,10 @@ function App() {
       if (focusedAgentId === agentId) {
         setFocusedAgentId(null)
         window.electronAPI?.setFocusedWorkspace?.(undefined)
+      }
+      // Clear maximize if this agent was maximized
+      if (maximizedAgentId === agentId) {
+        setMaximizedAgentId(null)
       }
       // Refresh tabs
       const state = await window.electronAPI.getState()
@@ -516,10 +534,11 @@ function App() {
             const isActiveTab = tab.id === activeTabId
             const tabWorkspaceIds = tab.workspaceIds
             const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
-            const expandedAgentId = isExpandModeActive ? waitingQueue[0] : null
+            const autoExpandedAgentId = isExpandModeActive ? waitingQueue[0] : null
+            const expandedAgentId = maximizedAgentId || autoExpandedAgentId
             // In expand mode, show the tab containing the expanded agent instead of the active tab
             const tabContainsExpandedAgent = expandedAgentId && tabWorkspaceIds.includes(expandedAgentId)
-            const shouldShowTab = isExpandModeActive ? tabContainsExpandedAgent : isActiveTab
+            const shouldShowTab = expandedAgentId ? tabContainsExpandedAgent : isActiveTab
 
             return (
               <div
@@ -555,13 +574,14 @@ function App() {
                       const isWaiting = isAgentWaiting(workspaceId)
                       const isFocused = focusedAgentId === workspaceId
                       const isExpanded = expandedAgentId === workspaceId
+                      const isAutoExpanded = autoExpandedAgentId === workspaceId // for showing Dismiss/Next buttons
                       const isDragging = draggedWorkspaceId === workspaceId
 
                       return (
                         <div
                           key={terminal.terminalId}
                           style={{ gridRow, gridColumn: gridCol }}
-                          draggable={!isExpandModeActive}
+                          draggable={!expandedAgentId}
                           onDragStart={(e) => {
                             e.dataTransfer.setData('workspaceId', workspaceId)
                             setDraggedWorkspaceId(workspaceId)
@@ -572,7 +592,7 @@ function App() {
                           }}
                           onDragOver={(e) => {
                             e.preventDefault()
-                            if (!isExpandModeActive) {
+                            if (!expandedAgentId) {
                               setDropTargetPosition(position)
                             }
                           }}
@@ -580,7 +600,7 @@ function App() {
                           onDrop={(e) => {
                             e.preventDefault()
                             const sourceId = e.dataTransfer.getData('workspaceId')
-                            if (sourceId && sourceId !== workspaceId && !isExpandModeActive) {
+                            if (sourceId && sourceId !== workspaceId && !expandedAgentId) {
                               handleReorderInTab(sourceId, position)
                             }
                             setDropTargetPosition(null)
@@ -589,11 +609,11 @@ function App() {
                           className={`rounded-lg border overflow-hidden transition-all duration-200 ${
                             isFocused ? 'ring-2 ring-primary' : ''
                           } ${isWaiting ? 'ring-2 ring-yellow-500' : ''} ${
-                            !isExpanded && isExpandModeActive ? 'invisible' : ''
+                            !isExpanded && expandedAgentId ? 'invisible' : ''
                           } ${isExpanded ? 'absolute inset-0 z-10' : ''} ${
                             isDragging ? 'opacity-50' : ''
                           } ${isDropTarget && !isDragging ? 'ring-2 ring-primary ring-offset-2' : ''} ${
-                            !isExpandModeActive ? 'cursor-grab active:cursor-grabbing' : ''
+                            !expandedAgentId ? 'cursor-grab active:cursor-grabbing' : ''
                           }`}
                           onClick={() => {
                             // In expand mode, clicking the terminal shouldn't dismiss it
@@ -618,7 +638,36 @@ function App() {
                                   Waiting
                                 </span>
                               )}
-                              {isExpanded && (
+                              {/* Maximize/Minimize button */}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  if (isExpanded) {
+                                    setMaximizedAgentId(null) // minimize
+                                  } else {
+                                    setMaximizedAgentId(workspaceId) // maximize
+                                  }
+                                }}
+                                className="h-6 w-6 p-0"
+                              >
+                                {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+                              </Button>
+                              {/* X (stop) button */}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setStopConfirmAgentId(workspaceId)
+                                }}
+                                className="h-6 w-6 p-0"
+                              >
+                                <X className="h-3 w-3" />
+                              </Button>
+                              {/* Existing expand mode buttons (only show for auto-expanded) */}
+                              {isAutoExpanded && (
                                 <>
                                   <Button
                                     size="sm"
@@ -655,7 +704,7 @@ function App() {
                               terminalId={terminal.terminalId}
                               theme={agent.theme}
                               isBooting={!bootedTerminals.has(terminal.terminalId)}
-                              isVisible={!!shouldShowTab && (!isExpandModeActive || isExpanded)}
+                              isVisible={!!shouldShowTab && (!expandedAgentId || isExpanded)}
                               registerWriter={registerWriter}
                               unregisterWriter={unregisterWriter}
                             />
@@ -676,7 +725,7 @@ function App() {
                           key={`empty-${tab.id}-${position}`}
                           style={{ gridRow, gridColumn: gridCol }}
                           className={`rounded-lg border border-dashed flex items-center justify-center text-muted-foreground/40 transition-colors ${
-                            isExpandModeActive ? 'invisible' : ''
+                            expandedAgentId ? 'invisible' : ''
                           } ${
                             isDropTarget
                               ? 'border-primary bg-primary/10 border-solid'
@@ -684,7 +733,7 @@ function App() {
                           }`}
                           onDragOver={(e) => {
                             e.preventDefault()
-                            if (!isExpandModeActive) {
+                            if (!expandedAgentId) {
                               setDropTargetPosition(position)
                             }
                           }}
@@ -692,7 +741,7 @@ function App() {
                           onDrop={(e) => {
                             e.preventDefault()
                             const sourceId = e.dataTransfer.getData('workspaceId')
-                            if (sourceId && !isExpandModeActive) {
+                            if (sourceId && !expandedAgentId) {
                               handleReorderInTab(sourceId, position)
                             }
                             setDropTargetPosition(null)
@@ -726,6 +775,40 @@ function App() {
         preferences={preferences}
         onPreferencesChange={handlePreferencesChange}
       />
+
+      {/* Stop Agent Confirmation Dialog */}
+      <Dialog
+        open={stopConfirmAgentId !== null}
+        onOpenChange={(open) => !open && setStopConfirmAgentId(null)}
+      >
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Stop Agent</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to stop this agent? Any unsaved progress will be lost.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setStopConfirmAgentId(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (stopConfirmAgentId) {
+                  handleStopAgent(stopConfirmAgentId)
+                  setStopConfirmAgentId(null)
+                }
+              }}
+            >
+              Stop Agent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
