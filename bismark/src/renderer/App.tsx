@@ -537,53 +537,20 @@ function App() {
                       gridTemplateRows: '1fr 1fr',
                     }}
                   >
-                    {gridPositions.map((position) => {
-                      const workspaceId = tabWorkspaceIds[position]
-                      const terminal = workspaceId
-                        ? getTerminalForAgent(workspaceId)
-                        : null
-                      const agent = workspaceId
-                        ? agents.find((a) => a.id === workspaceId)
-                        : null
+                    {/* Render active terminals - keyed by terminalId, positioned by CSS grid */}
+                    {/* Iterate over activeTerminals (stable order) and look up position from tabWorkspaceIds */}
+                    {activeTerminals
+                      .filter((t) => tabWorkspaceIds.includes(t.workspaceId))
+                      .map((terminal) => {
+                        const workspaceId = terminal.workspaceId
+                        const position = tabWorkspaceIds.indexOf(workspaceId)
+                        if (position === -1) return null
+                        const agent = agents.find((a) => a.id === workspaceId)
+                        if (!agent) return null
 
+                      const gridRow = position < 2 ? 1 : 2      // 0,1 -> row 1; 2,3 -> row 2
+                      const gridCol = position % 2 === 0 ? 1 : 2 // 0,2 -> col 1; 1,3 -> col 2
                       const isDropTarget = dropTargetPosition === position && isActiveTab
-
-                      if (!workspaceId || !terminal || !agent) {
-                        // Empty slot - hide in expand mode, but allow dropping
-                        return (
-                          <div
-                            key={`empty-${tab.id}-${position}`}
-                            className={`rounded-lg border border-dashed flex items-center justify-center text-muted-foreground/40 transition-colors ${
-                              isExpandModeActive ? 'invisible' : ''
-                            } ${
-                              isDropTarget
-                                ? 'border-primary bg-primary/10 border-solid'
-                                : 'border-muted-foreground/20'
-                            }`}
-                            onDragOver={(e) => {
-                              e.preventDefault()
-                              if (!isExpandModeActive) {
-                                setDropTargetPosition(position)
-                              }
-                            }}
-                            onDragLeave={() => setDropTargetPosition(null)}
-                            onDrop={(e) => {
-                              e.preventDefault()
-                              const sourceId = e.dataTransfer.getData('workspaceId')
-                              if (sourceId && !isExpandModeActive) {
-                                handleReorderInTab(sourceId, position)
-                              }
-                              setDropTargetPosition(null)
-                              setDraggedWorkspaceId(null)
-                            }}
-                          >
-                            <span className="text-sm">
-                              {isDropTarget ? 'Drop here' : 'Empty slot'}
-                            </span>
-                          </div>
-                        )
-                      }
-
                       const isWaiting = isAgentWaiting(workspaceId)
                       const isFocused = focusedAgentId === workspaceId
                       const isExpanded = expandedAgentId === workspaceId
@@ -592,6 +559,7 @@ function App() {
                       return (
                         <div
                           key={terminal.terminalId}
+                          style={{ gridRow, gridColumn: gridCol }}
                           draggable={!isExpandModeActive}
                           onDragStart={(e) => {
                             e.dataTransfer.setData('workspaceId', workspaceId)
@@ -688,6 +656,48 @@ function App() {
                               unregisterWriter={unregisterWriter}
                             />
                           </div>
+                        </div>
+                      )
+                    })}
+
+                    {/* Render empty slots separately - keyed by position */}
+                    {gridPositions.map((position) => {
+                      if (tabWorkspaceIds[position]) return null // Skip if occupied
+                      const gridRow = position < 2 ? 1 : 2
+                      const gridCol = position % 2 === 0 ? 1 : 2
+                      const isDropTarget = dropTargetPosition === position && isActiveTab
+
+                      return (
+                        <div
+                          key={`empty-${tab.id}-${position}`}
+                          style={{ gridRow, gridColumn: gridCol }}
+                          className={`rounded-lg border border-dashed flex items-center justify-center text-muted-foreground/40 transition-colors ${
+                            isExpandModeActive ? 'invisible' : ''
+                          } ${
+                            isDropTarget
+                              ? 'border-primary bg-primary/10 border-solid'
+                              : 'border-muted-foreground/20'
+                          }`}
+                          onDragOver={(e) => {
+                            e.preventDefault()
+                            if (!isExpandModeActive) {
+                              setDropTargetPosition(position)
+                            }
+                          }}
+                          onDragLeave={() => setDropTargetPosition(null)}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            const sourceId = e.dataTransfer.getData('workspaceId')
+                            if (sourceId && !isExpandModeActive) {
+                              handleReorderInTab(sourceId, position)
+                            }
+                            setDropTargetPosition(null)
+                            setDraggedWorkspaceId(null)
+                          }}
+                        >
+                          <span className="text-sm">
+                            {isDropTarget ? 'Drop here' : 'Empty slot'}
+                          </span>
                         </div>
                       )
                     })}
