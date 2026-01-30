@@ -2,6 +2,14 @@
 
 Electron app for managing Claude Code workspaces.
 
+## Installation
+
+To build and install the app to `~/Applications`:
+
+```bash
+./scripts/install.sh
+```
+
 ## Development
 
 ### Starting the dev server
