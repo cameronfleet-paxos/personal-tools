@@ -470,161 +470,140 @@ function App() {
           </div>
         </aside>
 
-        {/* Terminal area - Fixed 2x2 grid per tab or expanded view */}
+        {/* Terminal area - Fixed 2x2 grid per tab */}
         <main className="flex-1 overflow-hidden p-2 relative">
-          {/* Expand mode overlay - shown on top when active */}
-          {preferences.attentionMode === 'expand' && waitingQueue.length > 0 && (
-            <div className="absolute inset-2 z-10">
-              {(() => {
-                const expandedAgentId = waitingQueue[0]
-                const terminal = getTerminalForAgent(expandedAgentId)
-                const agent = agents.find((a) => a.id === expandedAgentId)
+          {/* Render all tabs, with expand mode applied via CSS */}
+          {tabs.map((tab) => {
+            const isActiveTab = tab.id === activeTabId
+            const tabWorkspaceIds = tab.workspaceIds
+            const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
+            const expandedAgentId = isExpandModeActive ? waitingQueue[0] : null
+            // In expand mode, show the tab containing the expanded agent instead of the active tab
+            const tabContainsExpandedAgent = expandedAgentId && tabWorkspaceIds.includes(expandedAgentId)
+            const shouldShowTab = isExpandModeActive ? tabContainsExpandedAgent : isActiveTab
 
-                if (!terminal || !agent) {
-                  return (
-                    <div className="h-full flex items-center justify-center text-muted-foreground">
-                      Agent not found
-                    </div>
-                  )
-                }
-
-                return (
-                  <div className="h-full flex flex-col">
-                    <div
-                      className="rounded-lg border overflow-hidden flex-1 ring-2 ring-yellow-500"
-                    >
-                      <div className="px-3 py-1.5 border-b bg-yellow-500/20 text-sm font-medium flex items-center justify-between">
-                        <span>{agent.name}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
-                            Waiting
-                          </span>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleFocusAgent(expandedAgentId)}
-                            className="h-6 text-xs"
-                          >
-                            <Check className="h-3 w-3 mr-1" />
-                            Dismiss
-                          </Button>
-                          {waitingQueue.length > 1 && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleNextWaiting()}
-                              className="h-6 text-xs text-yellow-600 border-yellow-500 hover:bg-yellow-500/10"
-                            >
-                              <ChevronRight className="h-3 w-3 mr-1" />
-                              Next ({waitingQueue.length - 1}) {navigator.platform.includes('Mac') ? '⌘N' : 'Ctrl+N'}
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                      <div className="h-[calc(100%-2rem)]">
-                        <Terminal
-                          terminalId={terminal.terminalId}
-                          theme={agent.theme}
-                          isBooting={!bootedTerminals.has(terminal.terminalId)}
-                          isVisible={true}
-                          registerWriter={registerWriter}
-                          unregisterWriter={unregisterWriter}
-                        />
-                      </div>
-                    </div>
+            return (
+              <div
+                key={tab.id}
+                className={`absolute inset-2 ${shouldShowTab ? '' : 'invisible pointer-events-none'}`}
+              >
+                {tabWorkspaceIds.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-muted-foreground">
+                    Launch an agent to see the terminal
                   </div>
-                )
-              })()}
-            </div>
-          )}
+                ) : (
+                  <div
+                    className="h-full grid gap-2"
+                    style={{
+                      gridTemplateColumns: '1fr 1fr',
+                      gridTemplateRows: '1fr 1fr',
+                    }}
+                  >
+                    {gridPositions.map((position) => {
+                      const workspaceId = tabWorkspaceIds[position]
+                      const terminal = workspaceId
+                        ? getTerminalForAgent(workspaceId)
+                        : null
+                      const agent = workspaceId
+                        ? agents.find((a) => a.id === workspaceId)
+                        : null
 
-          {/* Grid mode - ALWAYS rendered, but hidden when expand mode is active */}
-          <div className={preferences.attentionMode === 'expand' && waitingQueue.length > 0 ? 'invisible' : ''}>
-            {tabs.map((tab) => {
-              const isActiveTab = tab.id === activeTabId
-              const tabWorkspaceIds = tab.workspaceIds
-              const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
-
-              return (
-                <div
-                  key={tab.id}
-                  className={`absolute inset-2 ${isActiveTab ? '' : 'invisible pointer-events-none'}`}
-                >
-                  {tabWorkspaceIds.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-muted-foreground">
-                      Launch an agent to see the terminal
-                    </div>
-                  ) : (
-                    <div
-                      className="h-full grid gap-2"
-                      style={{
-                        gridTemplateColumns: '1fr 1fr',
-                        gridTemplateRows: '1fr 1fr',
-                      }}
-                    >
-                      {gridPositions.map((position) => {
-                        const workspaceId = tabWorkspaceIds[position]
-                        const terminal = workspaceId
-                          ? getTerminalForAgent(workspaceId)
-                          : null
-                        const agent = workspaceId
-                          ? agents.find((a) => a.id === workspaceId)
-                          : null
-
-                        if (!workspaceId || !terminal || !agent) {
-                          // Empty slot
-                          return (
-                            <div
-                              key={`empty-${tab.id}-${position}`}
-                              className="rounded-lg border border-dashed border-muted-foreground/20 flex items-center justify-center text-muted-foreground/40"
-                            >
-                              <span className="text-sm">Empty slot</span>
-                            </div>
-                          )
-                        }
-
-                        const isWaiting = isAgentWaiting(workspaceId)
-                        const isFocused = focusedAgentId === workspaceId
-
+                      if (!workspaceId || !terminal || !agent) {
+                        // Empty slot - hide in expand mode
                         return (
                           <div
-                            key={terminal.terminalId}
-                            className={`rounded-lg border overflow-hidden ${
-                              isFocused ? 'ring-2 ring-primary' : ''
-                            } ${isWaiting ? 'ring-2 ring-yellow-500 animate-pulse' : ''}`}
-                            onClick={() => handleFocusAgent(workspaceId)}
+                            key={`empty-${tab.id}-${position}`}
+                            className={`rounded-lg border border-dashed border-muted-foreground/20 flex items-center justify-center text-muted-foreground/40 ${
+                              isExpandModeActive ? 'invisible' : ''
+                            }`}
                           >
-                            <div
-                              className={`px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between ${
-                                isWaiting ? 'bg-yellow-500/20' : ''
-                              }`}
-                            >
-                              <span>{agent.name}</span>
+                            <span className="text-sm">Empty slot</span>
+                          </div>
+                        )
+                      }
+
+                      const isWaiting = isAgentWaiting(workspaceId)
+                      const isFocused = focusedAgentId === workspaceId
+                      const isExpanded = expandedAgentId === workspaceId
+
+                      return (
+                        <div
+                          key={terminal.terminalId}
+                          className={`rounded-lg border overflow-hidden transition-all duration-200 ${
+                            isFocused ? 'ring-2 ring-primary' : ''
+                          } ${isWaiting ? 'ring-2 ring-yellow-500' : ''} ${
+                            !isExpanded && isExpandModeActive ? 'invisible' : ''
+                          } ${isExpanded ? 'absolute inset-0 z-10' : ''}`}
+                          onClick={() => {
+                            // In expand mode, clicking the terminal shouldn't dismiss it
+                            // Only the Dismiss button should do that
+                            if (!isExpanded) {
+                              handleFocusAgent(workspaceId)
+                            }
+                          }}
+                        >
+                          <div
+                            className={`px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between ${
+                              isWaiting ? 'bg-yellow-500/20' : ''
+                            }`}
+                          >
+                            <span>{agent.name}</span>
+                            <div className="flex items-center gap-2">
                               {isWaiting && (
                                 <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
                                   Waiting
                                 </span>
                               )}
-                            </div>
-                            <div className="h-[calc(100%-2rem)]">
-                              <Terminal
-                                terminalId={terminal.terminalId}
-                                theme={agent.theme}
-                                isBooting={!bootedTerminals.has(terminal.terminalId)}
-                                isVisible={isActiveTab && !isExpandModeActive}
-                                registerWriter={registerWriter}
-                                unregisterWriter={unregisterWriter}
-                              />
+                              {isExpanded && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleFocusAgent(workspaceId)
+                                    }}
+                                    className="h-6 text-xs"
+                                  >
+                                    <Check className="h-3 w-3 mr-1" />
+                                    Dismiss
+                                  </Button>
+                                  {waitingQueue.length > 1 && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleNextWaiting()
+                                      }}
+                                      className="h-6 text-xs text-yellow-600 border-yellow-500 hover:bg-yellow-500/10"
+                                    >
+                                      <ChevronRight className="h-3 w-3 mr-1" />
+                                      Next ({waitingQueue.length - 1}) {navigator.platform.includes('Mac') ? '⌘N' : 'Ctrl+N'}
+                                    </Button>
+                                  )}
+                                </>
+                              )}
                             </div>
                           </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
+                          <div className="h-[calc(100%-2rem)]">
+                            <Terminal
+                              terminalId={terminal.terminalId}
+                              theme={agent.theme}
+                              isBooting={!bootedTerminals.has(terminal.terminalId)}
+                              isVisible={!!shouldShowTab && (!isExpandModeActive || isExpanded)}
+                              registerWriter={registerWriter}
+                              unregisterWriter={unregisterWriter}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </main>
       </div>
 
