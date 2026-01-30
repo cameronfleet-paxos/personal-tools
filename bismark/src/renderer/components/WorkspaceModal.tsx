@@ -17,8 +17,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/renderer/components/ui/select'
+import { AgentIcon } from '@/renderer/components/AgentIcon'
 import type { Agent, ThemeName } from '@/shared/types'
-import { themes } from '@/shared/constants'
+import type { AgentIconName } from '@/shared/constants'
+import { themes, agentIcons } from '@/shared/constants'
 
 interface AgentModalProps {
   open: boolean
@@ -39,6 +41,7 @@ export function AgentModal({
   const [directory, setDirectory] = useState('')
   const [purpose, setPurpose] = useState('')
   const [theme, setTheme] = useState<ThemeName>('gray')
+  const [icon, setIcon] = useState<AgentIconName>('beethoven')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -47,11 +50,14 @@ export function AgentModal({
       setDirectory(agent.directory)
       setPurpose(agent.purpose || '')
       setTheme(agent.theme)
+      setIcon(agent.icon || 'beethoven')
     } else {
       setName('')
       setDirectory('')
       setPurpose('')
       setTheme('gray')
+      // Random icon for new agents
+      setIcon(agentIcons[Math.floor(Math.random() * agentIcons.length)])
     }
     setError(null)
   }, [agent, open])
@@ -72,6 +78,7 @@ export function AgentModal({
       directory: directory.trim(),
       purpose: purpose.trim(),
       theme,
+      icon,
     }
 
     onSave(newAgent)
@@ -138,9 +145,31 @@ export function AgentModal({
                 </SelectContent>
               </Select>
               <div
-                className="w-10 h-10 rounded-md border border-border"
+                className="w-10 h-10 rounded-md border border-border flex items-center justify-center"
                 style={{ backgroundColor: themes[theme].bg }}
-              />
+              >
+                <AgentIcon icon={icon} className="w-7 h-7" />
+              </div>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Icon</Label>
+            <div className="grid grid-cols-10 gap-1 max-h-32 overflow-y-auto p-1 border rounded-md">
+              {agentIcons.map((iconName) => (
+                <button
+                  key={iconName}
+                  type="button"
+                  onClick={() => setIcon(iconName)}
+                  className={`w-7 h-7 rounded flex items-center justify-center transition-colors ${
+                    icon === iconName
+                      ? 'bg-primary ring-2 ring-primary'
+                      : 'bg-muted hover:bg-muted/80'
+                  }`}
+                  title={iconName.charAt(0).toUpperCase() + iconName.slice(1)}
+                >
+                  <AgentIcon icon={iconName} className="w-5 h-5" />
+                </button>
+              ))}
             </div>
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}

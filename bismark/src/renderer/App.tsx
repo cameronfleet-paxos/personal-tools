@@ -5,6 +5,7 @@ import { Plus, ChevronRight, Settings, Check } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { AgentModal } from '@/renderer/components/WorkspaceModal'
 import { AgentCard } from '@/renderer/components/WorkspaceCard'
+import { AgentIcon } from '@/renderer/components/AgentIcon'
 import { Terminal } from '@/renderer/components/Terminal'
 import { TabBar } from '@/renderer/components/TabBar'
 import { Logo } from '@/renderer/components/Logo'
@@ -607,7 +608,10 @@ function App() {
                               isWaiting ? 'bg-yellow-500/20' : ''
                             }`}
                           >
-                            <span>{agent.name}</span>
+                            <div className="flex items-center gap-2">
+                              <AgentIcon icon={agent.icon} className="w-4 h-4" />
+                              <span>{agent.name}</span>
+                            </div>
                             <div className="flex items-center gap-2">
                               {isWaiting && (
                                 <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">

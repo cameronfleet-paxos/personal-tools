@@ -1,3 +1,5 @@
+import type { AgentIconName } from './constants'
+
 // Agent definition (stored in ~/.bismark/config.json)
 export interface Agent {
   id: string
@@ -5,6 +7,7 @@ export interface Agent {
   directory: string
   purpose: string
   theme: ThemeName
+  icon: AgentIconName
 }
 
 // Alias for backwards compatibility

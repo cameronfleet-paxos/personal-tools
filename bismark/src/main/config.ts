@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
 import type { Workspace, AppConfig, AppState, AppPreferences } from '../shared/types'
+import { agentIcons, type AgentIconName } from '../shared/constants'
 
 const CONFIG_DIR_NAME = '.bismark'
 
@@ -67,12 +68,37 @@ function writeConfigAtomic(filePath: string, data: unknown): void {
   fs.renameSync(tempPath, filePath)
 }
 
+// Helper to get a random unique icon for new agents
+export function getRandomUniqueIcon(existingWorkspaces: Workspace[]): AgentIconName {
+  const usedIcons = new Set(existingWorkspaces.map((w) => w.icon).filter(Boolean))
+  const availableIcons = agentIcons.filter((i) => !usedIcons.has(i))
+  if (availableIcons.length === 0) {
+    // All icons used, pick random from full set
+    return agentIcons[Math.floor(Math.random() * agentIcons.length)]
+  }
+  return availableIcons[Math.floor(Math.random() * availableIcons.length)]
+}
+
 // Config operations
 export function loadConfig(): AppConfig {
   const configPath = getConfigPath()
   try {
     const content = fs.readFileSync(configPath, 'utf-8')
-    return JSON.parse(content) as AppConfig
+    const config = JSON.parse(content) as AppConfig
+
+    // Migration: assign icons to existing agents without one
+    let needsSave = false
+    for (const workspace of config.workspaces) {
+      if (!workspace.icon) {
+        workspace.icon = getRandomUniqueIcon(config.workspaces)
+        needsSave = true
+      }
+    }
+    if (needsSave) {
+      writeConfigAtomic(configPath, config)
+    }
+
+    return config
   } catch {
     return { workspaces: [] }
   }

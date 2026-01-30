@@ -8,6 +8,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/renderer/components/ui/dropdown-menu'
+import { AgentIcon } from '@/renderer/components/AgentIcon'
 import type { Agent, AgentTab } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
@@ -52,9 +53,11 @@ export function AgentCard({
       <div className="flex items-start justify-between mb-2">
         <div className="flex items-center gap-2">
           <div
-            className="w-4 h-4 rounded-sm"
+            className="w-5 h-5 rounded-sm flex items-center justify-center"
             style={{ backgroundColor: themeColors.bg }}
-          />
+          >
+            <AgentIcon icon={agent.icon} className="w-4 h-4" />
+          </div>
           <h3 className="font-medium">{agent.name}</h3>
           {isWaiting && (
             <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
