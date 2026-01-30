@@ -34,12 +34,12 @@ function getHookScriptPath(): string {
 
 export function createHookScript(): void {
   const hookScript = `#!/bin/bash
-# AgentOp StopHook - signals when agent needs input
+# Bismark StopHook - signals when agent needs input
 # This script is called by Claude Code when the agent stops
 
 WORKSPACE_ID="$AGENTOP_WORKSPACE_ID"
-SOCKET_PATH="$HOME/.agent-operator/sockets/agent-\${WORKSPACE_ID}.sock"
-DEBUG_LOG="$HOME/.agent-operator/hooks/debug.log"
+SOCKET_PATH="$HOME/.bismark/sockets/agent-\${WORKSPACE_ID}.sock"
+DEBUG_LOG="$HOME/.bismark/hooks/debug.log"
 
 # Debug logging
 echo "$(date): Hook called for workspace '$WORKSPACE_ID'" >> "$DEBUG_LOG"
@@ -88,7 +88,7 @@ export function configureClaudeHook(): void {
 
   // Check if our hook already exists in any Stop config
   const hookExists = settings.hooks.Stop?.some((config) =>
-    config.hooks.some((hook) => hook.command.includes('agent-operator'))
+    config.hooks.some((hook) => hook.command.includes('bismark'))
   )
 
   if (!hookExists) {
@@ -117,7 +117,7 @@ export function configureClaudeHook(): void {
 
     // Write updated settings
     fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
-    console.log('Configured Claude Code Stop hook for AgentOp')
+    console.log('Configured Claude Code Stop hook for Bismark')
   }
 }
 
@@ -134,7 +134,7 @@ export function isHookConfigured(): boolean {
 
     return (
       settings.hooks?.Stop?.some((config) =>
-        config.hooks.some((hook) => hook.command.includes('agent-operator'))
+        config.hooks.some((hook) => hook.command.includes('bismark'))
       ) ?? false
     )
   } catch {

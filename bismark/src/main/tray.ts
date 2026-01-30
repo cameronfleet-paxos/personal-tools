@@ -25,14 +25,14 @@ export function updateTray(waitingCount: number): void {
 
   tray.setToolTip(
     waitingCount > 0
-      ? `AgentOp - ${waitingCount} agent${waitingCount > 1 ? 's' : ''} waiting`
-      : 'AgentOp - No agents waiting'
+      ? `Bismark - ${waitingCount} agent${waitingCount > 1 ? 's' : ''} waiting`
+      : 'Bismark - No agents waiting'
   )
 
   // Update context menu
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: `AgentOp${waitingCount > 0 ? ` (${waitingCount} waiting)` : ''}`,
+      label: `Bismark${waitingCount > 0 ? ` (${waitingCount} waiting)` : ''}`,
       enabled: false,
     },
     { type: 'separator' },

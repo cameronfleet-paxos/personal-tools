@@ -1,4 +1,4 @@
-# AgentOp
+# Bismark
 
 Electron app for managing Claude Code workspaces.
 

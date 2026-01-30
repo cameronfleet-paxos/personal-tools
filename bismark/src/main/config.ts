@@ -3,7 +3,7 @@ import * as path from 'path'
 import { app } from 'electron'
 import type { Workspace, AppConfig, AppState, AppPreferences } from '../shared/types'
 
-const CONFIG_DIR_NAME = '.agent-operator'
+const CONFIG_DIR_NAME = '.bismark'
 
 export function getConfigDir(): string {
   const homeDir = app?.getPath('home') || process.env.HOME || ''

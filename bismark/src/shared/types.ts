@@ -1,4 +1,4 @@
-// Agent definition (stored in ~/.agent-operator/config.json)
+// Agent definition (stored in ~/.bismark/config.json)
 export interface Agent {
   id: string
   name: string
@@ -20,12 +20,12 @@ export interface AgentTab {
 // Attention mode determines how waiting agents are displayed
 export type AttentionMode = 'focus' | 'expand'
 
-// App preferences (stored in ~/.agent-operator/state.json)
+// App preferences (stored in ~/.bismark/state.json)
 export interface AppPreferences {
   attentionMode: AttentionMode
 }
 
-// App state (stored in ~/.agent-operator/state.json)
+// App state (stored in ~/.bismark/state.json)
 export interface AppState {
   activeWorkspaceIds: string[]
   tabs: AgentTab[]
