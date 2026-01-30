@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as crypto from 'crypto'
+import { EventEmitter } from 'events'
 import { BrowserWindow } from 'electron'
 import { getWorkspaceById, saveWorkspace } from './config'
 
@@ -35,13 +36,15 @@ function claudeSessionExists(sessionId: string): boolean {
 interface TerminalProcess {
   pty: pty.IPty
   workspaceId: string
+  emitter: EventEmitter
 }
 
 const terminals: Map<string, TerminalProcess> = new Map()
 
 export function createTerminal(
   workspaceId: string,
-  mainWindow: BrowserWindow | null
+  mainWindow: BrowserWindow | null,
+  initialPrompt?: string
 ): string {
   const workspace = getWorkspaceById(workspaceId)
   if (!workspace) {
@@ -64,15 +67,24 @@ export function createTerminal(
 
   if (sessionId && claudeSessionExists(sessionId)) {
     // Session exists with content - resume it
-    claudeCmd = `claude --resume ${sessionId}\n`
+    claudeCmd = `claude --resume ${sessionId}`
   } else {
     // No session or empty session - generate ID and start new session
     if (!sessionId) {
       sessionId = crypto.randomUUID()
       saveWorkspace({ ...workspace, sessionId })
     }
-    claudeCmd = `claude --session-id ${sessionId}\n`
+    claudeCmd = `claude --session-id ${sessionId}`
   }
+
+  // If an initial prompt is provided, append it to the command
+  // Claude will process this prompt automatically when it starts
+  if (initialPrompt) {
+    // Escape single quotes in the prompt and wrap in single quotes
+    const escapedPrompt = initialPrompt.replace(/'/g, "'\\''")
+    claudeCmd += ` '${escapedPrompt}'`
+  }
+  claudeCmd += '\n'
 
   // Spawn interactive shell
   const ptyProcess = pty.spawn(shell, ['-l'], {
@@ -88,13 +100,18 @@ export function createTerminal(
     },
   })
 
+  // Create emitter for terminal output listening
+  const emitter = new EventEmitter()
+
   terminals.set(terminalId, {
     pty: ptyProcess,
     workspaceId,
+    emitter,
   })
 
-  // Forward data to renderer
+  // Forward data to renderer and emit for listeners
   ptyProcess.onData((data) => {
+    emitter.emit('data', data)
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('terminal-data', terminalId, data)
     }
@@ -170,15 +187,22 @@ export function getTerminalForWorkspace(workspaceId: string): string | undefined
 }
 
 /**
+ * Get terminal emitter for listening to output
+ */
+export function getTerminalEmitter(terminalId: string): EventEmitter | undefined {
+  return terminals.get(terminalId)?.emitter
+}
+
+/**
  * Inject text into a terminal (for task assignment prompts)
  * Types text character-by-character to simulate actual typing and avoid bracketed paste mode
  */
-export function injectTextToTerminal(terminalId: string, text: string): void {
+export async function injectTextToTerminal(terminalId: string, text: string): Promise<void> {
   const terminal = terminals.get(terminalId)
   if (terminal) {
     // Type character-by-character with small delays to simulate actual typing
     // This bypasses bracketed paste detection which triggers on rapid bulk input
-    typeTextToTerminal(terminal.pty, text)
+    await typeTextToTerminal(terminal.pty, text)
   }
 }
 
@@ -191,4 +215,89 @@ async function typeTextToTerminal(ptyProcess: pty.IPty, text: string, delayMs: n
     ptyProcess.write(char)
     await new Promise(resolve => setTimeout(resolve, delayMs))
   }
+}
+
+/**
+ * Inject a prompt into terminal using bulk write (for Claude Code prompts)
+ * Handles paste detection by waiting for the paste preview before sending Enter
+ */
+export async function injectPromptToTerminal(terminalId: string, prompt: string): Promise<void> {
+  const terminal = terminals.get(terminalId)
+  if (!terminal) return
+
+  // Send entire prompt at once (will trigger paste detection for multi-line)
+  terminal.pty.write(prompt)
+
+  // Wait for paste detection to process and show preview
+  // Claude shows "[Pasted text #N +X lines]" when paste is detected
+  // We need to wait for this, then send Enter to confirm
+  const pasteDetected = await waitForOutput(terminal.emitter, 'Pasted text', 2000)
+
+  if (pasteDetected) {
+    // Paste was detected, wait a moment then send Enter to confirm
+    await new Promise(resolve => setTimeout(resolve, 100))
+    terminal.pty.write('\r')
+  } else {
+    // No paste detection (short prompt), just send Enter
+    await new Promise(resolve => setTimeout(resolve, 50))
+    terminal.pty.write('\r')
+  }
+}
+
+/**
+ * Helper to wait for specific output pattern from terminal emitter
+ */
+function waitForOutput(emitter: EventEmitter, pattern: string, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      emitter.removeListener('data', handler)
+      resolve(false)
+    }, timeoutMs)
+
+    const handler = (data: string) => {
+      if (data.includes(pattern)) {
+        clearTimeout(timer)
+        emitter.removeListener('data', handler)
+        resolve(true)
+      }
+    }
+
+    emitter.on('data', handler)
+  })
+}
+
+/**
+ * Wait for terminal output matching a pattern
+ * Returns true if pattern matched, false if timeout
+ */
+export function waitForTerminalOutput(
+  terminalId: string,
+  pattern: string | RegExp,
+  timeoutMs: number = 5000
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    const terminal = terminals.get(terminalId)
+    if (!terminal) {
+      resolve(false)
+      return
+    }
+
+    const timer = setTimeout(() => {
+      terminal.emitter.removeListener('data', handler)
+      resolve(false)
+    }, timeoutMs)
+
+    const handler = (data: string) => {
+      const matches = typeof pattern === 'string'
+        ? data.includes(pattern)
+        : pattern.test(data)
+      if (matches) {
+        clearTimeout(timer)
+        terminal.emitter.removeListener('data', handler)
+        resolve(true)
+      }
+    }
+
+    terminal.emitter.on('data', handler)
+  })
 }
