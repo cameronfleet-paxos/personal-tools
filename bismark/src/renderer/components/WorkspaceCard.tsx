@@ -16,6 +16,7 @@ interface AgentCardProps {
   agent: Agent
   isActive: boolean
   isWaiting?: boolean
+  isFocused?: boolean
   tabs?: AgentTab[]
   currentTabId?: string
   onEdit: () => void
@@ -30,6 +31,7 @@ export function AgentCard({
   agent,
   isActive,
   isWaiting,
+  isFocused,
   tabs,
   currentTabId,
   onEdit,
@@ -47,113 +49,108 @@ export function AgentCard({
         relative rounded-lg border p-4 cursor-pointer transition-all
         ${isActive ? 'ring-2 ring-primary' : 'hover:border-primary/50'}
         ${isWaiting ? 'animate-pulse ring-2 ring-yellow-500' : ''}
+        ${isFocused ? 'border-white/50' : ''}
       `}
       onClick={onClick}
     >
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <div
-            className="w-5 h-5 rounded-sm flex items-center justify-center"
-            style={{ backgroundColor: themeColors.bg }}
-          >
-            <AgentIcon icon={agent.icon} className="w-4 h-4" />
-          </div>
-          <h3 className="font-medium">{agent.name}</h3>
-          {isWaiting && (
-            <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
-              Waiting
-            </span>
-          )}
+      {/* Top: Icon + title */}
+      <div className="flex items-center gap-2 mb-1">
+        <div
+          className="w-5 h-5 rounded-sm flex items-center justify-center flex-shrink-0"
+          style={{ backgroundColor: themeColors.bg }}
+        >
+          <AgentIcon icon={agent.icon} className="w-4 h-4" />
         </div>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={(e) => {
-              e.stopPropagation()
-              onEdit()
-            }}
-          >
-            <Pencil className="h-3 w-3" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={(e) => {
-              e.stopPropagation()
-              onDelete()
-            }}
-          >
-            <Trash2 className="h-3 w-3" />
-          </Button>
-          {tabs && tabs.length > 0 && onMoveToTab && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <MoreVertical className="h-3 w-3" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuLabel>Move to Tab</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                {tabs.map((tab) => (
-                  <DropdownMenuItem
-                    key={tab.id}
-                    disabled={tab.id === currentTabId}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onMoveToTab(tab.id)
-                    }}
-                  >
-                    {tab.name}
-                    {tab.id === currentTabId && (
-                      <span className="ml-auto text-xs text-muted-foreground">
-                        (current)
-                      </span>
-                    )}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        </div>
+        <h3 className="font-medium truncate flex-1">{agent.name}</h3>
+        {isWaiting && (
+          <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded flex-shrink-0">
+            Waiting
+          </span>
+        )}
       </div>
-      {agent.purpose && (
-        <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
-          {agent.purpose}
-        </p>
-      )}
-      <p className="text-xs text-muted-foreground/60 truncate mb-3">
+
+      {/* Middle: Directory path */}
+      <p className="text-xs text-muted-foreground/60 truncate mb-2">
         {agent.directory}
       </p>
-      <div className="flex gap-2">
+
+      {/* Bottom: Horizontal action icons */}
+      <div className="flex flex-row gap-1 justify-end">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={(e) => {
+            e.stopPropagation()
+            onEdit()
+          }}
+        >
+          <Pencil className="h-3 w-3" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDelete()
+          }}
+        >
+          <Trash2 className="h-3 w-3" />
+        </Button>
+        {tabs && tabs.length > 0 && onMoveToTab && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <MoreVertical className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Move to Tab</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {tabs.map((tab) => (
+                <DropdownMenuItem
+                  key={tab.id}
+                  disabled={tab.id === currentTabId}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onMoveToTab(tab.id)
+                  }}
+                >
+                  {tab.name}
+                  {tab.id === currentTabId && (
+                    <span className="ml-auto text-xs text-muted-foreground">
+                      (current)
+                    </span>
+                  )}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         {isActive ? (
           <Button
             variant="destructive"
-            size="sm"
+            size="icon-xs"
             onClick={(e) => {
               e.stopPropagation()
               onStop()
             }}
           >
-            <Square className="h-3 w-3 mr-1" />
-            Stop
+            <Square className="h-3 w-3" />
           </Button>
         ) : (
           <Button
-            variant="default"
-            size="sm"
+            variant="ghost"
+            size="icon-xs"
             onClick={(e) => {
               e.stopPropagation()
               onLaunch()
             }}
           >
-            <Play className="h-3 w-3 mr-1" />
-            Launch
+            <Play className="h-3 w-3" />
           </Button>
         )}
       </div>

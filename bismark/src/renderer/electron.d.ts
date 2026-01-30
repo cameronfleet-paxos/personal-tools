@@ -1,4 +1,4 @@
-import type { Workspace, AppState, AgentTab, AppPreferences } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity } from '../shared/types'
 
 export interface ElectronAPI {
   // Workspace management
@@ -48,6 +48,16 @@ export interface ElectronAPI {
   getPreferences: () => Promise<AppPreferences>
   setPreferences: (preferences: Partial<AppPreferences>) => Promise<AppPreferences>
 
+  // Plan management (Team Mode)
+  createPlan: (title: string, description: string) => Promise<Plan>
+  getPlans: () => Promise<Plan[]>
+  executePlan: (planId: string, leaderAgentId: string) => Promise<Plan | null>
+  cancelPlan: (planId: string) => Promise<Plan | null>
+  getTaskAssignments: () => Promise<TaskAssignment[]>
+  getPlanActivities: (planId: string) => Promise<PlanActivity[]>
+  setPlanSidebarOpen: (open: boolean) => Promise<void>
+  setActivePlanId: (planId: string | null) => Promise<void>
+
   // Terminal events
   onTerminalData: (
     callback: (terminalId: string, data: string) => void
@@ -59,6 +69,11 @@ export interface ElectronAPI {
   onFocusWorkspace: (callback: (workspaceId: string) => void) => void
   onWaitingQueueChanged: (callback: (queue: string[]) => void) => void
   onInitialState: (callback: (state: AppState) => void) => void
+
+  // Plan events (Team Mode)
+  onPlanUpdate: (callback: (plan: Plan) => void) => void
+  onTaskAssignmentUpdate: (callback: (assignment: TaskAssignment) => void) => void
+  onPlanActivity: (callback: (activity: PlanActivity) => void) => void
 
   // Tray updates
   updateTray: (count: number) => void

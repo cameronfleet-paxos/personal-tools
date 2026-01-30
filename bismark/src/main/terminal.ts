@@ -155,3 +155,40 @@ export function getTerminalWorkspaceId(terminalId: string): string | undefined {
 export function getActiveTerminalIds(): string[] {
   return Array.from(terminals.keys())
 }
+
+/**
+ * Get terminal ID for a workspace
+ */
+export function getTerminalForWorkspace(workspaceId: string): string | undefined {
+  console.log(`[Terminal] Looking for workspace ${workspaceId} in terminals:`, Array.from(terminals.entries()).map(([id, t]) => ({ id, workspaceId: t.workspaceId })))
+  for (const [terminalId, terminal] of terminals) {
+    if (terminal.workspaceId === workspaceId) {
+      return terminalId
+    }
+  }
+  return undefined
+}
+
+/**
+ * Inject text into a terminal (for task assignment prompts)
+ * Types text character-by-character to simulate actual typing and avoid bracketed paste mode
+ */
+export function injectTextToTerminal(terminalId: string, text: string): void {
+  const terminal = terminals.get(terminalId)
+  if (terminal) {
+    // Type character-by-character with small delays to simulate actual typing
+    // This bypasses bracketed paste detection which triggers on rapid bulk input
+    typeTextToTerminal(terminal.pty, text)
+  }
+}
+
+/**
+ * Type text character-by-character to simulate actual keyboard typing
+ * This avoids triggering bracketed paste mode detection
+ */
+async function typeTextToTerminal(ptyProcess: pty.IPty, text: string, delayMs: number = 5): Promise<void> {
+  for (const char of text) {
+    ptyProcess.write(char)
+    await new Promise(resolve => setTimeout(resolve, delayMs))
+  }
+}

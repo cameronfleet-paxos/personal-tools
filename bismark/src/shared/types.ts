@@ -24,9 +24,13 @@ export interface AgentTab {
 // Attention mode determines how waiting agents are displayed
 export type AttentionMode = 'focus' | 'expand'
 
+// Operating mode determines how agents work together
+export type OperatingMode = 'solo' | 'team'
+
 // App preferences (stored in ~/.bismark/state.json)
 export interface AppPreferences {
   attentionMode: AttentionMode
+  operatingMode: OperatingMode
 }
 
 // App state (stored in ~/.bismark/state.json)
@@ -36,6 +40,9 @@ export interface AppState {
   activeTabId: string | null
   focusedWorkspaceId?: string
   preferences: AppPreferences
+  // Team mode state
+  planSidebarOpen?: boolean
+  activePlanId?: string | null
 }
 
 // Theme presets
@@ -65,4 +72,44 @@ export interface TerminalSession {
   id: string
   workspaceId: string
   isWaiting: boolean
+}
+
+// Plan status for team mode
+export type PlanStatus = 'draft' | 'delegating' | 'in_progress' | 'completed' | 'failed'
+
+// Plan definition for team mode coordination
+export interface Plan {
+  id: string
+  title: string
+  description: string
+  status: PlanStatus
+  createdAt: string
+  updatedAt: string
+  leaderAgentId: string | null
+  beadEpicId: string | null
+}
+
+// Task assignment status
+export type TaskAssignmentStatus = 'pending' | 'sent' | 'in_progress' | 'completed' | 'failed'
+
+// Task assignment linking bd tasks to agents
+export interface TaskAssignment {
+  beadId: string        // bd task ID
+  agentId: string       // Assigned agent
+  status: TaskAssignmentStatus
+  assignedAt: string
+  completedAt?: string
+}
+
+// Activity log entry type for plan execution visibility
+export type PlanActivityType = 'info' | 'success' | 'warning' | 'error'
+
+// Activity log entry for plan execution
+export interface PlanActivity {
+  id: string
+  planId: string
+  timestamp: string
+  type: PlanActivityType
+  message: string
+  details?: string  // Optional extra context
 }

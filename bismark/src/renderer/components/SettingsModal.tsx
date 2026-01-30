@@ -5,7 +5,7 @@ import {
   DialogTitle,
 } from '@/renderer/components/ui/dialog'
 import { Label } from '@/renderer/components/ui/label'
-import type { AppPreferences, AttentionMode } from '@/shared/types'
+import type { AppPreferences, AttentionMode, OperatingMode } from '@/shared/types'
 
 interface SettingsModalProps {
   open: boolean
@@ -22,6 +22,10 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const handleAttentionModeChange = (mode: AttentionMode) => {
     onPreferencesChange({ attentionMode: mode })
+  }
+
+  const handleOperatingModeChange = (mode: OperatingMode) => {
+    onPreferencesChange({ operatingMode: mode })
   }
 
   return (
@@ -66,6 +70,47 @@ export function SettingsModal({
                   <div className="font-medium">Expand</div>
                   <div className="text-sm text-muted-foreground">
                     Waiting agent expands to fullscreen. Use Next button or hotkey to cycle through queue.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            <Label className="text-base font-medium">Operating Mode</Label>
+            <p className="text-sm text-muted-foreground">
+              How agents work together
+            </p>
+            <div className="grid gap-2">
+              <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="radio"
+                  name="operatingMode"
+                  value="solo"
+                  checked={preferences.operatingMode === 'solo'}
+                  onChange={() => handleOperatingModeChange('solo')}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium">Solo</div>
+                  <div className="text-sm text-muted-foreground">
+                    Run agents independently without coordination
+                  </div>
+                </div>
+              </label>
+              <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="radio"
+                  name="operatingMode"
+                  value="team"
+                  checked={preferences.operatingMode === 'team'}
+                  onChange={() => handleOperatingModeChange('team')}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium">Team</div>
+                  <div className="text-sm text-muted-foreground">
+                    Enable plans sidebar. Leader agents delegate tasks to workers via bd.
                   </div>
                 </div>
               </label>

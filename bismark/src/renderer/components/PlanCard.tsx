@@ -1,0 +1,267 @@
+import { useState, useEffect, useRef } from 'react'
+import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity } from 'lucide-react'
+import { Button } from '@/renderer/components/ui/button'
+import { TaskCard } from '@/renderer/components/TaskCard'
+import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
+
+interface PlanCardProps {
+  plan: Plan
+  agents: Agent[]
+  taskAssignments: TaskAssignment[]
+  activities: PlanActivity[]
+  isActive: boolean
+  onExecute: (leaderAgentId: string) => void
+  onCancel: () => void
+  onClick: () => void
+}
+
+const statusIcons: Record<Plan['status'], React.ReactNode> = {
+  draft: <Clock className="h-3 w-3 text-muted-foreground" />,
+  delegating: <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />,
+  in_progress: <Loader2 className="h-3 w-3 text-yellow-500 animate-spin" />,
+  completed: <CheckCircle2 className="h-3 w-3 text-green-500" />,
+  failed: <AlertCircle className="h-3 w-3 text-red-500" />,
+}
+
+const statusLabels: Record<Plan['status'], string> = {
+  draft: 'Draft',
+  delegating: 'Delegating',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  failed: 'Failed',
+}
+
+const statusColors: Record<Plan['status'], string> = {
+  draft: 'bg-muted text-muted-foreground',
+  delegating: 'bg-blue-500/20 text-blue-500',
+  in_progress: 'bg-yellow-500/20 text-yellow-500',
+  completed: 'bg-green-500/20 text-green-500',
+  failed: 'bg-red-500/20 text-red-500',
+}
+
+// Activity type icons and colors
+const activityIcons: Record<PlanActivity['type'], React.ReactNode> = {
+  info: <span className="text-muted-foreground">○</span>,
+  success: <span className="text-green-500">✓</span>,
+  warning: <span className="text-yellow-500">⚠</span>,
+  error: <span className="text-red-500">✕</span>,
+}
+
+const activityColors: Record<PlanActivity['type'], string> = {
+  info: 'text-muted-foreground',
+  success: 'text-green-500',
+  warning: 'text-yellow-500',
+  error: 'text-red-500',
+}
+
+function formatActivityTime(timestamp: string): string {
+  const date = new Date(timestamp)
+  return date.toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+export function PlanCard({
+  plan,
+  agents,
+  taskAssignments,
+  activities,
+  isActive,
+  onExecute,
+  onCancel,
+  onClick,
+}: PlanCardProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [selectedLeader, setSelectedLeader] = useState<string>('')
+  const [activityLogExpanded, setActivityLogExpanded] = useState(true)
+  const activityLogRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to latest activity
+  useEffect(() => {
+    if (activityLogRef.current && activityLogExpanded) {
+      activityLogRef.current.scrollTop = activityLogRef.current.scrollHeight
+    }
+  }, [activities, activityLogExpanded])
+
+  const planTasks = taskAssignments.filter((t) => {
+    // In a real implementation, we'd filter by plan ID
+    // For now, show all tasks when viewing an active plan
+    return isActive
+  })
+
+  const getAgentById = (id: string) => agents.find((a) => a.id === id)
+  const leaderAgent = plan.leaderAgentId ? getAgentById(plan.leaderAgentId) : null
+
+  return (
+    <div
+      className={`rounded-lg border p-3 transition-all cursor-pointer ${
+        isActive ? 'ring-2 ring-primary' : 'hover:border-primary/50'
+      }`}
+      onClick={onClick}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              setExpanded(!expanded)
+            }}
+            className="p-0.5 hover:bg-muted rounded"
+          >
+            {expanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+          <div className="min-w-0">
+            <h4 className="font-medium text-sm truncate">{plan.title}</h4>
+            {leaderAgent && (
+              <p className="text-xs text-muted-foreground">
+                Leader: {leaderAgent.name}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${statusColors[plan.status]}`}>
+            {statusIcons[plan.status]}
+            {statusLabels[plan.status]}
+          </span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-3 space-y-3">
+          {plan.description && (
+            <p className="text-xs text-muted-foreground">{plan.description}</p>
+          )}
+
+          {plan.status === 'draft' && (
+            <div className="flex items-center gap-2">
+              <select
+                value={selectedLeader}
+                onChange={(e) => setSelectedLeader(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                className="flex-1 text-xs border rounded px-2 py-1 bg-background"
+              >
+                <option value="">Select leader agent...</option>
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                disabled={!selectedLeader}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (selectedLeader) {
+                    onExecute(selectedLeader)
+                  }
+                }}
+              >
+                <Play className="h-3 w-3 mr-1" />
+                Execute
+              </Button>
+            </div>
+          )}
+
+          {(plan.status === 'delegating' || plan.status === 'in_progress') && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={(e) => {
+                e.stopPropagation()
+                onCancel()
+              }}
+            >
+              <X className="h-3 w-3 mr-1" />
+              Cancel
+            </Button>
+          )}
+
+          {/* Activity Log */}
+          {(plan.status === 'delegating' || plan.status === 'in_progress' || plan.status === 'completed' || plan.status === 'failed') && (
+            <div className="border rounded-md overflow-hidden">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setActivityLogExpanded(!activityLogExpanded)
+                }}
+                className="w-full flex items-center justify-between px-2 py-1.5 bg-muted/50 hover:bg-muted text-xs font-medium"
+              >
+                <div className="flex items-center gap-1.5">
+                  <Activity className="h-3 w-3" />
+                  Activity Log
+                  {activities.length > 0 && (
+                    <span className="text-muted-foreground">({activities.length})</span>
+                  )}
+                </div>
+                {activityLogExpanded ? (
+                  <ChevronDown className="h-3 w-3" />
+                ) : (
+                  <ChevronRight className="h-3 w-3" />
+                )}
+              </button>
+              {activityLogExpanded && (
+                <div
+                  ref={activityLogRef}
+                  className="max-h-32 overflow-y-auto bg-background/50"
+                >
+                  {activities.length === 0 ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground text-center">
+                      No activity yet
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-border/50">
+                      {activities.map((activity) => (
+                        <div
+                          key={activity.id}
+                          className="px-2 py-1 text-xs hover:bg-muted/30"
+                          title={activity.details || undefined}
+                        >
+                          <div className="flex items-start gap-1.5">
+                            <span className="text-muted-foreground font-mono shrink-0">
+                              {formatActivityTime(activity.timestamp)}
+                            </span>
+                            <span className="shrink-0">{activityIcons[activity.type]}</span>
+                            <span className={activityColors[activity.type]}>
+                              {activity.message}
+                            </span>
+                          </div>
+                          {activity.details && (
+                            <div className="ml-16 text-muted-foreground truncate">
+                              {activity.details}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {planTasks.length > 0 && (
+            <div className="space-y-2">
+              <h5 className="text-xs font-medium text-muted-foreground">Tasks</h5>
+              {planTasks.map((task) => (
+                <TaskCard
+                  key={task.beadId}
+                  assignment={task}
+                  agent={getAgentById(task.agentId)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

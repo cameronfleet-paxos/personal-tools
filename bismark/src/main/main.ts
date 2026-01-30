@@ -41,7 +41,20 @@ import {
   reorderWorkspaceInTab,
   moveWorkspaceToTab,
   getTabs,
+  setPlanSidebarOpen,
+  setActivePlanId,
 } from './state-manager'
+import {
+  createPlan,
+  getPlans,
+  executePlan,
+  cancelPlan,
+  getTaskAssignments,
+  getPlanActivities,
+  setPlanManagerWindow,
+  startTaskPolling,
+  stopTaskPolling,
+} from './plan-manager'
 import type { Workspace, AppPreferences } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -57,8 +70,9 @@ function createWindow() {
     },
   })
 
-  // Set the main window reference for socket server
+  // Set the main window reference for socket server and plan manager
   setMainWindow(mainWindow)
+  setPlanManagerWindow(mainWindow)
 
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173')
@@ -70,6 +84,7 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
     setMainWindow(null)
+    setPlanManagerWindow(null)
   })
 
   // Create system tray
@@ -209,7 +224,47 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('set-preferences', (_event, preferences: Partial<AppPreferences>) => {
-    return setPreferences(preferences)
+    const updated = setPreferences(preferences)
+    // Start/stop task polling based on operating mode
+    if (preferences.operatingMode === 'team') {
+      startTaskPolling()
+    } else if (preferences.operatingMode === 'solo') {
+      stopTaskPolling()
+    }
+    return updated
+  })
+
+  // Plan management (Team Mode)
+  ipcMain.handle('create-plan', (_event, title: string, description: string) => {
+    return createPlan(title, description)
+  })
+
+  ipcMain.handle('get-plans', () => {
+    return getPlans()
+  })
+
+  ipcMain.handle('execute-plan', async (_event, planId: string, leaderAgentId: string) => {
+    return executePlan(planId, leaderAgentId)
+  })
+
+  ipcMain.handle('cancel-plan', (_event, planId: string) => {
+    return cancelPlan(planId)
+  })
+
+  ipcMain.handle('get-task-assignments', () => {
+    return getTaskAssignments()
+  })
+
+  ipcMain.handle('get-plan-activities', (_event, planId: string) => {
+    return getPlanActivities(planId)
+  })
+
+  ipcMain.handle('set-plan-sidebar-open', (_event, open: boolean) => {
+    setPlanSidebarOpen(open)
+  })
+
+  ipcMain.handle('set-active-plan-id', (_event, planId: string | null) => {
+    setActivePlanId(planId)
   })
 }
 

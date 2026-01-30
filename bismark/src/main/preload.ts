@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab, AppPreferences } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -68,6 +68,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPreferences: (preferences: Partial<AppPreferences>): Promise<AppPreferences> =>
     ipcRenderer.invoke('set-preferences', preferences),
 
+  // Plan management (Team Mode)
+  createPlan: (title: string, description: string): Promise<Plan> =>
+    ipcRenderer.invoke('create-plan', title, description),
+  getPlans: (): Promise<Plan[]> =>
+    ipcRenderer.invoke('get-plans'),
+  executePlan: (planId: string, leaderAgentId: string): Promise<Plan | null> =>
+    ipcRenderer.invoke('execute-plan', planId, leaderAgentId),
+  cancelPlan: (planId: string): Promise<Plan | null> =>
+    ipcRenderer.invoke('cancel-plan', planId),
+  getTaskAssignments: (): Promise<TaskAssignment[]> =>
+    ipcRenderer.invoke('get-task-assignments'),
+  getPlanActivities: (planId: string): Promise<PlanActivity[]> =>
+    ipcRenderer.invoke('get-plan-activities', planId),
+  setPlanSidebarOpen: (open: boolean): Promise<void> =>
+    ipcRenderer.invoke('set-plan-sidebar-open', open),
+  setActivePlanId: (planId: string | null): Promise<void> =>
+    ipcRenderer.invoke('set-active-plan-id', planId),
+
   // Terminal events - use removeAllListeners before adding to prevent duplicates
   onTerminalData: (
     callback: (terminalId: string, data: string) => void
@@ -104,6 +122,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('initial-state', (_event, state) => callback(state))
   },
 
+  // Plan events (Team Mode)
+  onPlanUpdate: (callback: (plan: Plan) => void): void => {
+    ipcRenderer.on('plan-update', (_event, plan) => callback(plan))
+  },
+  onTaskAssignmentUpdate: (callback: (assignment: TaskAssignment) => void): void => {
+    ipcRenderer.on('task-assignment-update', (_event, assignment) => callback(assignment))
+  },
+  onPlanActivity: (callback: (activity: PlanActivity) => void): void => {
+    ipcRenderer.on('plan-activity', (_event, activity) => callback(activity))
+  },
+
   // Tray updates
   updateTray: (count: number): void => {
     ipcRenderer.send('update-tray', count)
@@ -117,5 +146,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('focus-workspace')
     ipcRenderer.removeAllListeners('waiting-queue-changed')
     ipcRenderer.removeAllListeners('initial-state')
+    ipcRenderer.removeAllListeners('plan-update')
+    ipcRenderer.removeAllListeners('task-assignment-update')
+    ipcRenderer.removeAllListeners('plan-activity')
   },
 })

@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
-import type { Workspace, AppConfig, AppState, AppPreferences } from '../shared/types'
+import type { Workspace, AppConfig, AppState, AppPreferences, Plan, TaskAssignment } from '../shared/types'
 import { agentIcons, type AgentIconName } from '../shared/constants'
 
 const CONFIG_DIR_NAME = '.bismark'
@@ -17,6 +17,14 @@ export function getConfigPath(): string {
 
 export function getStatePath(): string {
   return path.join(getConfigDir(), 'state.json')
+}
+
+export function getPlansPath(): string {
+  return path.join(getConfigDir(), 'plans.json')
+}
+
+export function getTaskAssignmentsPath(): string {
+  return path.join(getConfigDir(), 'task-assignments.json')
 }
 
 export function ensureConfigDirExists(): void {
@@ -58,6 +66,7 @@ export function ensureConfigDirExists(): void {
 export function getDefaultPreferences(): AppPreferences {
   return {
     attentionMode: 'focus',
+    operatingMode: 'solo',
   }
 }
 
@@ -157,4 +166,77 @@ export function loadState(): AppState {
 
 export function saveState(state: AppState): void {
   writeConfigAtomic(getStatePath(), state)
+}
+
+// Plans operations
+export function loadPlans(): Plan[] {
+  const plansPath = getPlansPath()
+  try {
+    const content = fs.readFileSync(plansPath, 'utf-8')
+    return JSON.parse(content) as Plan[]
+  } catch {
+    return []
+  }
+}
+
+export function savePlans(plans: Plan[]): void {
+  writeConfigAtomic(getPlansPath(), plans)
+}
+
+export function savePlan(plan: Plan): Plan {
+  const plans = loadPlans()
+  const existingIndex = plans.findIndex((p) => p.id === plan.id)
+
+  if (existingIndex >= 0) {
+    plans[existingIndex] = plan
+  } else {
+    plans.push(plan)
+  }
+
+  savePlans(plans)
+  return plan
+}
+
+export function deletePlan(id: string): void {
+  const plans = loadPlans()
+  savePlans(plans.filter((p) => p.id !== id))
+}
+
+export function getPlanById(id: string): Plan | undefined {
+  const plans = loadPlans()
+  return plans.find((p) => p.id === id)
+}
+
+// Task assignment operations
+export function loadTaskAssignments(): TaskAssignment[] {
+  const path = getTaskAssignmentsPath()
+  try {
+    const content = fs.readFileSync(path, 'utf-8')
+    return JSON.parse(content) as TaskAssignment[]
+  } catch {
+    return []
+  }
+}
+
+export function saveTaskAssignments(assignments: TaskAssignment[]): void {
+  writeConfigAtomic(getTaskAssignmentsPath(), assignments)
+}
+
+export function saveTaskAssignment(assignment: TaskAssignment): TaskAssignment {
+  const assignments = loadTaskAssignments()
+  const existingIndex = assignments.findIndex((a) => a.beadId === assignment.beadId)
+
+  if (existingIndex >= 0) {
+    assignments[existingIndex] = assignment
+  } else {
+    assignments.push(assignment)
+  }
+
+  saveTaskAssignments(assignments)
+  return assignment
+}
+
+export function deleteTaskAssignment(beadId: string): void {
+  const assignments = loadTaskAssignments()
+  saveTaskAssignments(assignments.filter((a) => a.beadId !== beadId))
 }

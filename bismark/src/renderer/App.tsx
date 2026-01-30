@@ -1,7 +1,7 @@
 import './index.css'
 import './electron.d.ts'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, ChevronRight, Settings, Check, X, Maximize2, Minimize2 } from 'lucide-react'
+import { Plus, ChevronRight, ChevronLeft, Settings, Check, X, Maximize2, Minimize2, ListTodo } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import {
   Dialog,
@@ -18,7 +18,9 @@ import { Terminal } from '@/renderer/components/Terminal'
 import { TabBar } from '@/renderer/components/TabBar'
 import { Logo } from '@/renderer/components/Logo'
 import { SettingsModal } from '@/renderer/components/SettingsModal'
-import type { Agent, AppState, AgentTab, AppPreferences } from '@/shared/types'
+import { PlanSidebar } from '@/renderer/components/PlanSidebar'
+import { PlanCreator } from '@/renderer/components/PlanCreator'
+import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity } from '@/shared/types'
 
 interface ActiveTerminal {
   terminalId: string
@@ -40,7 +42,19 @@ function App() {
   const [waitingQueue, setWaitingQueue] = useState<string[]>([])
   const [preferences, setPreferences] = useState<AppPreferences>({
     attentionMode: 'focus',
+    operatingMode: 'solo',
   })
+
+  // Team mode state
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [taskAssignments, setTaskAssignments] = useState<TaskAssignment[]>([])
+  const [planActivities, setPlanActivities] = useState<Map<string, PlanActivity[]>>(new Map())
+  const [planSidebarOpen, setPlanSidebarOpen] = useState(false)
+
+  // Left sidebar collapse state
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [activePlanId, setActivePlanId] = useState<string | null>(null)
+  const [planCreatorOpen, setPlanCreatorOpen] = useState(false)
 
   // Track which terminals have finished booting (by terminalId)
   const [bootedTerminals, setBootedTerminals] = useState<Set<string>>(new Set())
@@ -74,6 +88,7 @@ function App() {
   useEffect(() => {
     loadAgents()
     loadPreferences()
+    loadPlansData()
     setupEventListeners()
 
     return () => {
@@ -133,6 +148,17 @@ function App() {
     const prefs = await window.electronAPI?.getPreferences?.()
     if (prefs) {
       setPreferences(prefs)
+    }
+  }
+
+  const loadPlansData = async () => {
+    const loadedPlans = await window.electronAPI?.getPlans?.()
+    if (loadedPlans) {
+      setPlans(loadedPlans)
+    }
+    const loadedAssignments = await window.electronAPI?.getTaskAssignments?.()
+    if (loadedAssignments) {
+      setTaskAssignments(loadedAssignments)
     }
   }
 
@@ -208,6 +234,40 @@ function App() {
       if (writer) {
         writer(`\r\n\x1b[33mProcess exited with code ${code}\x1b[0m\r\n`)
       }
+    })
+
+    // Plan event listeners (Team Mode)
+    window.electronAPI?.onPlanUpdate?.((plan: Plan) => {
+      setPlans((prev) => {
+        const index = prev.findIndex((p) => p.id === plan.id)
+        if (index >= 0) {
+          const updated = [...prev]
+          updated[index] = plan
+          return updated
+        }
+        return [...prev, plan]
+      })
+    })
+
+    window.electronAPI?.onTaskAssignmentUpdate?.((assignment: TaskAssignment) => {
+      setTaskAssignments((prev) => {
+        const index = prev.findIndex((a) => a.beadId === assignment.beadId)
+        if (index >= 0) {
+          const updated = [...prev]
+          updated[index] = assignment
+          return updated
+        }
+        return [...prev, assignment]
+      })
+    })
+
+    window.electronAPI?.onPlanActivity?.((activity: PlanActivity) => {
+      setPlanActivities((prev) => {
+        const newMap = new Map(prev)
+        const existing = newMap.get(activity.planId) || []
+        newMap.set(activity.planId, [...existing, activity])
+        return newMap
+      })
     })
   }
 
@@ -427,6 +487,36 @@ function App() {
 
   const isAgentWaiting = (agentId: string) => waitingQueue.includes(agentId)
 
+  // Plan handlers (Team Mode)
+  // Note: We don't update local state here because the onPlanUpdate event listener handles it
+  const handleCreatePlan = async (title: string, description: string) => {
+    await window.electronAPI?.createPlan?.(title, description)
+  }
+
+  const handleExecutePlan = async (planId: string, leaderAgentId: string) => {
+    await window.electronAPI?.executePlan?.(planId, leaderAgentId)
+  }
+
+  const handleCancelPlan = async (planId: string) => {
+    await window.electronAPI?.cancelPlan?.(planId)
+  }
+
+  const handleSelectPlan = (planId: string | null) => {
+    setActivePlanId(planId)
+    window.electronAPI?.setActivePlanId?.(planId)
+  }
+
+  const handleTogglePlanSidebar = () => {
+    const newOpen = !planSidebarOpen
+    setPlanSidebarOpen(newOpen)
+    window.electronAPI?.setPlanSidebarOpen?.(newOpen)
+  }
+
+  // Count active plans for badge
+  const activePlansCount = plans.filter(
+    (p) => p.status === 'delegating' || p.status === 'in_progress'
+  ).length
+
   // Grid positions: TL (0), TR (1), BL (2), BR (3)
   const gridPositions = [0, 1, 2, 3]
 
@@ -484,6 +574,21 @@ function App() {
             <Plus className="h-4 w-4 mr-1" />
             Add
           </Button>
+          {preferences.operatingMode === 'team' && (
+            <Button
+              size="sm"
+              variant={planSidebarOpen ? 'secondary' : 'ghost'}
+              onClick={handleTogglePlanSidebar}
+            >
+              <ListTodo className="h-4 w-4 mr-1" />
+              Plans
+              {activePlansCount > 0 && (
+                <span className="ml-1 bg-primary text-primary-foreground text-xs px-1.5 py-0.5 rounded-full">
+                  {activePlansCount}
+                </span>
+              )}
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
@@ -507,39 +612,91 @@ function App() {
       {/* Main content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar - Agent list */}
-        <aside className="w-64 border-r p-4 overflow-y-auto">
-          <div className="space-y-3">
-            {agents.map((agent) => {
-              const agentTab = tabs.find((t) =>
-                t.workspaceIds.includes(agent.id)
-              )
-              return (
-                <AgentCard
-                  key={agent.id}
-                  agent={agent}
-                  isActive={activeTerminals.some(
-                    (t) => t.workspaceId === agent.id
-                  )}
-                  isWaiting={isAgentWaiting(agent.id)}
-                  tabs={tabs}
-                  currentTabId={agentTab?.id}
-                  onClick={() => {
-                    if (activeTerminals.some((t) => t.workspaceId === agent.id)) {
-                      // Find which tab contains this agent and switch to it
-                      if (agentTab && agentTab.id !== activeTabId) {
-                        handleTabSelect(agentTab.id)
-                      }
-                      handleFocusAgent(agent.id)
-                    }
-                  }}
-                  onEdit={() => handleEditAgent(agent)}
-                  onDelete={() => handleDeleteAgent(agent.id)}
-                  onLaunch={() => handleLaunchAgent(agent.id)}
-                  onStop={() => handleStopAgent(agent.id)}
-                  onMoveToTab={(tabId) => handleMoveAgentToTab(agent.id, tabId)}
-                />
-              )
-            })}
+        <aside className={`${sidebarCollapsed ? 'w-12' : 'w-64'} border-r flex flex-col overflow-hidden transition-all duration-200`}>
+          {/* Header with toggle */}
+          <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} p-2 border-b`}>
+            {!sidebarCollapsed && <span className="text-sm font-medium">Agents</span>}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="h-6 w-6"
+            >
+              {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+            </Button>
+          </div>
+
+          {/* Content */}
+          <div className="flex-1 overflow-y-auto p-2">
+            {sidebarCollapsed ? (
+              /* Collapsed: icon-only view - horizontal layout */
+              <div className="flex flex-row flex-wrap gap-2 justify-center">
+                {agents.map((agent) => {
+                  const isActive = activeTerminals.some((t) => t.workspaceId === agent.id)
+                  const isWaiting = isAgentWaiting(agent.id)
+                  const isFocused = focusedAgentId === agent.id
+                  const agentTab = tabs.find((t) => t.workspaceIds.includes(agent.id))
+                  return (
+                    <button
+                      key={agent.id}
+                      onClick={() => {
+                        setSidebarCollapsed(false)
+                        if (isActive) {
+                          if (agentTab && agentTab.id !== activeTabId) {
+                            handleTabSelect(agentTab.id)
+                          }
+                          handleFocusAgent(agent.id)
+                        }
+                      }}
+                      className={`p-1.5 rounded-md hover:bg-muted transition-colors ${
+                        isWaiting ? 'ring-2 ring-yellow-500' : ''
+                      } ${isActive ? 'bg-muted' : ''} ${
+                        isFocused ? 'ring-2 ring-white/50' : ''
+                      }`}
+                      title={agent.name}
+                    >
+                      <AgentIcon icon={agent.icon} className="w-5 h-5" />
+                    </button>
+                  )
+                })}
+              </div>
+            ) : (
+              /* Expanded: full cards */
+              <div className="space-y-3">
+                {agents.map((agent) => {
+                  const agentTab = tabs.find((t) =>
+                    t.workspaceIds.includes(agent.id)
+                  )
+                  return (
+                    <AgentCard
+                      key={agent.id}
+                      agent={agent}
+                      isActive={activeTerminals.some(
+                        (t) => t.workspaceId === agent.id
+                      )}
+                      isWaiting={isAgentWaiting(agent.id)}
+                      isFocused={focusedAgentId === agent.id}
+                      tabs={tabs}
+                      currentTabId={agentTab?.id}
+                      onClick={() => {
+                        if (activeTerminals.some((t) => t.workspaceId === agent.id)) {
+                          // Find which tab contains this agent and switch to it
+                          if (agentTab && agentTab.id !== activeTabId) {
+                            handleTabSelect(agentTab.id)
+                          }
+                          handleFocusAgent(agent.id)
+                        }
+                      }}
+                      onEdit={() => handleEditAgent(agent)}
+                      onDelete={() => handleDeleteAgent(agent.id)}
+                      onLaunch={() => handleLaunchAgent(agent.id)}
+                      onStop={() => handleStopAgent(agent.id)}
+                      onMoveToTab={(tabId) => handleMoveAgentToTab(agent.id, tabId)}
+                    />
+                  )
+                })}
+              </div>
+            )}
           </div>
         </aside>
 
@@ -777,6 +934,26 @@ function App() {
             )
           })}
         </main>
+
+        {/* Plan Sidebar (Team Mode only) */}
+        {preferences.operatingMode === 'team' && (
+          <PlanSidebar
+            open={planSidebarOpen}
+            onClose={() => {
+              setPlanSidebarOpen(false)
+              window.electronAPI?.setPlanSidebarOpen?.(false)
+            }}
+            plans={plans}
+            taskAssignments={taskAssignments}
+            planActivities={planActivities}
+            agents={agents}
+            activePlanId={activePlanId}
+            onCreatePlan={() => setPlanCreatorOpen(true)}
+            onSelectPlan={handleSelectPlan}
+            onExecutePlan={handleExecutePlan}
+            onCancelPlan={handleCancelPlan}
+          />
+        )}
       </div>
 
       <AgentModal
@@ -826,6 +1003,13 @@ function App() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Plan Creator Modal (Team Mode) */}
+      <PlanCreator
+        open={planCreatorOpen}
+        onOpenChange={setPlanCreatorOpen}
+        onCreatePlan={handleCreatePlan}
+      />
     </div>
   )
 }

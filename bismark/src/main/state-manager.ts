@@ -8,6 +8,8 @@ let currentState: AppState = {
   tabs: [],
   activeTabId: null,
   preferences: getDefaultPreferences(),
+  planSidebarOpen: false,
+  activePlanId: null,
 }
 
 function generateTabId(): string {
@@ -369,4 +371,23 @@ export function setPreferences(preferences: Partial<AppPreferences>): AppPrefere
   currentState.preferences = { ...currentState.preferences, ...preferences }
   persistState()
   return currentState.preferences
+}
+
+// Plan sidebar state management
+export function getPlanSidebarOpen(): boolean {
+  return currentState.planSidebarOpen || false
+}
+
+export function setPlanSidebarOpen(open: boolean): void {
+  currentState.planSidebarOpen = open
+  persistState()
+}
+
+export function getActivePlanId(): string | null {
+  return currentState.activePlanId || null
+}
+
+export function setActivePlanId(planId: string | null): void {
+  currentState.activePlanId = planId
+  persistState()
 }
