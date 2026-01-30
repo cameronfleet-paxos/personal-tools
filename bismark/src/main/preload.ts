@@ -139,6 +139,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('terminal-created', (_event, data) => callback(data))
   },
 
+  // External URL handling
+  openExternal: (url: string): Promise<void> =>
+    ipcRenderer.invoke('open-external', url),
+
   // Tray updates
   updateTray: (count: number): void => {
     ipcRenderer.send('update-tray', count)

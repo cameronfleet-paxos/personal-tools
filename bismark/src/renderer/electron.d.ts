@@ -77,6 +77,9 @@ export interface ElectronAPI {
   onStateUpdate: (callback: (state: AppState) => void) => void
   onTerminalCreated: (callback: (data: { terminalId: string; workspaceId: string }) => void) => void
 
+  // External URL handling
+  openExternal: (url: string) => Promise<void>
+
   // Tray updates
   updateTray: (count: number) => void
 

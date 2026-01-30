@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'path'
 import {
   ensureConfigDirExists,
@@ -265,6 +265,11 @@ function registerIpcHandlers() {
 
   ipcMain.handle('set-active-plan-id', (_event, planId: string | null) => {
     setActivePlanId(planId)
+  })
+
+  // External URL handling
+  ipcMain.handle('open-external', (_event, url: string) => {
+    return shell.openExternal(url)
   })
 }
 

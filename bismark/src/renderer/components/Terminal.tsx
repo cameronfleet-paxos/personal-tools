@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import type { ThemeName } from '@/shared/types'
 import { themes } from '@/shared/constants'
@@ -49,6 +50,11 @@ export function Terminal({
 
     const fitAddon = new FitAddon()
     xterm.loadAddon(fitAddon)
+
+    const webLinksAddon = new WebLinksAddon((_event, uri) => {
+      window.electronAPI.openExternal(uri)
+    })
+    xterm.loadAddon(webLinksAddon)
 
     xterm.open(terminalRef.current)
     fitAddon.fit()
