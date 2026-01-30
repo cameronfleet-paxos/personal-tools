@@ -116,9 +116,38 @@ function App() {
     }
   }, [activeTerminals, bootedTerminals])
 
-  // Keyboard shortcut for Next in expand mode
+  const handleFocusAgent = useCallback((agentId: string) => {
+    // If switching away from a waiting agent we were focused on, acknowledge it
+    if (focusedAgentId && focusedAgentId !== agentId && waitingQueue.includes(focusedAgentId)) {
+      window.electronAPI?.acknowledgeWaiting?.(focusedAgentId)
+      setWaitingQueue((prev) => prev.filter((id) => id !== focusedAgentId))
+    }
+    setFocusedAgentId(agentId)
+    window.electronAPI?.setFocusedWorkspace?.(agentId)
+    // Acknowledge if this agent was waiting
+    if (waitingQueue.includes(agentId)) {
+      window.electronAPI?.acknowledgeWaiting?.(agentId)
+      setWaitingQueue((prev) => prev.filter((id) => id !== agentId))
+    }
+  }, [focusedAgentId, waitingQueue])
+
+  // Keyboard shortcuts for expand mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Determine if we're in auto-expand mode (not manually maximized)
+      const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
+      const autoExpandedAgentId = isExpandModeActive ? waitingQueue[0] : null
+      const expandedAgentId = maximizedAgentId || autoExpandedAgentId
+      const isAutoExpanded = expandedAgentId === autoExpandedAgentId && !maximizedAgentId
+
+      // Cmd/Ctrl+D to dismiss current waiting agent in expand mode
+      if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
+        if (preferences.attentionMode === 'expand' && expandedAgentId && isAutoExpanded) {
+          e.preventDefault()
+          handleFocusAgent(expandedAgentId)
+        }
+      }
+
       // Cmd/Ctrl+N for next waiting agent
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         if (preferences.attentionMode === 'expand' && waitingQueue.length > 1) {
@@ -146,7 +175,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [preferences.attentionMode, waitingQueue, tabs, activeTabId])
+  }, [preferences.attentionMode, waitingQueue, tabs, activeTabId, maximizedAgentId, handleFocusAgent])
 
   const loadPreferences = async () => {
     const prefs = await window.electronAPI?.getPreferences?.()
@@ -404,21 +433,6 @@ function App() {
   const handleAddAgent = () => {
     setEditingAgent(undefined)
     setModalOpen(true)
-  }
-
-  const handleFocusAgent = (agentId: string) => {
-    // If switching away from a waiting agent we were focused on, acknowledge it
-    if (focusedAgentId && focusedAgentId !== agentId && waitingQueue.includes(focusedAgentId)) {
-      window.electronAPI?.acknowledgeWaiting?.(focusedAgentId)
-      setWaitingQueue((prev) => prev.filter((id) => id !== focusedAgentId))
-    }
-    setFocusedAgentId(agentId)
-    window.electronAPI?.setFocusedWorkspace?.(agentId)
-    // Acknowledge if this agent was waiting
-    if (waitingQueue.includes(agentId)) {
-      window.electronAPI?.acknowledgeWaiting?.(agentId)
-      setWaitingQueue((prev) => prev.filter((id) => id !== agentId))
-    }
   }
 
   const handleNextWaiting = () => {
@@ -900,7 +914,7 @@ function App() {
                                     className="h-6 text-xs"
                                   >
                                     <Check className="h-3 w-3 mr-1" />
-                                    Dismiss
+                                    Dismiss {navigator.platform.includes('Mac') ? '⌘D' : 'Ctrl+D'}
                                   </Button>
                                   {waitingQueue.length > 1 && (
                                     <Button
