@@ -71,7 +71,7 @@ function handleStopEvent(event: StopEvent): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     console.log(`[StopEvent] Sending agent-waiting event to renderer`)
     mainWindow.webContents.send('agent-waiting', workspaceId)
-    mainWindow.webContents.send('focus-workspace', workspaceId)
+    // Don't auto-focus - let the renderer's expand mode handle visibility
   } else {
     console.log(`[StopEvent] WARNING: mainWindow not available`)
   }

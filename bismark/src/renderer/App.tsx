@@ -318,6 +318,11 @@ function App() {
   }
 
   const handleFocusAgent = (agentId: string) => {
+    // If switching away from a waiting agent we were focused on, acknowledge it
+    if (focusedAgentId && focusedAgentId !== agentId && waitingQueue.includes(focusedAgentId)) {
+      window.electronAPI?.acknowledgeWaiting?.(focusedAgentId)
+      setWaitingQueue((prev) => prev.filter((id) => id !== focusedAgentId))
+    }
     setFocusedAgentId(agentId)
     window.electronAPI?.setFocusedWorkspace?.(agentId)
     // Acknowledge if this agent was waiting
@@ -545,7 +550,8 @@ function App() {
             const isActiveTab = tab.id === activeTabId
             const tabWorkspaceIds = tab.workspaceIds
             const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
-            const autoExpandedAgentId = isExpandModeActive ? waitingQueue[0] : null
+            // Don't auto-expand if user is already focused on the waiting agent
+            const autoExpandedAgentId = isExpandModeActive && focusedAgentId !== waitingQueue[0] ? waitingQueue[0] : null
             const expandedAgentId = maximizedAgentId || autoExpandedAgentId
             // In expand mode, show the tab containing the expanded agent instead of the active tab
             const tabContainsExpandedAgent = expandedAgentId && tabWorkspaceIds.includes(expandedAgentId)
