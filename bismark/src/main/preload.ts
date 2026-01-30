@@ -73,12 +73,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('create-plan', title, description),
   getPlans: (): Promise<Plan[]> =>
     ipcRenderer.invoke('get-plans'),
-  executePlan: (planId: string, leaderAgentId: string): Promise<Plan | null> =>
-    ipcRenderer.invoke('execute-plan', planId, leaderAgentId),
+  executePlan: (planId: string, referenceAgentId: string): Promise<Plan | null> =>
+    ipcRenderer.invoke('execute-plan', planId, referenceAgentId),
   cancelPlan: (planId: string): Promise<Plan | null> =>
     ipcRenderer.invoke('cancel-plan', planId),
-  getTaskAssignments: (): Promise<TaskAssignment[]> =>
-    ipcRenderer.invoke('get-task-assignments'),
+  getTaskAssignments: (planId: string): Promise<TaskAssignment[]> =>
+    ipcRenderer.invoke('get-task-assignments', planId),
   getPlanActivities: (planId: string): Promise<PlanActivity[]> =>
     ipcRenderer.invoke('get-plan-activities', planId),
   setPlanSidebarOpen: (open: boolean): Promise<void> =>
@@ -132,6 +132,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onPlanActivity: (callback: (activity: PlanActivity) => void): void => {
     ipcRenderer.on('plan-activity', (_event, activity) => callback(activity))
   },
+  onStateUpdate: (callback: (state: AppState) => void): void => {
+    ipcRenderer.on('state-update', (_event, state) => callback(state))
+  },
+  onTerminalCreated: (callback: (data: { terminalId: string; workspaceId: string }) => void): void => {
+    ipcRenderer.on('terminal-created', (_event, data) => callback(data))
+  },
 
   // Tray updates
   updateTray: (count: number): void => {
@@ -149,5 +155,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('plan-update')
     ipcRenderer.removeAllListeners('task-assignment-update')
     ipcRenderer.removeAllListeners('plan-activity')
+    ipcRenderer.removeAllListeners('state-update')
+    ipcRenderer.removeAllListeners('terminal-created')
   },
 })

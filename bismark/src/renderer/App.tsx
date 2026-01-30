@@ -21,6 +21,7 @@ import { SettingsModal } from '@/renderer/components/SettingsModal'
 import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
 import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity } from '@/shared/types'
+import { themes } from '@/shared/constants'
 
 interface ActiveTerminal {
   terminalId: string
@@ -122,20 +123,23 @@ function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
         if (preferences.attentionMode === 'expand' && waitingQueue.length > 1) {
           e.preventDefault()
-          // Move to next in queue - inline to avoid stale closure
+          const currentAgentId = waitingQueue[0]
           const nextAgentId = waitingQueue[1]
+
+          // Acknowledge/dismiss the current agent
+          window.electronAPI?.acknowledgeWaiting?.(currentAgentId)
+          setWaitingQueue((prev) => prev.filter((id) => id !== currentAgentId))
+
+          // Switch to tab containing next agent
           const tab = tabs.find((t) => t.workspaceIds.includes(nextAgentId))
           if (tab && tab.id !== activeTabId) {
             window.electronAPI?.setActiveTab?.(tab.id)
             setActiveTabId(tab.id)
           }
+
+          // Focus on next agent but DON'T acknowledge it
           setFocusedAgentId(nextAgentId)
           window.electronAPI?.setFocusedWorkspace?.(nextAgentId)
-          // Acknowledge if this agent was waiting
-          if (waitingQueue.includes(nextAgentId)) {
-            window.electronAPI?.acknowledgeWaiting?.(nextAgentId)
-            setWaitingQueue((prev) => prev.filter((id) => id !== nextAgentId))
-          }
         }
       }
     }
@@ -155,10 +159,14 @@ function App() {
     const loadedPlans = await window.electronAPI?.getPlans?.()
     if (loadedPlans) {
       setPlans(loadedPlans)
-    }
-    const loadedAssignments = await window.electronAPI?.getTaskAssignments?.()
-    if (loadedAssignments) {
-      setTaskAssignments(loadedAssignments)
+      // Load task assignments for the active plan if there is one
+      const activePlan = loadedPlans.find(p => p.status === 'delegating' || p.status === 'in_progress')
+      if (activePlan) {
+        const loadedAssignments = await window.electronAPI?.getTaskAssignments?.(activePlan.id)
+        if (loadedAssignments) {
+          setTaskAssignments(loadedAssignments)
+        }
+      }
     }
   }
 
@@ -268,6 +276,27 @@ function App() {
         newMap.set(activity.planId, [...existing, activity])
         return newMap
       })
+    })
+
+    // Listen for state updates (tab changes from orchestrator)
+    window.electronAPI?.onStateUpdate?.((state: AppState) => {
+      setTabs(state.tabs || [])
+      if (state.activeTabId) {
+        setActiveTabId(state.activeTabId)
+      }
+      // Reload agents to pick up new orchestrator workspaces
+      loadAgents()
+    })
+
+    // Listen for terminal-created events (from orchestrator/plan manager)
+    window.electronAPI?.onTerminalCreated?.((data) => {
+      setActiveTerminals((prev) => {
+        // Avoid duplicates
+        if (prev.some(t => t.terminalId === data.terminalId)) return prev
+        return [...prev, { terminalId: data.terminalId, workspaceId: data.workspaceId }]
+      })
+      // Also reload agents to ensure orchestrator workspace is in state
+      loadAgents()
     })
   }
 
@@ -394,14 +423,23 @@ function App() {
 
   const handleNextWaiting = () => {
     if (waitingQueue.length > 1) {
-      // Move to next in queue
+      const currentAgentId = waitingQueue[0]
       const nextAgentId = waitingQueue[1]
-      // Find which tab contains this agent
+
+      // Acknowledge/dismiss the current agent
+      window.electronAPI?.acknowledgeWaiting?.(currentAgentId)
+      setWaitingQueue((prev) => prev.filter((id) => id !== currentAgentId))
+
+      // Switch to the tab containing the next agent
       const tab = tabs.find((t) => t.workspaceIds.includes(nextAgentId))
       if (tab && tab.id !== activeTabId) {
         handleTabSelect(tab.id)
       }
-      handleFocusAgent(nextAgentId)
+
+      // Focus on the next agent but DON'T acknowledge it yet
+      // (it stays in queue so expand mode shows it)
+      setFocusedAgentId(nextAgentId)
+      window.electronAPI?.setFocusedWorkspace?.(nextAgentId)
     }
   }
 
@@ -493,17 +531,26 @@ function App() {
     await window.electronAPI?.createPlan?.(title, description)
   }
 
-  const handleExecutePlan = async (planId: string, leaderAgentId: string) => {
-    await window.electronAPI?.executePlan?.(planId, leaderAgentId)
+  const handleExecutePlan = async (planId: string, referenceAgentId: string) => {
+    await window.electronAPI?.executePlan?.(planId, referenceAgentId)
   }
 
   const handleCancelPlan = async (planId: string) => {
     await window.electronAPI?.cancelPlan?.(planId)
   }
 
-  const handleSelectPlan = (planId: string | null) => {
+  const handleSelectPlan = async (planId: string | null) => {
     setActivePlanId(planId)
     window.electronAPI?.setActivePlanId?.(planId)
+    // Load task assignments for the selected plan
+    if (planId) {
+      const loadedAssignments = await window.electronAPI?.getTaskAssignments?.(planId)
+      if (loadedAssignments) {
+        setTaskAssignments(loadedAssignments)
+      }
+    } else {
+      setTaskAssignments([])
+    }
   }
 
   const handleTogglePlanSidebar = () => {
@@ -636,6 +683,7 @@ function App() {
                   const isWaiting = isAgentWaiting(agent.id)
                   const isFocused = focusedAgentId === agent.id
                   const agentTab = tabs.find((t) => t.workspaceIds.includes(agent.id))
+                  const themeColors = themes[agent.theme]
                   return (
                     <button
                       key={agent.id}
@@ -648,11 +696,10 @@ function App() {
                           handleFocusAgent(agent.id)
                         }
                       }}
-                      className={`p-1.5 rounded-md hover:bg-muted transition-colors ${
+                      className={`p-1.5 rounded-md hover:brightness-110 transition-all ${
                         isWaiting ? 'ring-2 ring-yellow-500' : ''
-                      } ${isActive ? 'bg-muted' : ''} ${
-                        isFocused ? 'ring-2 ring-white/50' : ''
-                      }`}
+                      } ${isFocused ? 'ring-2 ring-white/50' : ''}`}
+                      style={{ backgroundColor: themeColors.bg }}
                       title={agent.name}
                     >
                       <AgentIcon icon={agent.icon} className="w-5 h-5" />
@@ -707,8 +754,8 @@ function App() {
             const isActiveTab = tab.id === activeTabId
             const tabWorkspaceIds = tab.workspaceIds
             const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
-            // Don't auto-expand if user is already focused on the waiting agent
-            const autoExpandedAgentId = isExpandModeActive && focusedAgentId !== waitingQueue[0] ? waitingQueue[0] : null
+            // Auto-expand the first waiting agent in expand mode
+            const autoExpandedAgentId = isExpandModeActive ? waitingQueue[0] : null
             const expandedAgentId = maximizedAgentId || autoExpandedAgentId
             // In expand mode, show the tab containing the expanded agent instead of the active tab
             const tabContainsExpandedAgent = expandedAgentId && tabWorkspaceIds.includes(expandedAgentId)

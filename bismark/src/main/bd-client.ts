@@ -6,8 +6,12 @@ import { promisify } from 'util'
 
 const execAsync = promisify(exec)
 
-// All bd commands run with cwd = ~/.bismark/plans/
-const PLANS_DIR = path.join(os.homedir(), '.bismark', 'plans')
+/**
+ * Get the plan-specific directory path
+ */
+export function getPlanDir(planId: string): string {
+  return path.join(os.homedir(), '.bismark', 'plans', planId)
+}
 
 export interface BeadTask {
   id: string
@@ -20,32 +24,35 @@ export interface BeadTask {
 }
 
 /**
- * Ensure the beads repository exists at ~/.bismark/plans/
- * Auto-initializes on first Team Mode use
+ * Ensure the beads repository exists for a specific plan
+ * Auto-initializes on first use
+ * Returns the plan directory path
  */
-export async function ensureBeadsRepo(): Promise<void> {
-  if (!fs.existsSync(PLANS_DIR)) {
-    fs.mkdirSync(PLANS_DIR, { recursive: true })
+export async function ensureBeadsRepo(planId: string): Promise<string> {
+  const planDir = getPlanDir(planId)
+  if (!fs.existsSync(planDir)) {
+    fs.mkdirSync(planDir, { recursive: true })
 
     // Initialize git repo
-    await execAsync('git init', { cwd: PLANS_DIR })
+    await execAsync('git init', { cwd: planDir })
 
     // Initialize beads with bismark prefix
-    await execAsync('bd --sandbox init --prefix bismark', { cwd: PLANS_DIR })
+    await execAsync('bd --sandbox init --prefix bismark', { cwd: planDir })
   }
+  return planDir
 }
 
 /**
  * Create a new bd task or epic
  */
-export async function bdCreate(opts: {
+export async function bdCreate(planId: string, opts: {
   title: string
   type?: 'epic' | 'task'
   parent?: string
   assignee?: string
   labels?: string[]
 }): Promise<string> {
-  await ensureBeadsRepo()
+  const planDir = await ensureBeadsRepo(planId)
 
   let cmd = `bd --sandbox create`
 
@@ -59,7 +66,7 @@ export async function bdCreate(opts: {
 
   cmd += ` "${opts.title.replace(/"/g, '\\"')}"`
 
-  const { stdout } = await execAsync(cmd, { cwd: PLANS_DIR })
+  const { stdout } = await execAsync(cmd, { cwd: planDir })
 
   // Parse task ID from output (typically format: "Created task: <id>")
   const match = stdout.match(/([a-zA-Z0-9-]+)\s*$/m)
@@ -67,7 +74,7 @@ export async function bdCreate(opts: {
 
   // Apply assignee and labels if provided
   if (opts.assignee || (opts.labels && opts.labels.length > 0)) {
-    await bdUpdate(taskId, { assignee: opts.assignee, addLabels: opts.labels })
+    await bdUpdate(planId, taskId, { assignee: opts.assignee, addLabels: opts.labels })
   }
 
   return taskId
@@ -76,12 +83,12 @@ export async function bdCreate(opts: {
 /**
  * List bd tasks with optional filters
  */
-export async function bdList(opts?: {
+export async function bdList(planId: string, opts?: {
   parent?: string
   status?: 'open' | 'closed' | 'all'
   labels?: string[]
 }): Promise<BeadTask[]> {
-  await ensureBeadsRepo()
+  const planDir = await ensureBeadsRepo(planId)
 
   let cmd = 'bd --sandbox list --json'
 
@@ -100,7 +107,7 @@ export async function bdList(opts?: {
   }
 
   try {
-    const { stdout } = await execAsync(cmd, { cwd: PLANS_DIR })
+    const { stdout } = await execAsync(cmd, { cwd: planDir })
 
     if (!stdout.trim()) {
       return []
@@ -119,13 +126,13 @@ export async function bdList(opts?: {
 /**
  * Update a bd task
  */
-export async function bdUpdate(id: string, opts: {
+export async function bdUpdate(planId: string, id: string, opts: {
   assignee?: string
   addLabels?: string[]
   removeLabels?: string[]
   title?: string
 }): Promise<void> {
-  await ensureBeadsRepo()
+  const planDir = await ensureBeadsRepo(planId)
 
   let cmd = `bd --sandbox update ${id}`
 
@@ -149,25 +156,25 @@ export async function bdUpdate(id: string, opts: {
     cmd += ` --title "${opts.title.replace(/"/g, '\\"')}"`
   }
 
-  await execAsync(cmd, { cwd: PLANS_DIR })
+  await execAsync(cmd, { cwd: planDir })
 }
 
 /**
  * Close a bd task
  */
-export async function bdClose(id: string): Promise<void> {
-  await ensureBeadsRepo()
-  await execAsync(`bd --sandbox close ${id}`, { cwd: PLANS_DIR })
+export async function bdClose(planId: string, id: string): Promise<void> {
+  const planDir = await ensureBeadsRepo(planId)
+  await execAsync(`bd --sandbox close ${id}`, { cwd: planDir })
 }
 
 /**
  * Get a single task by ID
  */
-export async function bdGet(id: string): Promise<BeadTask | null> {
-  await ensureBeadsRepo()
+export async function bdGet(planId: string, id: string): Promise<BeadTask | null> {
+  const planDir = await ensureBeadsRepo(planId)
 
   try {
-    const { stdout } = await execAsync(`bd --sandbox show ${id} --json`, { cwd: PLANS_DIR })
+    const { stdout } = await execAsync(`bd --sandbox show ${id} --json`, { cwd: planDir })
     return JSON.parse(stdout)
   } catch {
     return null
@@ -175,8 +182,37 @@ export async function bdGet(id: string): Promise<BeadTask | null> {
 }
 
 /**
- * Get the plans directory path
+ * Add a dependency: taskId is blocked by blockedBy
  */
-export function getPlansDir(): string {
-  return PLANS_DIR
+export async function bdAddDependency(planId: string, taskId: string, blockedBy: string): Promise<void> {
+  const planDir = await ensureBeadsRepo(planId)
+  await execAsync(`bd --sandbox dep ${blockedBy} --blocks ${taskId}`, { cwd: planDir })
+}
+
+/**
+ * Get dependents of a task (tasks that depend on this one / are blocked by it)
+ */
+export async function bdGetDependents(planId: string, taskId: string): Promise<string[]> {
+  const planDir = await ensureBeadsRepo(planId)
+
+  try {
+    const { stdout } = await execAsync(`bd --sandbox dep list ${taskId} --direction=up --json`, { cwd: planDir })
+
+    if (!stdout.trim()) {
+      return []
+    }
+
+    // Parse JSON output - expects array of task objects or IDs
+    const result = JSON.parse(stdout)
+    if (Array.isArray(result)) {
+      // If it's an array of objects with id field, extract IDs
+      return result.map((item: { id?: string } | string) =>
+        typeof item === 'string' ? item : item.id || ''
+      ).filter(Boolean)
+    }
+    return []
+  } catch {
+    // If command fails (no dependencies), return empty array
+    return []
+  }
 }

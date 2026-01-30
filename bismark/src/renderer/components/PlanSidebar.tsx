@@ -13,7 +13,7 @@ interface PlanSidebarProps {
   activePlanId: string | null
   onCreatePlan: () => void
   onSelectPlan: (planId: string | null) => void
-  onExecutePlan: (planId: string, leaderAgentId: string) => void
+  onExecutePlan: (planId: string, referenceAgentId: string) => void
   onCancelPlan: (planId: string) => void
 }
 

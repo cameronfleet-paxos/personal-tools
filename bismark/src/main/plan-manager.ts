@@ -5,11 +5,15 @@ import {
   getPlanById,
   loadTaskAssignments,
   saveTaskAssignment,
+  saveWorkspace,
+  deleteWorkspace,
+  getRandomUniqueIcon,
+  getWorkspaces,
 } from './config'
-import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlansDir } from './bd-client'
-import { getWorkspaces } from './config'
-import { injectTextToTerminal, getTerminalForWorkspace } from './terminal'
-import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType } from '../shared/types'
+import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
+import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter } from './terminal'
+import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, setActiveTab, deleteTab, getState } from './state-manager'
+import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 let pollInterval: NodeJS.Timeout | null = null
@@ -96,8 +100,10 @@ export function createPlan(title: string, description: string): Plan {
     status: 'draft',
     createdAt: now,
     updatedAt: now,
-    leaderAgentId: null,
+    referenceAgentId: null,
     beadEpicId: null,
+    orchestratorWorkspaceId: null,
+    orchestratorTabId: null,
   }
 
   savePlan(plan)
@@ -113,10 +119,10 @@ export function getPlans(): Plan[] {
 }
 
 /**
- * Get task assignments
+ * Get task assignments for a specific plan
  */
-export function getTaskAssignments(): TaskAssignment[] {
-  return loadTaskAssignments()
+export function getTaskAssignments(planId: string): TaskAssignment[] {
+  return loadTaskAssignments(planId)
 }
 
 /**
@@ -134,49 +140,132 @@ export function updatePlanStatus(planId: string, status: PlanStatus): Plan | nul
 }
 
 /**
- * Execute a plan by sending it to the leader agent
+ * Execute a plan using a reference agent's working directory
  */
-export async function executePlan(planId: string, leaderAgentId: string): Promise<Plan | null> {
+export async function executePlan(planId: string, referenceAgentId: string): Promise<Plan | null> {
   const plan = getPlanById(planId)
   if (!plan) return null
 
   // Clear any previous activities for this plan
   clearPlanActivities(planId)
 
-  // Get leader agent name for logging
+  // Get reference agent name for logging
   const allAgents = getWorkspaces()
-  const leaderAgent = allAgents.find(a => a.id === leaderAgentId)
-  const leaderName = leaderAgent?.name || leaderAgentId
+  const referenceAgent = allAgents.find(a => a.id === referenceAgentId)
+  const referenceName = referenceAgent?.name || referenceAgentId
+  const referenceWorkspace = allAgents.find(a => a.id === referenceAgentId)
 
-  addPlanActivity(planId, 'info', `Plan execution started with leader: ${leaderName}`)
+  if (!referenceWorkspace) {
+    addPlanActivity(planId, 'error', `Reference agent not found: ${referenceAgentId}`)
+    return null
+  }
 
-  // Ensure beads repo exists
-  await ensureBeadsRepo()
+  addPlanActivity(planId, 'info', `Plan execution started with reference: ${referenceName}`)
 
-  // Update plan with leader and set status to delegating
-  plan.leaderAgentId = leaderAgentId
+  // Ensure beads repo exists for this plan (creates ~/.bismark/plans/{plan_id}/)
+  const planDir = await ensureBeadsRepo(plan.id)
+
+  // Update plan with reference agent and set status to delegating
+  plan.referenceAgentId = referenceAgentId
   plan.status = 'delegating'
   plan.updatedAt = new Date().toISOString()
   savePlan(plan)
   emitPlanUpdate(plan)
 
-  // Build the leader prompt
-  const leaderPrompt = buildLeaderPrompt(plan, allAgents)
+  // Create a dedicated tab for the orchestrator
+  const orchestratorTab = createTab(`Orchestrator: ${plan.title.substring(0, 20)}`)
+  plan.orchestratorTabId = orchestratorTab.id
 
-  // Inject the prompt into the leader's terminal
-  const terminalId = getTerminalForWorkspace(leaderAgentId)
-  console.log(`[PlanManager] Looking for terminal for agent ${leaderAgentId}, found: ${terminalId}`)
-  if (terminalId) {
-    console.log(`[PlanManager] Injecting prompt to terminal ${terminalId}`)
-    // Send /clear first, then prompt after delay to ensure /clear executes
-    injectTextToTerminal(terminalId, '/clear\r')
-    setTimeout(() => {
-      injectTextToTerminal(terminalId, leaderPrompt)
-    }, 500)
-    addPlanActivity(planId, 'success', `Delegation prompt sent to ${leaderName}`)
+  // Create orchestrator workspace (runs in plan directory to work with bd tasks)
+  const orchestratorWorkspace: Workspace = {
+    id: `orchestrator-${planId}`,
+    name: `Orchestrator (${plan.title})`,
+    directory: planDir, // Orchestrator runs in plan directory
+    purpose: 'Plan orchestration - monitors task completion',
+    theme: 'gray',
+    icon: getRandomUniqueIcon(allAgents),
+    isOrchestrator: true, // Mark as orchestrator for filtering in processReadyTask
+  }
+  saveWorkspace(orchestratorWorkspace)
+  plan.orchestratorWorkspaceId = orchestratorWorkspace.id
+  savePlan(plan)
+
+  // Create terminal for orchestrator and add to its dedicated tab
+  console.log(`[PlanManager] mainWindow is: ${mainWindow ? 'defined' : 'NULL'}`)
+  if (mainWindow) {
+    try {
+      // Build the orchestrator prompt and pass it to createTerminal
+      // Claude will automatically process it when it's ready
+      const orchestratorPrompt = buildOrchestratorPrompt(plan)
+      console.log(`[PlanManager] Creating terminal for orchestrator ${orchestratorWorkspace.id}`)
+      const orchestratorTerminalId = createTerminal(orchestratorWorkspace.id, mainWindow, orchestratorPrompt)
+      console.log(`[PlanManager] Created terminal: ${orchestratorTerminalId}`)
+      addActiveWorkspace(orchestratorWorkspace.id)
+      addWorkspaceToTab(orchestratorWorkspace.id, orchestratorTab.id)
+      addPlanActivity(planId, 'info', 'Orchestrator agent started')
+      addPlanActivity(planId, 'success', 'Orchestrator monitoring started')
+
+      // Notify renderer about the new terminal
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('terminal-created', {
+          terminalId: orchestratorTerminalId,
+          workspaceId: orchestratorWorkspace.id,
+        })
+      }
+
+      // Create plan agent workspace (runs in reference agent's directory to analyze codebase)
+      const planAgentWorkspace: Workspace = {
+        id: `plan-agent-${planId}`,
+        name: `Plan Agent (${plan.title})`,
+        directory: referenceWorkspace.directory, // Plan agent runs in codebase directory
+        purpose: 'Initial discovery and task creation',
+        theme: 'blue',
+        icon: getRandomUniqueIcon(allAgents),
+        isPlanAgent: true,
+      }
+      saveWorkspace(planAgentWorkspace)
+      plan.planAgentWorkspaceId = planAgentWorkspace.id
+      savePlan(plan)
+
+      // Create terminal with plan agent prompt
+      const planAgentPrompt = buildPlanAgentPrompt(plan, allAgents)
+      console.log(`[PlanManager] Creating terminal for plan agent ${planAgentWorkspace.id}`)
+      const planAgentTerminalId = createTerminal(planAgentWorkspace.id, mainWindow, planAgentPrompt)
+      console.log(`[PlanManager] Created plan agent terminal: ${planAgentTerminalId}`)
+      addActiveWorkspace(planAgentWorkspace.id)
+      addWorkspaceToTab(planAgentWorkspace.id, orchestratorTab.id)
+      addPlanActivity(planId, 'info', 'Plan agent started')
+
+      // Notify renderer about the plan agent terminal
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('terminal-created', {
+          terminalId: planAgentTerminalId,
+          workspaceId: planAgentWorkspace.id,
+        })
+      }
+
+      // Set up listener for plan agent exit
+      const planAgentEmitter = getTerminalEmitter(planAgentTerminalId)
+      if (planAgentEmitter) {
+        const exitHandler = (data: string) => {
+          // Claude shows "Goodbye!" when /exit is used
+          if (data.includes('Goodbye') || data.includes('Session ended')) {
+            planAgentEmitter.removeListener('data', exitHandler)
+            cleanupPlanAgent(plan)
+          }
+        }
+        planAgentEmitter.on('data', exitHandler)
+      }
+
+      // Emit state update so renderer knows about the new tab
+      emitStateUpdate()
+    } catch (error) {
+      console.error(`[PlanManager] Failed to create orchestrator terminal:`, error)
+      addPlanActivity(planId, 'error', 'Failed to start orchestrator', error instanceof Error ? error.message : 'Unknown error')
+    }
   } else {
-    console.warn(`[PlanManager] No terminal found for leader agent ${leaderAgentId}`)
-    addPlanActivity(planId, 'error', `No terminal found for agent: ${leaderName}`, 'Make sure the agent is running before executing the plan')
+    console.error(`[PlanManager] Cannot create orchestrator terminal - mainWindow is null`)
+    addPlanActivity(planId, 'error', 'Cannot start orchestrator - window not available')
   }
 
   // Start polling for task updates
@@ -193,6 +282,12 @@ export function cancelPlan(planId: string): Plan | null {
   const plan = getPlanById(planId)
   if (!plan) return null
 
+  // Cleanup plan agent (if still running)
+  cleanupPlanAgentSilent(plan)
+
+  // Cleanup orchestrator
+  cleanupOrchestrator(plan)
+
   plan.status = 'failed'
   plan.updatedAt = new Date().toISOString()
   savePlan(plan)
@@ -202,15 +297,51 @@ export function cancelPlan(planId: string): Plan | null {
 }
 
 /**
- * Build the prompt to inject into the leader agent's terminal
- * Returns only instructions with trailing newline (no /clear - handled separately)
+ * Cleanup orchestrator workspace, terminal, and tab for a plan
  */
-function buildLeaderPrompt(plan: Plan, agents: Agent[]): string {
-  const agentList = agents
+function cleanupOrchestrator(plan: Plan): void {
+  // Also cleanup plan agent if it's still running
+  cleanupPlanAgentSilent(plan)
+
+  if (plan.orchestratorWorkspaceId) {
+    // Close terminal
+    const terminalId = getTerminalForWorkspace(plan.orchestratorWorkspaceId)
+    if (terminalId) {
+      closeTerminal(terminalId)
+    }
+
+    // Remove from active workspaces
+    removeActiveWorkspace(plan.orchestratorWorkspaceId)
+
+    // Delete workspace
+    deleteWorkspace(plan.orchestratorWorkspaceId)
+    plan.orchestratorWorkspaceId = null
+  }
+
+  // Delete the dedicated orchestrator tab
+  if (plan.orchestratorTabId) {
+    deleteTab(plan.orchestratorTabId)
+    plan.orchestratorTabId = null
+
+    // Emit state update so renderer knows the tab was removed
+    emitStateUpdate()
+  }
+}
+
+/**
+ * Build the prompt to inject into the reference agent's terminal
+ * Returns only instructions with trailing newline (no /clear - handled separately)
+ * NOTE: This function is currently unused but kept for reference
+ */
+function buildReferencePrompt(plan: Plan, agents: Agent[]): string {
+  // Filter out orchestrator agents from available agents
+  const availableAgents = agents.filter(a => !a.isOrchestrator)
+
+  const agentList = availableAgents
     .map((a) => `- ${a.name} (id: ${a.id}): ${a.purpose || 'General purpose agent'}`)
     .join('\n')
 
-  const plansDir = getPlansDir()
+  const planDir = getPlanDir(plan.id)
 
   const instructions = `[BISMARK PLAN REQUEST]
 Plan ID: ${plan.id}
@@ -221,16 +352,18 @@ Available Agents:
 ${agentList}
 
 Instructions:
-IMPORTANT: All bd commands must run in ${plansDir} directory.
+IMPORTANT: All bd commands must run in ${planDir} directory.
 
-1. Create bd epic: cd ${plansDir} && bd --sandbox create --type epic "${plan.title}"
-2. Create tasks: cd ${plansDir} && bd --sandbox create --parent <epic-id> "task title"
-3. Assign: cd ${plansDir} && bd --sandbox update <task-id> --assignee <agent-name>
-4. Mark ready: cd ${plansDir} && bd --sandbox update <task-id> --add-label bismark-ready
+1. Create bd epic: cd ${planDir} && bd --sandbox create --type epic "${plan.title}"
+2. Create tasks: cd ${planDir} && bd --sandbox create --parent <epic-id> "task title"
+3. Set dependencies: cd ${planDir} && bd --sandbox dep <blocking-task-id> --blocks <blocked-task-id>
+4. Assign: cd ${planDir} && bd --sandbox update <task-id> --assignee <agent-name>
+5. Mark FIRST task ready: cd ${planDir} && bd --sandbox update <first-task-id> --add-label bismark-ready
 
+The orchestrator will automatically mark dependent tasks ready when their blockers complete.
 After marking a task with 'bismark-ready', Bismark will automatically send it to the assigned agent.`
 
-  return `${instructions}\r`
+  return instructions
 }
 
 /**
@@ -265,37 +398,40 @@ async function syncTasksFromBd(): Promise<void> {
   const plans = loadPlans()
   const activePlan = plans.find(p => p.status === 'delegating' || p.status === 'in_progress')
 
+  // If no active plan, nothing to sync
+  if (!activePlan) {
+    return
+  }
+
   try {
-    // Get tasks marked as ready for Bismark
-    const readyTasks = await bdList({ labels: ['bismark-ready'], status: 'open' })
+    // Get tasks marked as ready for Bismark (from the active plan's directory)
+    const readyTasks = await bdList(activePlan.id, { labels: ['bismark-ready'], status: 'open' })
 
     for (const task of readyTasks) {
-      await processReadyTask(task, activePlan?.id)
+      await processReadyTask(activePlan.id, task)
     }
 
     // Check for completed tasks and update assignments
-    const allAssignments = loadTaskAssignments()
+    const allAssignments = loadTaskAssignments(activePlan.id)
     for (const assignment of allAssignments) {
       if (assignment.status === 'sent' || assignment.status === 'in_progress') {
         // Check if task is now closed in bd
-        const tasks = await bdList({ status: 'closed' })
+        const tasks = await bdList(activePlan.id, { status: 'closed' })
         const closedTask = tasks.find((t) => t.id === assignment.beadId)
         if (closedTask) {
           assignment.status = 'completed'
           assignment.completedAt = new Date().toISOString()
-          saveTaskAssignment(assignment)
+          saveTaskAssignment(activePlan.id, assignment)
           emitTaskAssignmentUpdate(assignment)
 
           // Log completion
-          if (activePlan) {
-            const agent = getWorkspaces().find(a => a.id === assignment.agentId)
-            addPlanActivity(
-              activePlan.id,
-              'success',
-              `Task ${closedTask.id} completed`,
-              agent ? `Completed by ${agent.name}` : undefined
-            )
-          }
+          const agent = getWorkspaces().find(a => a.id === assignment.agentId)
+          addPlanActivity(
+            activePlan.id,
+            'success',
+            `Task ${closedTask.id} completed`,
+            agent ? `Completed by ${agent.name}` : undefined
+          )
         }
       }
     }
@@ -304,34 +440,30 @@ async function syncTasksFromBd(): Promise<void> {
     await updatePlanStatuses()
   } catch (error) {
     console.error('Error syncing tasks from bd:', error)
-    if (activePlan) {
-      addPlanActivity(
-        activePlan.id,
-        'error',
-        'Failed to sync tasks',
-        error instanceof Error ? error.message : 'bd command failed'
-      )
-    }
+    addPlanActivity(
+      activePlan.id,
+      'error',
+      'Failed to sync tasks',
+      error instanceof Error ? error.message : 'bd command failed'
+    )
   }
 }
 
 /**
  * Process a task that's ready to be sent to an agent
  */
-async function processReadyTask(task: BeadTask, planId?: string): Promise<void> {
+async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
   if (!task.assignee) {
     console.warn(`Task ${task.id} is ready but has no assignee`)
-    if (planId) {
-      addPlanActivity(planId, 'warning', `Task ${task.id} has no assignee`, 'Task is marked ready but no agent is assigned')
-    }
+    addPlanActivity(planId, 'warning', `Task ${task.id} has no assignee`, 'Task is marked ready but no agent is assigned')
     return
   }
 
   // Check if we already have an assignment for this task
-  const existingAssignments = loadTaskAssignments()
+  const existingAssignments = loadTaskAssignments(planId)
   const existing = existingAssignments.find((a) => a.beadId === task.id)
-  if (existing && existing.status !== 'pending') {
-    return // Already processed
+  if (existing) {
+    return // Already processing or processed
   }
 
   // Find the agent by name
@@ -342,67 +474,203 @@ async function processReadyTask(task: BeadTask, planId?: string): Promise<void> 
 
   if (!agent) {
     console.warn(`Task ${task.id} assigned to unknown agent: ${task.assignee}`)
-    if (planId) {
-      addPlanActivity(planId, 'warning', `Unknown agent: ${task.assignee}`, `Task ${task.id} cannot be dispatched`)
-    }
+    addPlanActivity(planId, 'warning', `Unknown agent: ${task.assignee}`, `Task ${task.id} cannot be dispatched`)
     return
   }
 
   // Log task discovery
-  if (planId) {
-    addPlanActivity(planId, 'success', `Found task: ${task.id} -> ${agent.name}`, task.title)
-  }
+  addPlanActivity(planId, 'success', `Found task: ${task.id} -> ${agent.name}`, task.title)
 
-  // Create or update assignment
+  // Create assignment immediately to prevent duplicate dispatches during async wait
   const assignment: TaskAssignment = {
     beadId: task.id,
     agentId: agent.id,
     status: 'pending',
     assignedAt: new Date().toISOString(),
   }
+  saveTaskAssignment(planId, assignment)
+  emitTaskAssignmentUpdate(assignment)
 
   // Try to send to agent terminal
   const terminalId = getTerminalForWorkspace(agent.id)
   if (terminalId) {
-    const taskPrompt = buildTaskPrompt(task)
-    // Send /clear first, then prompt after delay to ensure /clear executes
-    injectTextToTerminal(terminalId, '/clear\r')
-    setTimeout(() => {
-      injectTextToTerminal(terminalId, taskPrompt)
-    }, 500)
+    const taskPrompt = buildTaskPrompt(planId, task)
+    // Send /clear first, wait for it to complete (indicated by "(no content)" output), then send prompt
+    // Use 120s timeout since an existing prompt may need to finish first
+    await injectTextToTerminal(terminalId, '/clear\r')
+    await waitForTerminalOutput(terminalId, '(no content)', 120000)
+    await injectPromptToTerminal(terminalId, taskPrompt)
     assignment.status = 'sent'
+    saveTaskAssignment(planId, assignment)
+    emitTaskAssignmentUpdate(assignment)
 
     // Remove the bismark-ready label since we've sent it
-    await bdUpdate(task.id, { removeLabels: ['bismark-ready'], addLabels: ['bismark-sent'] })
+    await bdUpdate(planId, task.id, { removeLabels: ['bismark-ready'], addLabels: ['bismark-sent'] })
 
-    if (planId) {
-      addPlanActivity(planId, 'success', `Task ${task.id} sent to ${agent.name}`)
-    }
+    addPlanActivity(planId, 'success', `Task ${task.id} sent to ${agent.name}`)
   } else {
-    if (planId) {
-      addPlanActivity(planId, 'warning', `No terminal for ${agent.name}`, `Task ${task.id} queued until agent starts`)
-    }
+    addPlanActivity(planId, 'warning', `No terminal for ${agent.name}`, `Task ${task.id} queued until agent starts`)
   }
-
-  saveTaskAssignment(assignment)
-  emitTaskAssignmentUpdate(assignment)
 }
 
 /**
  * Build the prompt to inject into a worker agent's terminal for a task
  * Returns only instructions with trailing newline (no /clear - handled separately)
  */
-function buildTaskPrompt(task: BeadTask): string {
-  const plansDir = getPlansDir()
+function buildTaskPrompt(planId: string, task: BeadTask): string {
+  const planDir = getPlanDir(planId)
 
   const instructions = `[BISMARK TASK ASSIGNMENT]
 Task ID: ${task.id}
 Title: ${task.title}
 
-Please complete this task. When finished, close it with:
-cd ${plansDir} && bd --sandbox close ${task.id}`
+=== COMPLETION REQUIREMENTS ===
+1. Complete the work described in the task
+2. Create a PR: gh pr create
+3. Close task with PR URL: cd ${planDir} && bd --sandbox close ${task.id} --message "PR: <url>"
 
-  return `${instructions}\r`
+DO NOT close the task without creating a PR first.`
+
+  return instructions
+}
+
+/**
+ * Build the prompt to inject into the orchestrator agent's terminal
+ * Returns only instructions with trailing newline (no /clear - handled separately)
+ * Note: Orchestrator runs in the plan directory, so no 'cd' needed for bd commands
+ */
+function buildOrchestratorPrompt(plan: Plan): string {
+  const instructions = `[BISMARK ORCHESTRATOR]
+Plan ID: ${plan.id}
+Title: ${plan.title}
+
+You are the orchestrator. Your ONLY job is to monitor task completion and unblock dependents.
+
+=== RULES ===
+1. DO NOT pick up or work on tasks yourself
+2. ONLY mark tasks as ready when their dependencies complete
+
+=== WORKFLOW (every 30 seconds) ===
+1. Check for closed tasks:
+   bd --sandbox list --closed --json
+
+2. For each newly closed task, find dependents:
+   bd --sandbox dep list <task-id> --direction=up
+
+3. Check if dependent's blockers are all closed, then mark ready:
+   bd --sandbox update <dependent-id> --add-label bismark-ready
+
+Begin monitoring now.`
+
+  return instructions
+}
+
+/**
+ * Build the prompt for the plan agent that creates tasks
+ * Note: Plan agent runs in the reference agent's codebase directory but
+ * bd commands need to be run in the plan-specific directory
+ */
+function buildPlanAgentPrompt(plan: Plan, agents: Agent[]): string {
+  const planDir = getPlanDir(plan.id)
+  // Filter out orchestrator and plan agents from available agents
+  const availableAgents = agents.filter(a => !a.isOrchestrator && !a.isPlanAgent)
+  const agentList = availableAgents
+    .map(a => `- ${a.name}: ${a.purpose || 'General purpose'}`)
+    .join('\n')
+
+  return `[BISMARK PLAN AGENT]
+Plan ID: ${plan.id}
+Title: ${plan.title}
+
+${plan.description}
+
+=== YOUR TASK ===
+You are the Plan Agent. Your job is to:
+1. Understand the problem/feature described above
+2. Break it down into discrete tasks
+3. Create those tasks in bd with proper dependencies
+4. Assign tasks to appropriate agents
+5. Mark the first task(s) as ready
+6. EXIT when done (type /exit)
+
+=== AVAILABLE AGENTS ===
+${agentList}
+
+=== COMMANDS ===
+IMPORTANT: All bd commands must run in the plan directory: ${planDir}
+
+Create an epic:
+  cd ${planDir} && bd --sandbox create --type epic "${plan.title}"
+
+Create a task under the epic:
+  cd ${planDir} && bd --sandbox create --parent <epic-id> "<task title>"
+
+Assign a task:
+  cd ${planDir} && bd --sandbox update <task-id> --assignee "<agent-name>"
+
+Add dependency (task B depends on task A completing first):
+  cd ${planDir} && bd --sandbox dep <task-A-id> --blocks <task-B-id>
+
+Mark task ready for pickup:
+  cd ${planDir} && bd --sandbox update <task-id> --add-label bismark-ready
+
+=== WORKFLOW ===
+1. Analyze the problem
+2. Create an epic for the plan
+3. Create tasks with clear descriptions
+4. Set up dependencies between tasks
+5. Assign each task to an appropriate agent
+6. Mark the first task(s) (those with no dependencies) as ready
+7. Type /exit to complete your job
+
+Begin planning now.`
+}
+
+/**
+ * Cleanup plan agent workspace, terminal for a plan
+ */
+function cleanupPlanAgent(plan: Plan): void {
+  if (!plan.planAgentWorkspaceId) return
+
+  // Close terminal
+  const terminalId = getTerminalForWorkspace(plan.planAgentWorkspaceId)
+  if (terminalId) {
+    closeTerminal(terminalId)
+  }
+
+  // Remove from active workspaces
+  removeActiveWorkspace(plan.planAgentWorkspaceId)
+
+  // Delete workspace config
+  deleteWorkspace(plan.planAgentWorkspaceId)
+  plan.planAgentWorkspaceId = null
+  savePlan(plan)
+
+  addPlanActivity(plan.id, 'success', 'Plan agent completed task creation')
+  emitStateUpdate()
+}
+
+/**
+ * Cleanup plan agent without logging success (used for cancellation)
+ */
+function cleanupPlanAgentSilent(plan: Plan): void {
+  if (!plan.planAgentWorkspaceId) return
+
+  // Close terminal
+  const terminalId = getTerminalForWorkspace(plan.planAgentWorkspaceId)
+  if (terminalId) {
+    closeTerminal(terminalId)
+  }
+
+  // Remove from active workspaces
+  removeActiveWorkspace(plan.planAgentWorkspaceId)
+
+  // Delete workspace config
+  deleteWorkspace(plan.planAgentWorkspaceId)
+  plan.planAgentWorkspaceId = null
+  savePlan(plan)
+
+  emitStateUpdate()
 }
 
 /**
@@ -414,12 +682,14 @@ async function updatePlanStatuses(): Promise<void> {
   for (const plan of plans) {
     if (plan.status === 'delegating' || plan.status === 'in_progress') {
       if (plan.beadEpicId) {
-        // Check if all child tasks are complete
-        const childTasks = await bdList({ parent: plan.beadEpicId })
+        // Check if all child tasks are complete (using plan-specific directory)
+        const childTasks = await bdList(plan.id, { parent: plan.beadEpicId })
         const allClosed = childTasks.length > 0 && childTasks.every((t) => t.status === 'closed')
         const hasOpenTasks = childTasks.some((t) => t.status === 'open')
 
         if (allClosed) {
+          // Cleanup orchestrator on plan completion
+          cleanupOrchestrator(plan)
           plan.status = 'completed'
           plan.updatedAt = new Date().toISOString()
           savePlan(plan)
@@ -461,5 +731,15 @@ function emitTaskAssignmentUpdate(assignment: TaskAssignment): void {
 function emitPlanActivity(activity: PlanActivity): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('plan-activity', activity)
+  }
+}
+
+/**
+ * Emit state update event to renderer (for tab changes)
+ */
+function emitStateUpdate(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const state = getState()
+    mainWindow.webContents.send('state-update', state)
   }
 }

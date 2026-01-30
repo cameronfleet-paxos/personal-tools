@@ -10,7 +10,7 @@ interface PlanCardProps {
   taskAssignments: TaskAssignment[]
   activities: PlanActivity[]
   isActive: boolean
-  onExecute: (leaderAgentId: string) => void
+  onExecute: (referenceAgentId: string) => void
   onCancel: () => void
   onClick: () => void
 }
@@ -75,7 +75,7 @@ export function PlanCard({
   onClick,
 }: PlanCardProps) {
   const [expanded, setExpanded] = useState(false)
-  const [selectedLeader, setSelectedLeader] = useState<string>('')
+  const [selectedReference, setSelectedReference] = useState<string>('')
   const [activityLogExpanded, setActivityLogExpanded] = useState(true)
   const activityLogRef = useRef<HTMLDivElement>(null)
 
@@ -93,7 +93,7 @@ export function PlanCard({
   })
 
   const getAgentById = (id: string) => agents.find((a) => a.id === id)
-  const leaderAgent = plan.leaderAgentId ? getAgentById(plan.leaderAgentId) : null
+  const referenceAgent = plan.referenceAgentId ? getAgentById(plan.referenceAgentId) : null
 
   return (
     <div
@@ -119,9 +119,9 @@ export function PlanCard({
           </button>
           <div className="min-w-0">
             <h4 className="font-medium text-sm truncate">{plan.title}</h4>
-            {leaderAgent && (
+            {referenceAgent && (
               <p className="text-xs text-muted-foreground">
-                Leader: {leaderAgent.name}
+                Reference: {referenceAgent.name}
               </p>
             )}
           </div>
@@ -143,12 +143,12 @@ export function PlanCard({
           {plan.status === 'draft' && (
             <div className="flex items-center gap-2">
               <select
-                value={selectedLeader}
-                onChange={(e) => setSelectedLeader(e.target.value)}
+                value={selectedReference}
+                onChange={(e) => setSelectedReference(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
                 className="flex-1 text-xs border rounded px-2 py-1 bg-background"
               >
-                <option value="">Select leader agent...</option>
+                <option value="">Select reference agent...</option>
                 {agents.map((agent) => (
                   <option key={agent.id} value={agent.id}>
                     {agent.name}
@@ -157,11 +157,11 @@ export function PlanCard({
               </select>
               <Button
                 size="sm"
-                disabled={!selectedLeader}
+                disabled={!selectedReference}
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (selectedLeader) {
-                    onExecute(selectedLeader)
+                  if (selectedReference) {
+                    onExecute(selectedReference)
                   }
                 }}
               >

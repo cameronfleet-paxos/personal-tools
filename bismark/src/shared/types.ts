@@ -9,6 +9,8 @@ export interface Agent {
   theme: ThemeName
   icon: AgentIconName
   sessionId?: string // Claude session ID for resuming sessions across app restarts
+  isOrchestrator?: boolean // Marks orchestrator workspaces (hidden from UI)
+  isPlanAgent?: boolean // Marks plan agent workspaces (temporary, for task creation)
 }
 
 // Alias for backwards compatibility
@@ -85,8 +87,11 @@ export interface Plan {
   status: PlanStatus
   createdAt: string
   updatedAt: string
-  leaderAgentId: string | null
+  referenceAgentId: string | null
   beadEpicId: string | null
+  orchestratorWorkspaceId: string | null // Tracks orchestrator workspace
+  orchestratorTabId: string | null // Tracks orchestrator's dedicated tab
+  planAgentWorkspaceId?: string | null // Tracks plan agent workspace (temporary)
 }
 
 // Task assignment status

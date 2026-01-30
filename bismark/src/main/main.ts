@@ -243,16 +243,16 @@ function registerIpcHandlers() {
     return getPlans()
   })
 
-  ipcMain.handle('execute-plan', async (_event, planId: string, leaderAgentId: string) => {
-    return executePlan(planId, leaderAgentId)
+  ipcMain.handle('execute-plan', async (_event, planId: string, referenceAgentId: string) => {
+    return executePlan(planId, referenceAgentId)
   })
 
   ipcMain.handle('cancel-plan', (_event, planId: string) => {
     return cancelPlan(planId)
   })
 
-  ipcMain.handle('get-task-assignments', () => {
-    return getTaskAssignments()
+  ipcMain.handle('get-task-assignments', (_event, planId: string) => {
+    return getTaskAssignments(planId)
   })
 
   ipcMain.handle('get-plan-activities', (_event, planId: string) => {

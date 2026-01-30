@@ -51,9 +51,9 @@ export interface ElectronAPI {
   // Plan management (Team Mode)
   createPlan: (title: string, description: string) => Promise<Plan>
   getPlans: () => Promise<Plan[]>
-  executePlan: (planId: string, leaderAgentId: string) => Promise<Plan | null>
+  executePlan: (planId: string, referenceAgentId: string) => Promise<Plan | null>
   cancelPlan: (planId: string) => Promise<Plan | null>
-  getTaskAssignments: () => Promise<TaskAssignment[]>
+  getTaskAssignments: (planId: string) => Promise<TaskAssignment[]>
   getPlanActivities: (planId: string) => Promise<PlanActivity[]>
   setPlanSidebarOpen: (open: boolean) => Promise<void>
   setActivePlanId: (planId: string | null) => Promise<void>
@@ -74,6 +74,8 @@ export interface ElectronAPI {
   onPlanUpdate: (callback: (plan: Plan) => void) => void
   onTaskAssignmentUpdate: (callback: (assignment: TaskAssignment) => void) => void
   onPlanActivity: (callback: (activity: PlanActivity) => void) => void
+  onStateUpdate: (callback: (state: AppState) => void) => void
+  onTerminalCreated: (callback: (data: { terminalId: string; workspaceId: string }) => void) => void
 
   // Tray updates
   updateTray: (count: number) => void

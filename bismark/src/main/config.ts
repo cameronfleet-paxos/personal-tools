@@ -23,8 +23,8 @@ export function getPlansPath(): string {
   return path.join(getConfigDir(), 'plans.json')
 }
 
-export function getTaskAssignmentsPath(): string {
-  return path.join(getConfigDir(), 'task-assignments.json')
+export function getTaskAssignmentsPath(planId: string): string {
+  return path.join(getConfigDir(), 'plans', planId, 'task-assignments.json')
 }
 
 export function ensureConfigDirExists(): void {
@@ -207,23 +207,29 @@ export function getPlanById(id: string): Plan | undefined {
   return plans.find((p) => p.id === id)
 }
 
-// Task assignment operations
-export function loadTaskAssignments(): TaskAssignment[] {
-  const path = getTaskAssignmentsPath()
+// Task assignment operations (per-plan)
+export function loadTaskAssignments(planId: string): TaskAssignment[] {
+  const assignmentsPath = getTaskAssignmentsPath(planId)
   try {
-    const content = fs.readFileSync(path, 'utf-8')
+    const content = fs.readFileSync(assignmentsPath, 'utf-8')
     return JSON.parse(content) as TaskAssignment[]
   } catch {
     return []
   }
 }
 
-export function saveTaskAssignments(assignments: TaskAssignment[]): void {
-  writeConfigAtomic(getTaskAssignmentsPath(), assignments)
+export function saveTaskAssignments(planId: string, assignments: TaskAssignment[]): void {
+  const assignmentsPath = getTaskAssignmentsPath(planId)
+  // Ensure the plan directory exists
+  const planDir = path.dirname(assignmentsPath)
+  if (!fs.existsSync(planDir)) {
+    fs.mkdirSync(planDir, { recursive: true })
+  }
+  writeConfigAtomic(assignmentsPath, assignments)
 }
 
-export function saveTaskAssignment(assignment: TaskAssignment): TaskAssignment {
-  const assignments = loadTaskAssignments()
+export function saveTaskAssignment(planId: string, assignment: TaskAssignment): TaskAssignment {
+  const assignments = loadTaskAssignments(planId)
   const existingIndex = assignments.findIndex((a) => a.beadId === assignment.beadId)
 
   if (existingIndex >= 0) {
@@ -232,11 +238,11 @@ export function saveTaskAssignment(assignment: TaskAssignment): TaskAssignment {
     assignments.push(assignment)
   }
 
-  saveTaskAssignments(assignments)
+  saveTaskAssignments(planId, assignments)
   return assignment
 }
 
-export function deleteTaskAssignment(beadId: string): void {
-  const assignments = loadTaskAssignments()
-  saveTaskAssignments(assignments.filter((a) => a.beadId !== beadId))
+export function deleteTaskAssignment(planId: string, beadId: string): void {
+  const assignments = loadTaskAssignments(planId)
+  saveTaskAssignments(planId, assignments.filter((a) => a.beadId !== beadId))
 }
