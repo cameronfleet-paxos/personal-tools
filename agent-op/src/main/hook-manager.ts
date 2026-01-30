@@ -50,8 +50,8 @@ if [ -z "$WORKSPACE_ID" ]; then
 fi
 
 if [ -S "$SOCKET_PATH" ]; then
-  # Use printf with explicit newline and nc -q0 to quit after sending
-  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U -q0 "$SOCKET_PATH" 2>/dev/null
+  # Send JSON message with newline to signal EOF (macOS nc doesn't support -q flag)
+  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
   echo "$(date): Sent to socket $SOCKET_PATH (exit code: $?)" >> "$DEBUG_LOG"
 else
   echo "$(date): Socket not found at $SOCKET_PATH" >> "$DEBUG_LOG"

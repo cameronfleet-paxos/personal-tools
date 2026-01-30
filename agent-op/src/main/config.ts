@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
-import type { Workspace, AppConfig, AppState } from '../shared/types'
+import type { Workspace, AppConfig, AppState, AppPreferences } from '../shared/types'
 
 const CONFIG_DIR_NAME = '.agent-operator'
 
@@ -48,8 +48,15 @@ export function ensureConfigDirExists(): void {
       activeWorkspaceIds: [],
       tabs: [],
       activeTabId: null,
+      preferences: getDefaultPreferences(),
     }
     writeConfigAtomic(statePath, defaultState)
+  }
+}
+
+export function getDefaultPreferences(): AppPreferences {
+  return {
+    attentionMode: 'focus',
   }
 }
 
@@ -111,9 +118,14 @@ export function loadState(): AppState {
   const statePath = getStatePath()
   try {
     const content = fs.readFileSync(statePath, 'utf-8')
-    return JSON.parse(content) as AppState
+    const state = JSON.parse(content) as AppState
+    // Ensure preferences exist (migration for existing state files)
+    if (!state.preferences) {
+      state.preferences = getDefaultPreferences()
+    }
+    return state
   } catch {
-    return { activeWorkspaceIds: [], tabs: [], activeTabId: null }
+    return { activeWorkspaceIds: [], tabs: [], activeTabId: null, preferences: getDefaultPreferences() }
   }
 }
 

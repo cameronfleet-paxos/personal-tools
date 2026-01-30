@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -51,6 +51,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-waiting-queue'),
   acknowledgeWaiting: (workspaceId: string): Promise<void> =>
     ipcRenderer.invoke('acknowledge-waiting', workspaceId),
+
+  // Preferences management
+  getPreferences: (): Promise<AppPreferences> =>
+    ipcRenderer.invoke('get-preferences'),
+  setPreferences: (preferences: Partial<AppPreferences>): Promise<AppPreferences> =>
+    ipcRenderer.invoke('set-preferences', preferences),
 
   // Terminal events - use removeAllListeners before adding to prevent duplicates
   onTerminalData: (

@@ -17,12 +17,21 @@ export interface AgentTab {
   workspaceIds: string[] // Max 4, order = grid position (TL, TR, BL, BR)
 }
 
+// Attention mode determines how waiting agents are displayed
+export type AttentionMode = 'focus' | 'expand'
+
+// App preferences (stored in ~/.agent-operator/state.json)
+export interface AppPreferences {
+  attentionMode: AttentionMode
+}
+
 // App state (stored in ~/.agent-operator/state.json)
 export interface AppState {
   activeWorkspaceIds: string[]
   tabs: AgentTab[]
   activeTabId: string | null
   focusedWorkspaceId?: string
+  preferences: AppPreferences
 }
 
 // Theme presets

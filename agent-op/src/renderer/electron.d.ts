@@ -1,4 +1,4 @@
-import type { Workspace, AppState, AgentTab } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences } from '../shared/types'
 
 export interface ElectronAPI {
   // Workspace management
@@ -35,6 +35,10 @@ export interface ElectronAPI {
   // Waiting queue management
   getWaitingQueue: () => Promise<string[]>
   acknowledgeWaiting: (workspaceId: string) => Promise<void>
+
+  // Preferences management
+  getPreferences: () => Promise<AppPreferences>
+  setPreferences: (preferences: Partial<AppPreferences>) => Promise<AppPreferences>
 
   // Terminal events
   onTerminalData: (

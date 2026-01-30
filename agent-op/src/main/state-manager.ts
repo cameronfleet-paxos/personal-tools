@@ -1,5 +1,5 @@
-import { loadState, saveState } from './config'
-import type { AppState, AgentTab } from '../shared/types'
+import { loadState, saveState, getDefaultPreferences } from './config'
+import type { AppState, AgentTab, AppPreferences } from '../shared/types'
 
 const MAX_AGENTS_PER_TAB = 4
 
@@ -7,6 +7,7 @@ let currentState: AppState = {
   activeWorkspaceIds: [],
   tabs: [],
   activeTabId: null,
+  preferences: getDefaultPreferences(),
 }
 
 function generateTabId(): string {
@@ -232,4 +233,15 @@ export function getTabs(): AgentTab[] {
 
 export function getActiveTabId(): string | null {
   return currentState.activeTabId
+}
+
+// Preferences management
+export function getPreferences(): AppPreferences {
+  return { ...currentState.preferences }
+}
+
+export function setPreferences(preferences: Partial<AppPreferences>): AppPreferences {
+  currentState.preferences = { ...currentState.preferences, ...preferences }
+  persistState()
+  return currentState.preferences
 }

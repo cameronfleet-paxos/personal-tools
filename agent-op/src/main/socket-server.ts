@@ -40,10 +40,14 @@ function notifyWaitingCountChanged(): void {
 
 function handleStopEvent(event: StopEvent): void {
   const { workspaceId } = event
+  console.log(`[StopEvent] Handling stop for workspace ${workspaceId}`)
 
   // Add to waiting queue if not already there
   if (!waitingQueue.includes(workspaceId)) {
     waitingQueue.push(workspaceId)
+    console.log(`[StopEvent] Added to queue, queue now: ${JSON.stringify(waitingQueue)}`)
+  } else {
+    console.log(`[StopEvent] Already in queue`)
   }
 
   // Send notification
@@ -65,8 +69,11 @@ function handleStopEvent(event: StopEvent): void {
 
   // Notify renderer
   if (mainWindow && !mainWindow.isDestroyed()) {
+    console.log(`[StopEvent] Sending agent-waiting event to renderer`)
     mainWindow.webContents.send('agent-waiting', workspaceId)
     mainWindow.webContents.send('focus-workspace', workspaceId)
+  } else {
+    console.log(`[StopEvent] WARNING: mainWindow not available`)
   }
 
   notifyWaitingCountChanged()

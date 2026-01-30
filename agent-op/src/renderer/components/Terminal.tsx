@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -8,6 +8,8 @@ import { themes } from '@/shared/constants'
 interface TerminalProps {
   terminalId: string
   theme: ThemeName
+  isBooting: boolean
+  isVisible?: boolean
   registerWriter: (terminalId: string, writer: (data: string) => void) => void
   unregisterWriter: (terminalId: string) => void
 }
@@ -15,6 +17,8 @@ interface TerminalProps {
 export function Terminal({
   terminalId,
   theme,
+  isBooting,
+  isVisible = true,
   registerWriter,
   unregisterWriter,
 }: TerminalProps) {
@@ -22,7 +26,6 @@ export function Terminal({
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const initializedRef = useRef(false)
-  const [isBooting, setIsBooting] = useState(true)
 
   useEffect(() => {
     if (!terminalRef.current || initializedRef.current) return
@@ -88,19 +91,10 @@ export function Terminal({
       unregisterWriter(terminalId)
       initializedRef.current = false
     }
+    // Note: isVisible intentionally not in deps - we only check it at init time
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [terminalId])
 
-  // Hide loading overlay after 10 seconds
-  useEffect(() => {
-    const bootTimer = setTimeout(() => {
-      setIsBooting(false)
-    }, 10000)
-
-    return () => {
-      clearTimeout(bootTimer)
-    }
-  }, [])
 
   // Update theme when it changes
   useEffect(() => {
@@ -114,6 +108,22 @@ export function Terminal({
       }
     }
   }, [theme])
+
+  // Re-fit terminal when it becomes visible
+  useEffect(() => {
+    if (isVisible && fitAddonRef.current && xtermRef.current) {
+      // Small delay to ensure DOM has updated
+      const timer = setTimeout(() => {
+        fitAddonRef.current?.fit()
+        const term = xtermRef.current
+        if (term) {
+          const { cols, rows } = term
+          window.electronAPI.resizeTerminal(terminalId, cols, rows)
+        }
+      }, 50)
+      return () => clearTimeout(timer)
+    }
+  }, [isVisible, terminalId])
 
   return (
     <div className="w-full h-full relative" style={{ backgroundColor: themes[theme].bg }}>

@@ -37,8 +37,10 @@ import {
   removeWorkspaceFromTab,
   getOrCreateTabForWorkspace,
   getTabForWorkspace,
+  getPreferences,
+  setPreferences,
 } from './state-manager'
-import type { Workspace } from '../shared/types'
+import type { Workspace, AppPreferences } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -182,6 +184,15 @@ function registerIpcHandlers() {
   // Update tray when waiting count changes
   ipcMain.on('update-tray', (_event, count: number) => {
     updateTray(count)
+  })
+
+  // Preferences management
+  ipcMain.handle('get-preferences', () => {
+    return getPreferences()
+  })
+
+  ipcMain.handle('set-preferences', (_event, preferences: Partial<AppPreferences>) => {
+    return setPreferences(preferences)
   })
 }
 
