@@ -44,7 +44,8 @@ const terminals: Map<string, TerminalProcess> = new Map()
 export function createTerminal(
   workspaceId: string,
   mainWindow: BrowserWindow | null,
-  initialPrompt?: string
+  initialPrompt?: string,
+  claudeFlags?: string
 ): string {
   const workspace = getWorkspaceById(workspaceId)
   if (!workspace) {
@@ -67,14 +68,24 @@ export function createTerminal(
 
   if (sessionId && claudeSessionExists(sessionId)) {
     // Session exists with content - resume it
-    claudeCmd = `claude --resume ${sessionId}`
+    // Put flags BEFORE --resume so prompt isn't confused with flag arguments
+    claudeCmd = `claude`
+    if (claudeFlags) {
+      claudeCmd += ` ${claudeFlags}`
+    }
+    claudeCmd += ` --resume ${sessionId}`
   } else {
     // No session or empty session - generate ID and start new session
     if (!sessionId) {
       sessionId = crypto.randomUUID()
       saveWorkspace({ ...workspace, sessionId })
     }
-    claudeCmd = `claude --session-id ${sessionId}`
+    // Put flags BEFORE --session-id so prompt isn't confused with flag arguments
+    claudeCmd = `claude`
+    if (claudeFlags) {
+      claudeCmd += ` ${claudeFlags}`
+    }
+    claudeCmd += ` --session-id ${sessionId}`
   }
 
   // If an initial prompt is provided, append it to the command
@@ -114,6 +125,18 @@ export function createTerminal(
     emitter.emit('data', data)
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('terminal-data', terminalId, data)
+    }
+  })
+
+  // Detect /clear command and clear session ID so next open starts fresh
+  // Claude outputs "(no content)" after /clear completes
+  ptyProcess.onData((data) => {
+    if (data.includes('(no content)')) {
+      const currentWorkspace = getWorkspaceById(workspaceId)
+      if (currentWorkspace?.sessionId) {
+        saveWorkspace({ ...currentWorkspace, sessionId: undefined })
+        console.log(`[Terminal] Cleared session ID for workspace ${workspaceId} after /clear`)
+      }
     }
   })
 

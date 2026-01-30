@@ -38,6 +38,25 @@ export async function ensureBeadsRepo(planId: string): Promise<string> {
 
     // Initialize beads with bismark prefix
     await execAsync('bd --sandbox init --prefix bismark', { cwd: planDir })
+
+    // Create .claude directory and settings.json to pre-allow bd commands
+    const claudeDir = path.join(planDir, '.claude')
+    if (!fs.existsSync(claudeDir)) {
+      fs.mkdirSync(claudeDir, { recursive: true })
+    }
+
+    const settingsPath = path.join(claudeDir, 'settings.json')
+    if (!fs.existsSync(settingsPath)) {
+      const settings = {
+        permissions: {
+          allow: [
+            'Bash(bd *)',
+            'Bash(bd --sandbox *)'
+          ]
+        }
+      }
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
+    }
   }
   return planDir
 }

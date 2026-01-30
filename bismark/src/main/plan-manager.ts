@@ -12,7 +12,7 @@ import {
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter } from './terminal'
-import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, setActiveTab, deleteTab, getState } from './state-manager'
+import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState } from './state-manager'
 import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -22,6 +22,9 @@ const POLL_INTERVAL_MS = 5000 // Poll bd every 5 seconds
 
 // In-memory activity storage per plan
 const planActivities: Map<string, PlanActivity[]> = new Map()
+
+// In-memory guard to prevent duplicate plan execution (React StrictMode double-invocation)
+const executingPlans: Set<string> = new Set()
 
 /**
  * Generate a unique activity ID
@@ -146,6 +149,17 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
   const plan = getPlanById(planId)
   if (!plan) return null
 
+  // Guard against duplicate execution (can happen due to React StrictMode double-invocation)
+  // Use in-memory set because status check alone isn't fast enough - the second call
+  // arrives before the first call has persisted the status change
+  if (executingPlans.has(planId) || plan.status === 'delegating' || plan.status === 'in_progress') {
+    console.log(`[PlanManager] Plan ${planId} already executing, skipping duplicate call`)
+    return plan
+  }
+
+  // Mark as executing immediately to block any concurrent calls
+  executingPlans.add(planId)
+
   // Clear any previous activities for this plan
   clearPlanActivities(planId)
 
@@ -196,9 +210,11 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
     try {
       // Build the orchestrator prompt and pass it to createTerminal
       // Claude will automatically process it when it's ready
-      const orchestratorPrompt = buildOrchestratorPrompt(plan)
+      // Pass --add-dir flag so orchestrator has permission to access plan directory without prompts
+      const claudeFlags = `--add-dir "${planDir}"`
+      const orchestratorPrompt = buildOrchestratorPrompt(plan, allAgents)
       console.log(`[PlanManager] Creating terminal for orchestrator ${orchestratorWorkspace.id}`)
-      const orchestratorTerminalId = createTerminal(orchestratorWorkspace.id, mainWindow, orchestratorPrompt)
+      const orchestratorTerminalId = createTerminal(orchestratorWorkspace.id, mainWindow, orchestratorPrompt, claudeFlags)
       console.log(`[PlanManager] Created terminal: ${orchestratorTerminalId}`)
       addActiveWorkspace(orchestratorWorkspace.id)
       addWorkspaceToTab(orchestratorWorkspace.id, orchestratorTab.id)
@@ -228,9 +244,10 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
       savePlan(plan)
 
       // Create terminal with plan agent prompt
+      // Pass --add-dir flag so plan agent has permission to access plan directory without prompts
       const planAgentPrompt = buildPlanAgentPrompt(plan, allAgents)
       console.log(`[PlanManager] Creating terminal for plan agent ${planAgentWorkspace.id}`)
-      const planAgentTerminalId = createTerminal(planAgentWorkspace.id, mainWindow, planAgentPrompt)
+      const planAgentTerminalId = createTerminal(planAgentWorkspace.id, mainWindow, planAgentPrompt, claudeFlags)
       console.log(`[PlanManager] Created plan agent terminal: ${planAgentTerminalId}`)
       addActiveWorkspace(planAgentWorkspace.id)
       addWorkspaceToTab(planAgentWorkspace.id, orchestratorTab.id)
@@ -293,6 +310,10 @@ export function cancelPlan(planId: string): Plan | null {
   savePlan(plan)
   emitPlanUpdate(plan)
   addPlanActivity(planId, 'error', 'Plan cancelled', 'Execution was stopped by user')
+
+  // Remove from executing set
+  executingPlans.delete(planId)
+
   return plan
 }
 
@@ -539,28 +560,56 @@ DO NOT close the task without creating a PR first.`
  * Returns only instructions with trailing newline (no /clear - handled separately)
  * Note: Orchestrator runs in the plan directory, so no 'cd' needed for bd commands
  */
-function buildOrchestratorPrompt(plan: Plan): string {
+function buildOrchestratorPrompt(plan: Plan, agents: Agent[]): string {
+  // Filter out orchestrator and plan agents from available agents
+  const availableAgents = agents.filter(a => !a.isOrchestrator && !a.isPlanAgent)
+  const agentList = availableAgents
+    .map(a => `- ${a.name}: ${a.purpose || 'General purpose'}`)
+    .join('\n')
+
   const instructions = `[BISMARK ORCHESTRATOR]
 Plan ID: ${plan.id}
 Title: ${plan.title}
 
-You are the orchestrator. Your ONLY job is to monitor task completion and unblock dependents.
+You are the orchestrator. Your job is to:
+1. Wait for Plan Agent to finish creating tasks
+2. Assign unassigned tasks to appropriate agents
+3. Mark first task(s) as ready
+4. Monitor task completion and unblock dependents
+
+=== AVAILABLE AGENTS ===
+${agentList}
 
 === RULES ===
 1. DO NOT pick up or work on tasks yourself
-2. ONLY mark tasks as ready when their dependencies complete
+2. Assign tasks based on agent purpose/expertise
+3. Mark tasks as ready ONLY when their dependencies are complete
 
-=== WORKFLOW (every 30 seconds) ===
-1. Check for closed tasks:
-   bd --sandbox list --closed --json
+=== COMMANDS ===
+List all tasks:
+  bd --sandbox list --json
 
-2. For each newly closed task, find dependents:
-   bd --sandbox dep list <task-id> --direction=up
+Assign a task:
+  bd --sandbox update <task-id> --assignee "<agent-name>"
 
-3. Check if dependent's blockers are all closed, then mark ready:
-   bd --sandbox update <dependent-id> --add-label bismark-ready
+Mark task ready for pickup:
+  bd --sandbox update <task-id> --add-label bismark-ready
 
-Begin monitoring now.`
+Check task dependencies:
+  bd --sandbox dep list <task-id> --direction=down
+
+=== WORKFLOW ===
+Phase 1 - Initial Setup (after Plan Agent exits):
+1. List all tasks: bd --sandbox list --json
+2. For each unassigned task, assign to an appropriate agent
+3. Mark first task(s) (those with no blockers) as ready
+
+Phase 2 - Monitoring (every 30 seconds):
+1. Check for closed tasks: bd --sandbox list --closed --json
+2. For each newly closed task, find dependents: bd --sandbox dep list <task-id> --direction=up
+3. Check if dependent's blockers are all closed, then mark ready
+
+Begin by waiting for the Plan Agent to create tasks, then start assigning.`
 
   return instructions
 }
@@ -569,14 +618,18 @@ Begin monitoring now.`
  * Build the prompt for the plan agent that creates tasks
  * Note: Plan agent runs in the reference agent's codebase directory but
  * bd commands need to be run in the plan-specific directory
+ *
+ * The Plan Agent is responsible for:
+ * - Analyzing the codebase
+ * - Creating epic + tasks
+ * - Setting up dependencies
+ *
+ * The Orchestrator handles:
+ * - Assigning tasks to agents
+ * - Marking tasks as ready
  */
-function buildPlanAgentPrompt(plan: Plan, agents: Agent[]): string {
+function buildPlanAgentPrompt(plan: Plan, _agents: Agent[]): string {
   const planDir = getPlanDir(plan.id)
-  // Filter out orchestrator and plan agents from available agents
-  const availableAgents = agents.filter(a => !a.isOrchestrator && !a.isPlanAgent)
-  const agentList = availableAgents
-    .map(a => `- ${a.name}: ${a.purpose || 'General purpose'}`)
-    .join('\n')
 
   return `[BISMARK PLAN AGENT]
 Plan ID: ${plan.id}
@@ -589,12 +642,9 @@ You are the Plan Agent. Your job is to:
 1. Understand the problem/feature described above
 2. Break it down into discrete tasks
 3. Create those tasks in bd with proper dependencies
-4. Assign tasks to appropriate agents
-5. Mark the first task(s) as ready
-6. EXIT when done (type /exit)
+4. EXIT when done (type /exit)
 
-=== AVAILABLE AGENTS ===
-${agentList}
+NOTE: The Orchestrator will handle task assignment and marking tasks as ready.
 
 === COMMANDS ===
 IMPORTANT: All bd commands must run in the plan directory: ${planDir}
@@ -605,23 +655,15 @@ Create an epic:
 Create a task under the epic:
   cd ${planDir} && bd --sandbox create --parent <epic-id> "<task title>"
 
-Assign a task:
-  cd ${planDir} && bd --sandbox update <task-id> --assignee "<agent-name>"
-
 Add dependency (task B depends on task A completing first):
   cd ${planDir} && bd --sandbox dep <task-A-id> --blocks <task-B-id>
-
-Mark task ready for pickup:
-  cd ${planDir} && bd --sandbox update <task-id> --add-label bismark-ready
 
 === WORKFLOW ===
 1. Analyze the problem
 2. Create an epic for the plan
 3. Create tasks with clear descriptions
 4. Set up dependencies between tasks
-5. Assign each task to an appropriate agent
-6. Mark the first task(s) (those with no dependencies) as ready
-7. Type /exit to complete your job
+5. Type /exit to complete your job
 
 Begin planning now.`
 }
@@ -640,6 +682,9 @@ function cleanupPlanAgent(plan: Plan): void {
 
   // Remove from active workspaces
   removeActiveWorkspace(plan.planAgentWorkspaceId)
+
+  // Remove from tab
+  removeWorkspaceFromTab(plan.planAgentWorkspaceId)
 
   // Delete workspace config
   deleteWorkspace(plan.planAgentWorkspaceId)
@@ -664,6 +709,9 @@ function cleanupPlanAgentSilent(plan: Plan): void {
 
   // Remove from active workspaces
   removeActiveWorkspace(plan.planAgentWorkspaceId)
+
+  // Remove from tab
+  removeWorkspaceFromTab(plan.planAgentWorkspaceId)
 
   // Delete workspace config
   deleteWorkspace(plan.planAgentWorkspaceId)
@@ -695,6 +743,8 @@ async function updatePlanStatuses(): Promise<void> {
           savePlan(plan)
           emitPlanUpdate(plan)
           addPlanActivity(plan.id, 'success', 'All tasks completed', `Plan "${plan.title}" finished successfully`)
+          // Remove from executing set
+          executingPlans.delete(plan.id)
         } else if (hasOpenTasks && plan.status === 'delegating') {
           plan.status = 'in_progress'
           plan.updatedAt = new Date().toISOString()
