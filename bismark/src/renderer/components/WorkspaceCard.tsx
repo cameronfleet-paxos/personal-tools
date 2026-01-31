@@ -49,10 +49,15 @@ export function AgentCard({
     <div
       className={`
         relative rounded-lg p-4 cursor-pointer transition-all
-        ${isActive ? 'ring-2 ring-primary' : 'hover:border-primary/50'}
+        ${isActive && isFocused ? 'ring-2 ring-primary' : ''}
+        ${isActive && !isFocused ? 'hover:ring-1 hover:ring-primary/50' : ''}
+        ${!isActive ? 'hover:border-primary/50' : ''}
         ${isWaiting ? 'animate-pulse ring-2 ring-yellow-500' : ''}
-        ${isFocused ? 'border-2 border-white' : 'border border-muted-foreground/30'}
+        ${isFocused ? 'border-2' : 'border'}
       `}
+      style={{
+        borderColor: isFocused ? 'white' : 'rgba(255, 255, 255, 0.15)'
+      }}
       onClick={onClick}
     >
       {/* Top: Icon + title */}

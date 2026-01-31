@@ -121,9 +121,10 @@ export async function bdList(planId: string, opts?: {
   if (opts?.status === 'all' || opts?.status === undefined) {
     cmd += ' --all'
   } else if (opts?.status === 'closed') {
-    cmd += ' --closed'
+    cmd += ' --status closed'
+  } else if (opts?.status === 'open') {
+    cmd += ' --status open'
   }
-  // 'open' is the default, no flag needed
 
   if (opts?.labels && opts.labels.length > 0) {
     for (const label of opts.labels) {

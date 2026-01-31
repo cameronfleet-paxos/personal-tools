@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { PlanCard } from '@/renderer/components/PlanCard'
+import { PlanDetailView } from '@/renderer/components/PlanDetailView'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
 
 interface PlanSidebarProps {
@@ -32,7 +34,35 @@ export function PlanSidebar({
   onCancelPlan,
   onCompletePlan,
 }: PlanSidebarProps) {
+  const [detailPlanId, setDetailPlanId] = useState<string | null>(null)
+
   if (!open) return null
+
+  // Find the plan being viewed in detail
+  const detailPlan = detailPlanId ? plans.find((p) => p.id === detailPlanId) : null
+
+  // If viewing a plan detail, show the detail view
+  if (detailPlan) {
+    return (
+      <aside className="w-[360px] border-l flex flex-col bg-background">
+        <PlanDetailView
+          plan={detailPlan}
+          activities={planActivities.get(detailPlan.id) || []}
+          taskAssignments={taskAssignments}
+          agents={agents}
+          onBack={() => setDetailPlanId(null)}
+          onComplete={() => {
+            onCompletePlan(detailPlan.id)
+            setDetailPlanId(null)
+          }}
+          onCancel={async () => {
+            await onCancelPlan(detailPlan.id)
+            setDetailPlanId(null)
+          }}
+        />
+      </aside>
+    )
+  }
 
   const activePlans = plans.filter(
     (p) => p.status === 'delegating' || p.status === 'in_progress' || p.status === 'ready_for_review'
@@ -43,7 +73,7 @@ export function PlanSidebar({
   )
 
   return (
-    <aside className="w-[300px] border-l flex flex-col bg-background">
+    <aside className="w-[360px] border-l flex flex-col bg-background">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b">
         <h2 className="font-medium">Plans</h2>
@@ -86,6 +116,7 @@ export function PlanSidebar({
                     onCancel={() => onCancelPlan(plan.id)}
                     onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
+                    onExpand={() => setDetailPlanId(plan.id)}
                   />
                 ))}
               </div>
@@ -108,6 +139,7 @@ export function PlanSidebar({
                     onCancel={() => onCancelPlan(plan.id)}
                     onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
+                    onExpand={() => setDetailPlanId(plan.id)}
                   />
                 ))}
               </div>
@@ -130,6 +162,7 @@ export function PlanSidebar({
                     onCancel={() => onCancelPlan(plan.id)}
                     onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
+                    onExpand={() => setDetailPlanId(plan.id)}
                   />
                 ))}
               </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch } from 'lucide-react'
+import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, Maximize2 } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -14,6 +14,7 @@ interface PlanCardProps {
   onCancel: () => Promise<void>
   onComplete: () => void
   onClick: () => void
+  onExpand?: () => void
 }
 
 const statusIcons: Record<Plan['status'], React.ReactNode> = {
@@ -78,6 +79,7 @@ export function PlanCard({
   onCancel,
   onComplete,
   onClick,
+  onExpand,
 }: PlanCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [selectedReference, setSelectedReference] = useState<string>('')
@@ -143,6 +145,18 @@ export function PlanCard({
             {statusIcons[plan.status]}
             {statusLabels[plan.status]}
           </span>
+          {onExpand && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onExpand()
+              }}
+              className="p-1 hover:bg-muted rounded"
+              title="View details"
+            >
+              <Maximize2 className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -221,37 +235,39 @@ export function PlanCard({
                   </div>
                 </div>
               )}
-              <Button
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation()
-                  onComplete()
-                }}
-              >
-                <Check className="h-3 w-3 mr-1" />
-                Mark Complete
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={isCancelling}
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleCancel()
-                }}
-              >
-                {isCancelling ? (
-                  <>
-                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <X className="h-3 w-3 mr-1" />
-                    Cancel
-                  </>
-                )}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onComplete()
+                  }}
+                >
+                  <Check className="h-3 w-3 mr-1" />
+                  Mark Complete
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={isCancelling}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleCancel()
+                  }}
+                >
+                  {isCancelling ? (
+                    <>
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <X className="h-3 w-3 mr-1" />
+                      Cancel
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           )}
 
