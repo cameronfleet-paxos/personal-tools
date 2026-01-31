@@ -9,6 +9,7 @@ import {
   getClaudeOAuthToken,
   setClaudeOAuthToken,
   clearClaudeOAuthToken,
+  loadPlans,
 } from './config'
 import { runSetupToken } from './oauth-setup'
 import {
@@ -264,7 +265,12 @@ function registerIpcHandlers() {
     const updated = setPreferences(preferences)
     // Start/stop task polling based on operating mode
     if (preferences.operatingMode === 'team') {
-      startTaskPolling()
+      // Find active plan to resume polling for
+      const plans = loadPlans()
+      const activePlan = plans.find(p => p.status === 'delegating' || p.status === 'in_progress')
+      if (activePlan) {
+        startTaskPolling(activePlan.id)
+      }
     } else if (preferences.operatingMode === 'solo') {
       stopTaskPolling()
     }
@@ -272,8 +278,8 @@ function registerIpcHandlers() {
   })
 
   // Plan management (Team Mode)
-  ipcMain.handle('create-plan', (_event, title: string, description: string, maxParallelAgents?: number) => {
-    return createPlan(title, description, maxParallelAgents)
+  ipcMain.handle('create-plan', (_event, title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: 'feature_branch' | 'raise_prs'; baseBranch?: string }) => {
+    return createPlan(title, description, options)
   })
 
   ipcMain.handle('get-plans', () => {
@@ -371,7 +377,7 @@ function registerIpcHandlers() {
     return getAllRepositories()
   })
 
-  ipcMain.handle('update-repository', async (_event, id: string, updates: Partial<Pick<Repository, 'prFlow' | 'name'>>) => {
+  ipcMain.handle('update-repository', async (_event, id: string, updates: Partial<Pick<Repository, 'name'>>) => {
     return updateRepository(id, updates)
   })
 

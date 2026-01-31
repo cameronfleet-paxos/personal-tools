@@ -21,12 +21,18 @@ import {
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
 import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState } from './state-manager'
-import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus } from '../shared/types'
+import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus, BranchStrategy, PlanCommit, PlanPullRequest } from '../shared/types'
 import {
   createWorktree,
   removeWorktree,
   pruneWorktrees,
   generateUniqueBranchName,
+  pushBranch,
+  getCommitsBetween,
+  fetchAndRebase,
+  getGitHubUrlFromRemote,
+  createBranch,
+  getHeadCommit,
 } from './git-utils'
 import {
   getRepositoryById,
@@ -252,10 +258,22 @@ function generatePlanId(): string {
 /**
  * Create a new plan in draft status
  */
-export function createPlan(title: string, description: string, maxParallelAgents?: number): Plan {
+export function createPlan(
+  title: string,
+  description: string,
+  options?: {
+    maxParallelAgents?: number
+    branchStrategy?: BranchStrategy
+    baseBranch?: string
+  }
+): Plan {
   const now = new Date().toISOString()
+  const planId = generatePlanId()
+  const branchStrategy = options?.branchStrategy ?? 'feature_branch'
+  const baseBranch = options?.baseBranch ?? 'main'
+
   const plan: Plan = {
-    id: generatePlanId(),
+    id: planId,
     title,
     description,
     status: 'draft',
@@ -265,8 +283,18 @@ export function createPlan(title: string, description: string, maxParallelAgents
     beadEpicId: null,
     orchestratorWorkspaceId: null,
     orchestratorTabId: null,
-    maxParallelAgents: maxParallelAgents ?? DEFAULT_MAX_PARALLEL_AGENTS,
+    maxParallelAgents: options?.maxParallelAgents ?? DEFAULT_MAX_PARALLEL_AGENTS,
     worktrees: [],
+    branchStrategy,
+    baseBranch,
+    // Generate feature branch name for feature_branch strategy
+    featureBranch: branchStrategy === 'feature_branch'
+      ? `bismark/${planId.split('-')[1]}/feature`
+      : undefined,
+    gitSummary: {
+      commits: branchStrategy === 'feature_branch' ? [] : undefined,
+      pullRequests: branchStrategy === 'raise_prs' ? [] : undefined,
+    },
   }
 
   savePlan(plan)
@@ -448,8 +476,8 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
     addPlanActivity(planId, 'error', 'Cannot start orchestrator - window not available')
   }
 
-  // Start polling for task updates
-  startTaskPolling()
+  // Start polling for task updates for this plan
+  startTaskPolling(plan.id)
   addPlanActivity(planId, 'info', 'Watching for tasks...')
 
   return plan
@@ -633,17 +661,18 @@ After marking a task with 'bismark-ready', Bismark will automatically send it to
 }
 
 /**
- * Start polling bd for task updates
+ * Start polling bd for task updates for a specific plan
+ * @param planId - The ID of the plan to poll for
  */
-export function startTaskPolling(): void {
+export function startTaskPolling(planId: string): void {
   if (pollInterval) return // Already polling
 
   pollInterval = setInterval(async () => {
-    await syncTasksFromBd()
+    await syncTasksForPlan(planId)
   }, POLL_INTERVAL_MS)
 
   // Do an immediate sync
-  syncTasksFromBd()
+  syncTasksForPlan(planId)
 }
 
 /**
@@ -657,15 +686,17 @@ export function stopTaskPolling(): void {
 }
 
 /**
- * Sync tasks from bd and dispatch to agents
+ * Sync tasks from bd and dispatch to agents for a specific plan
+ * Uses in-memory plan state via getPlanById instead of reading from disk
+ * @param planId - The ID of the plan to sync tasks for
  */
-async function syncTasksFromBd(): Promise<void> {
-  // Get active plan for logging
-  const plans = loadPlans()
-  const activePlan = plans.find(p => p.status === 'delegating' || p.status === 'in_progress')
+async function syncTasksForPlan(planId: string): Promise<void> {
+  // Get the plan from in-memory cache (via getPlanById which loads from disk only if not cached)
+  const activePlan = getPlanById(planId)
 
-  // If no active plan, nothing to sync
-  if (!activePlan) {
+  // If plan no longer exists or is no longer active, stop polling
+  if (!activePlan || (activePlan.status !== 'delegating' && activePlan.status !== 'in_progress')) {
+    stopTaskPolling()
     return
   }
 
@@ -941,14 +972,21 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
  * Returns only instructions with trailing newline (no /clear - handled separately)
  */
 function buildTaskPrompt(planId: string, task: BeadTask, repository?: Repository): string {
+  const plan = getPlanById(planId)
   const planDir = getPlanDir(planId)
+  const baseBranch = plan?.baseBranch || repository?.defaultBranch || 'main'
 
-  const prInstructions = repository?.prFlow?.enabled
-    ? `2. Create a PR: gh pr create --base ${repository.prFlow.baseBranch}
-${repository.prFlow.greenPRCriteria ? `3. Verify PR is green: ${repository.prFlow.greenPRCriteria}` : ''}
+  // Build completion instructions based on branch strategy
+  let completionInstructions: string
+  if (plan?.branchStrategy === 'raise_prs') {
+    completionInstructions = `2. Commit your changes with a clear message
+3. Push your branch and create a PR: gh pr create --base ${baseBranch}
 4. Close task with PR URL: cd ${planDir} && bd --sandbox close ${task.id} --message "PR: <url>"`
-    : `2. Commit your changes
+  } else {
+    // feature_branch strategy - just commit, pushing happens on completion
+    completionInstructions = `2. Commit your changes with a clear message
 3. Close task: cd ${planDir} && bd --sandbox close ${task.id} --message "Completed"`
+  }
 
   const instructions = `[BISMARK TASK ASSIGNMENT]
 Task ID: ${task.id}
@@ -957,11 +995,11 @@ Title: ${task.title}
 === YOUR WORKING DIRECTORY ===
 You are working in a dedicated git worktree for this task.
 Branch: (see git branch)
-Base: ${repository?.prFlow?.baseBranch || repository?.defaultBranch || 'main'}
+Base: ${baseBranch}
 
 === COMPLETION REQUIREMENTS ===
 1. Complete the work described in the task
-${prInstructions}
+${completionInstructions}
 
 When finished, type /exit to signal completion.`
 
@@ -1217,9 +1255,10 @@ async function createTaskAgentWithWorktree(
 
   // Create the worktree
   try {
-    const baseBranch = repository.prFlow?.baseBranch || repository.defaultBranch
+    // Use plan's baseBranch for feature_branch strategy, or calculate for raise_prs
+    const baseBranch = getBaseBranchForTask(plan, task, repository)
     await createWorktree(repository.rootPath, worktreePath, branchName, baseBranch)
-    addPlanActivity(planId, 'info', `Created worktree: ${worktreeName}`, `Branch: ${branchName}`)
+    addPlanActivity(planId, 'info', `Created worktree: ${worktreeName}`, `Branch: ${branchName}, Base: ${baseBranch}`)
   } catch (error) {
     addPlanActivity(
       planId,
@@ -1281,7 +1320,7 @@ async function startHeadlessTaskAgent(
   repository: Repository
 ): Promise<void> {
   const planDir = getPlanDir(planId)
-  const taskPrompt = buildTaskPromptForHeadless(planId, task, repository)
+  const taskPrompt = buildTaskPromptForHeadless(planId, task, repository, worktree.path)
 
   // Create headless agent info for tracking
   const agentInfo: HeadlessAgentInfo = {
@@ -1400,16 +1439,23 @@ async function stopAllHeadlessAgents(planId: string): Promise<void> {
 /**
  * Build task prompt for headless mode (includes container-specific instructions)
  */
-function buildTaskPromptForHeadless(planId: string, task: BeadTask, repository?: Repository): string {
-  // The bd CLI and gh commands go through the proxy in container mode
-  const prInstructions = repository?.prFlow?.enabled
-    ? `2. Create a PR: gh pr create --base ${repository.prFlow.baseBranch}
-${repository.prFlow.greenPRCriteria ? `3. Verify PR is green: ${repository.prFlow.greenPRCriteria}` : ''}
+function buildTaskPromptForHeadless(planId: string, task: BeadTask, repository?: Repository, _hostWorktreePath?: string): string {
+  const plan = getPlanById(planId)
+  const baseBranch = plan?.baseBranch || repository?.defaultBranch || 'main'
+
+  // Build completion instructions based on branch strategy
+  let completionInstructions: string
+  if (plan?.branchStrategy === 'raise_prs') {
+    completionInstructions = `2. Commit your changes with a clear message
+3. Push your branch and create a PR: gh pr create --base ${baseBranch}
 4. Close task with PR URL:
    bd close ${task.id} --message "PR: <url>"`
-    : `2. Commit your changes with a clear message
+  } else {
+    // feature_branch strategy - just commit, Bismark handles pushing on completion
+    completionInstructions = `2. Commit your changes with a clear message
 3. Close the task to signal completion:
    bd close ${task.id} --message "Completed: <brief summary>"`
+  }
 
   return `[BISMARK TASK - HEADLESS MODE]
 Task ID: ${task.id}
@@ -1419,31 +1465,36 @@ Title: ${task.title}
 You are running in a Docker container with:
 - Working directory: /workspace (your git worktree for this task)
 - Plan directory: /plan (read-only reference)
-- Tool proxy: Commands are proxied to the host system
+- Tool proxy: git, gh, and bd commands are transparently proxied to the host
 
-=== TOOL PROXY ===
-The following commands are proxied through Bismark to the host:
+=== COMMANDS ===
+All these commands work normally (they are proxied to the host automatically):
 
-1. GitHub CLI (gh):
-   - gh pr create --base main --title "..." --body "..."
+1. Git:
+   - git status
+   - git add .
+   - git commit -m "Your commit message"
+   - git push origin HEAD
+
+2. GitHub CLI (gh):
+   - gh pr create --base ${baseBranch} --title "..." --body "..."
    - gh pr view
    - All standard gh commands work
 
-2. Beads Task Management (bd):
+3. Beads Task Management (bd):
    - bd close ${task.id} --message "..."  (REQUIRED when done)
    - The --sandbox flag is added automatically
-   - Commands run in the correct plan directory on the host
 
 IMPORTANT: You MUST close your task using 'bd close' when finished.
 This signals to Bismark that your work is complete.
 
 === YOUR WORKING DIRECTORY ===
 You are in a dedicated git worktree: /workspace
-Base branch: ${repository?.prFlow?.baseBranch || repository?.defaultBranch || 'main'}
+Base branch: ${baseBranch}
 
 === COMPLETION REQUIREMENTS ===
 1. Complete the work described in the task title
-${prInstructions}
+${completionInstructions}
 
 CRITICAL: There is no interactive mode. You must:
 - Complete all work
@@ -1573,6 +1624,203 @@ function markWorktreeReadyForReview(planId: string, taskId: string): void {
   emitStateUpdate()
 
   addPlanActivity(planId, 'success', `Task ${taskId} ready for review`, `Worktree: ${worktree.branch}`)
+
+  // Handle branch strategy on task completion
+  handleTaskCompletionStrategy(planId, taskId, worktree).catch(error => {
+    console.error(`[PlanManager] Error handling task completion strategy:`, error)
+    addPlanActivity(planId, 'warning', `Git operation warning for ${taskId}`, error instanceof Error ? error.message : 'Unknown error')
+  })
+}
+
+/**
+ * Determine the base branch for a task based on the plan's branch strategy
+ * - feature_branch: always use the shared feature branch (or baseBranch if not created yet)
+ * - raise_prs: use the blocker's branch for dependent tasks, or plan's baseBranch for first tasks
+ */
+function getBaseBranchForTask(plan: Plan, task: BeadTask, repository: Repository): string {
+  // Default to plan's baseBranch or repository's defaultBranch
+  const defaultBase = plan.baseBranch || repository.defaultBranch
+
+  if (plan.branchStrategy === 'feature_branch') {
+    // For feature branch strategy, task branches are created off the default base (e.g., main)
+    // When the task completes, commits are pushed to the shared feature branch
+    // This avoids needing the feature branch to exist before the first task starts
+    return defaultBase
+  }
+
+  // For raise_prs strategy, check if this task has blockers
+  // If it does, stack on the blocker's branch
+  // For now, we use the default base - the orchestrator can set a "stack-on:" label
+  const stackOnLabel = task.labels?.find(l => l.startsWith('stack-on:'))
+  if (stackOnLabel) {
+    return stackOnLabel.substring('stack-on:'.length)
+  }
+
+  return defaultBase
+}
+
+/**
+ * Handle task completion based on the plan's branch strategy
+ * - feature_branch: push commits to the shared feature branch
+ * - raise_prs: PR was created by the agent, record it in git summary
+ */
+async function handleTaskCompletionStrategy(planId: string, taskId: string, worktree: PlanWorktree): Promise<void> {
+  const plan = getPlanById(planId)
+  if (!plan) return
+
+  const repository = await getRepositoryById(worktree.repositoryId)
+  if (!repository) return
+
+  if (plan.branchStrategy === 'feature_branch') {
+    await pushToFeatureBranch(plan, worktree, repository)
+  } else if (plan.branchStrategy === 'raise_prs') {
+    // For raise_prs, the agent should have created a PR
+    // Try to extract PR info from the worktree's commits/branch
+    await recordPullRequest(plan, worktree, repository)
+  }
+}
+
+/**
+ * Push commits from a worktree to the shared feature branch
+ * Used for feature_branch strategy
+ */
+async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repository: Repository): Promise<void> {
+  if (!plan.featureBranch) {
+    // Create the feature branch if it doesn't exist
+    plan.featureBranch = `bismark/${plan.id.split('-')[1]}/feature`
+    savePlan(plan)
+  }
+
+  try {
+    // Get commits made in this worktree
+    const baseBranch = plan.baseBranch || repository.defaultBranch
+    const commits = await getCommitsBetween(worktree.path, `origin/${baseBranch}`, 'HEAD')
+
+    if (commits.length === 0) {
+      addPlanActivity(plan.id, 'info', `No commits to push for task ${worktree.taskId}`)
+      return
+    }
+
+    // Record commits in worktree tracking
+    worktree.commits = commits.map(c => c.sha)
+
+    // Fetch and rebase onto feature branch
+    try {
+      await fetchAndRebase(worktree.path, plan.featureBranch)
+    } catch {
+      // Feature branch might not exist yet, that's OK
+    }
+
+    // Push to feature branch
+    await pushBranch(worktree.path, worktree.branch, 'origin', true)
+
+    // Record commits in git summary
+    const githubUrl = getGitHubUrlFromRemote(repository.remoteUrl)
+    const planCommits: PlanCommit[] = commits.map(c => ({
+      sha: c.sha,
+      shortSha: c.shortSha,
+      message: c.message,
+      taskId: worktree.taskId,
+      timestamp: c.timestamp,
+      repositoryId: repository.id,
+      githubUrl: githubUrl ? `${githubUrl}/commit/${c.sha}` : undefined,
+    }))
+
+    if (!plan.gitSummary) {
+      plan.gitSummary = { commits: [] }
+    }
+    if (!plan.gitSummary.commits) {
+      plan.gitSummary.commits = []
+    }
+    plan.gitSummary.commits.push(...planCommits)
+
+    savePlan(plan)
+    emitPlanUpdate(plan)
+
+    addPlanActivity(
+      plan.id,
+      'success',
+      `Pushed ${commits.length} commit(s) for task ${worktree.taskId}`,
+      `Branch: ${worktree.branch}`
+    )
+  } catch (error) {
+    addPlanActivity(
+      plan.id,
+      'warning',
+      `Failed to push commits for task ${worktree.taskId}`,
+      error instanceof Error ? error.message : 'Unknown error'
+    )
+  }
+}
+
+/**
+ * Record a pull request created by a task agent
+ * Used for raise_prs strategy
+ */
+async function recordPullRequest(plan: Plan, worktree: PlanWorktree, repository: Repository): Promise<void> {
+  // The agent should have created a PR and closed the task with the PR URL
+  // For now, we'll try to extract PR info from the bd task close message
+  // This could be enhanced to actually query GitHub for PR info
+
+  try {
+    const { exec } = await import('child_process')
+    const { promisify } = await import('util')
+    const execAsync = promisify(exec)
+
+    // Try to get PR info using gh CLI
+    const { stdout } = await execAsync(
+      `gh pr list --head "${worktree.branch}" --json number,title,url,baseRefName,headRefName,state --limit 1`,
+      { cwd: worktree.path }
+    )
+
+    const prs = JSON.parse(stdout)
+    if (prs.length > 0) {
+      const pr = prs[0]
+
+      const planPR: PlanPullRequest = {
+        number: pr.number,
+        title: pr.title,
+        url: pr.url,
+        taskId: worktree.taskId,
+        baseBranch: pr.baseRefName,
+        headBranch: pr.headRefName,
+        status: pr.state.toLowerCase() as 'open' | 'merged' | 'closed',
+        repositoryId: repository.id,
+      }
+
+      // Store PR info in worktree
+      worktree.prNumber = pr.number
+      worktree.prUrl = pr.url
+      worktree.prBaseBranch = pr.baseRefName
+
+      // Add to git summary
+      if (!plan.gitSummary) {
+        plan.gitSummary = { pullRequests: [] }
+      }
+      if (!plan.gitSummary.pullRequests) {
+        plan.gitSummary.pullRequests = []
+      }
+      plan.gitSummary.pullRequests.push(planPR)
+
+      savePlan(plan)
+      emitPlanUpdate(plan)
+
+      addPlanActivity(
+        plan.id,
+        'success',
+        `PR #${pr.number} created for task ${worktree.taskId}`,
+        pr.url
+      )
+    }
+  } catch (error) {
+    // PR info not available - that's OK, agent might not have created one yet
+    addPlanActivity(
+      plan.id,
+      'info',
+      `No PR found for task ${worktree.taskId}`,
+      'Agent may not have created a PR'
+    )
+  }
 }
 
 /**
@@ -1681,11 +1929,14 @@ async function updatePlanStatuses(): Promise<void> {
       // Use status: 'all' to include closed tasks for completion checks
       const allTasks = await bdList(plan.id, { status: 'all' })
 
-      // Filter to just tasks (not epics) that have been sent to agents
-      // A task is "tracked" if it has the bismark-sent label or is closed
+      // Filter to just tasks (not epics) that belong to this plan
+      // A task belongs to this plan if it has any bismark label (bismark-ready, bismark-sent)
+      // This prevents unrelated closed tasks from triggering "All tasks completed"
+      const hasBismarkLabel = (t: BeadTask) =>
+        t.labels?.some(l => l.startsWith('bismark-')) ?? false
+
       const trackedTasks = allTasks.filter(t =>
-        t.type === 'task' &&
-        (t.labels?.includes('bismark-sent') || t.status === 'closed')
+        t.type === 'task' && hasBismarkLabel(t)
       )
 
       if (trackedTasks.length === 0) {

@@ -34,6 +34,11 @@ RUN chmod +x /usr/local/bin/gh
 COPY bd-proxy-wrapper.sh /usr/local/bin/bd
 RUN chmod +x /usr/local/bin/bd
 
+# Copy git CLI wrapper that calls the tool proxy
+# This proxies git commands to the host where the worktree can be resolved
+COPY git-proxy-wrapper.sh /usr/local/bin/git
+RUN chmod +x /usr/local/bin/git
+
 # Create non-root user (Claude refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent && \
     mkdir -p /workspace /plan && \

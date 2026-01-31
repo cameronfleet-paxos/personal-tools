@@ -22,6 +22,7 @@ export interface ToolProxyConfig {
   tools: {
     gh: { enabled: boolean }
     bd: { enabled: boolean }
+    git: { enabled: boolean }
   }
 }
 
@@ -30,6 +31,7 @@ const DEFAULT_CONFIG: ToolProxyConfig = {
   tools: {
     gh: { enabled: true },
     bd: { enabled: true },
+    git: { enabled: true },
   },
 }
 
@@ -256,6 +258,67 @@ async function handleBdRequest(
 }
 
 /**
+ * Handle git CLI proxy requests
+ * Runs git commands on the host where the worktree reference can be resolved
+ */
+async function handleGitRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+): Promise<void> {
+  if (!currentConfig.tools.git.enabled) {
+    sendJson(res, 403, { success: false, error: 'git tool is disabled' })
+    return
+  }
+
+  try {
+    const body = (await parseBody(req)) as ProxyRequest & { cwd?: string }
+
+    // The cwd should be the host path to the worktree
+    // Container sends /workspace but we need the actual host path
+    const cwd = body.cwd
+    if (!cwd) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'cwd required - specify the host path to run git commands in',
+      })
+      return
+    }
+
+    // Validate the path exists on host
+    const fs = await import('fs/promises')
+    try {
+      await fs.access(cwd)
+    } catch {
+      sendJson(res, 400, {
+        success: false,
+        error: `Directory not found on host: ${cwd}`,
+      })
+      return
+    }
+
+    const args = body.args || []
+
+    // Log the operation
+    proxyEvents.emit('git', { cwd, args })
+
+    // Execute git command on host
+    const result = await executeCommand('git', args, body.stdin, { cwd })
+
+    sendJson(res, 200, {
+      success: result.exitCode === 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+    })
+  } catch (err) {
+    sendJson(res, 400, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+    })
+  }
+}
+
+/**
  * Handle health check requests
  */
 function handleHealthCheck(res: http.ServerResponse): void {
@@ -292,6 +355,8 @@ async function handleRequest(
     await handleGhRequest(req, res, subpath || '/')
   } else if (url.startsWith('/bd') && method === 'POST') {
     await handleBdRequest(req, res)
+  } else if (url.startsWith('/git') && method === 'POST') {
+    await handleGitRequest(req, res)
   } else {
     sendJson(res, 404, { success: false, error: 'Not found' })
   }
