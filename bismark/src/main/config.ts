@@ -256,3 +256,60 @@ export function deleteTaskAssignment(planId: string, beadId: string): void {
   const assignments = loadTaskAssignments(planId)
   saveTaskAssignments(planId, assignments.filter((a) => a.beadId !== beadId))
 }
+
+// OAuth token storage
+const OAUTH_TOKEN_FILE = 'oauth-token.json'
+
+interface OAuthTokenData {
+  token: string
+  createdAt: string
+}
+
+function getOAuthTokenPath(): string {
+  return path.join(getConfigDir(), OAUTH_TOKEN_FILE)
+}
+
+/**
+ * Get the Claude OAuth token from storage or environment variable
+ * Environment variable takes precedence for testing/CI scenarios
+ */
+export function getClaudeOAuthToken(): string | null {
+  // Environment variable takes precedence
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+    return process.env.CLAUDE_CODE_OAUTH_TOKEN
+  }
+
+  // Read from file storage
+  const tokenPath = getOAuthTokenPath()
+  try {
+    const content = fs.readFileSync(tokenPath, 'utf-8')
+    const data = JSON.parse(content) as OAuthTokenData
+    return data.token || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Store the Claude OAuth token
+ */
+export function setClaudeOAuthToken(token: string): void {
+  const tokenPath = getOAuthTokenPath()
+  const data: OAuthTokenData = {
+    token,
+    createdAt: new Date().toISOString(),
+  }
+  writeConfigAtomic(tokenPath, data)
+}
+
+/**
+ * Clear the stored OAuth token
+ */
+export function clearClaudeOAuthToken(): void {
+  const tokenPath = getOAuthTokenPath()
+  try {
+    fs.unlinkSync(tokenPath)
+  } catch {
+    // File doesn't exist, that's fine
+  }
+}

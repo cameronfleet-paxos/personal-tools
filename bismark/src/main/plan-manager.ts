@@ -12,6 +12,7 @@ import {
   getWorkspaces,
   getWorktreePath,
   getPlanWorktreesPath,
+  getClaudeOAuthToken,
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
@@ -28,6 +29,7 @@ import {
   getAllRepositories,
 } from './repository-manager'
 import { HeadlessAgent, HeadlessAgentOptions } from './headless-agent'
+import { runSetupToken } from './oauth-setup'
 import { startToolProxy, stopToolProxy, isProxyRunning } from './tool-proxy'
 import { checkDockerAvailable, checkImageExists, stopAllContainers } from './docker-sandbox'
 
@@ -769,6 +771,35 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
   if (useHeadlessMode) {
     // Headless mode: start agent in Docker container
     try {
+      // Check for OAuth token before starting headless agent
+      let token = getClaudeOAuthToken()
+      if (!token) {
+        // Notify renderer that OAuth setup is starting
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('oauth-setup-starting', { planId, taskId: task.id })
+        }
+        addPlanActivity(
+          planId,
+          'info',
+          'OAuth token required - starting setup',
+          'Opening browser for authentication...'
+        )
+
+        try {
+          // Automatically run setup-token to get OAuth token
+          token = await runSetupToken()
+          addPlanActivity(planId, 'success', 'OAuth token obtained', 'Authentication successful')
+        } catch (setupError) {
+          addPlanActivity(
+            planId,
+            'error',
+            'OAuth setup failed',
+            setupError instanceof Error ? setupError.message : 'Unknown error'
+          )
+          throw new Error('OAuth token required for headless agents - setup failed')
+        }
+      }
+
       // Ensure tool proxy is running
       if (!isProxyRunning()) {
         await startToolProxy()

@@ -6,7 +6,11 @@ import {
   getWorkspaces,
   saveWorkspace,
   deleteWorkspace,
+  getClaudeOAuthToken,
+  setClaudeOAuthToken,
+  clearClaudeOAuthToken,
 } from './config'
+import { runSetupToken } from './oauth-setup'
 import {
   createTerminal,
   writeTerminal,
@@ -328,6 +332,29 @@ function registerIpcHandlers() {
 
   ipcMain.handle('stop-headless-agent', async (_event, taskId: string) => {
     return stopHeadlessTaskAgent(taskId)
+  })
+
+  // OAuth token management
+  ipcMain.handle('get-oauth-token', () => {
+    return getClaudeOAuthToken()
+  })
+
+  ipcMain.handle('set-oauth-token', (_event, token: string) => {
+    setClaudeOAuthToken(token)
+    return true
+  })
+
+  ipcMain.handle('has-oauth-token', () => {
+    return !!getClaudeOAuthToken()
+  })
+
+  ipcMain.handle('run-oauth-setup', async () => {
+    return runSetupToken()
+  })
+
+  ipcMain.handle('clear-oauth-token', () => {
+    clearClaudeOAuthToken()
+    return true
   })
 
   // External URL handling

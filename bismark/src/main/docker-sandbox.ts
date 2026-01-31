@@ -17,6 +17,7 @@ import { EventEmitter } from 'events'
 import * as path from 'path'
 import * as fs from 'fs'
 import { getProxyUrl } from './tool-proxy'
+import { getClaudeOAuthToken } from './config'
 
 // Debug log file for Docker operations
 const DEBUG_LOG_PATH = '/tmp/claude/bismark-docker-debug.log'
@@ -94,8 +95,13 @@ function buildDockerArgs(config: ContainerConfig): string[] {
   const proxyUrl = config.proxyHost || getProxyUrl()
   args.push('-e', `TOOL_PROXY_URL=${proxyUrl}`)
 
-  // Pass Anthropic API key from host
-  if (process.env.ANTHROPIC_API_KEY) {
+  // Pass Claude OAuth token or Anthropic API key to container
+  // OAuth token is preferred for headless agents using Claude subscription
+  const oauthToken = getClaudeOAuthToken()
+  if (oauthToken) {
+    args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${oauthToken}`)
+  } else if (process.env.ANTHROPIC_API_KEY) {
+    // Fallback to API key if no OAuth token
     args.push('-e', `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`)
   }
 
@@ -155,6 +161,10 @@ export async function spawnContainerAgent(
   const dockerProcess = spawn('docker', args, {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
+
+  // Close stdin immediately - Claude Code with -p flag doesn't need stdin
+  // and leaving it open may prevent the process from starting properly
+  dockerProcess.stdin?.end()
 
   // Create pass-through streams for stdout/stderr
   const stdout = new PassThrough()

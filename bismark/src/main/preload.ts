@@ -96,6 +96,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stopHeadlessAgent: (taskId: string): Promise<void> =>
     ipcRenderer.invoke('stop-headless-agent', taskId),
 
+  // OAuth token management
+  getOAuthToken: (): Promise<string | null> =>
+    ipcRenderer.invoke('get-oauth-token'),
+  setOAuthToken: (token: string): Promise<boolean> =>
+    ipcRenderer.invoke('set-oauth-token', token),
+  hasOAuthToken: (): Promise<boolean> =>
+    ipcRenderer.invoke('has-oauth-token'),
+  runOAuthSetup: (): Promise<string> =>
+    ipcRenderer.invoke('run-oauth-setup'),
+  clearOAuthToken: (): Promise<boolean> =>
+    ipcRenderer.invoke('clear-oauth-token'),
+
   // Terminal events - use removeAllListeners before adding to prevent duplicates
   onTerminalData: (
     callback: (terminalId: string, data: string) => void

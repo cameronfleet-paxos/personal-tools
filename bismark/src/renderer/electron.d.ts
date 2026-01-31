@@ -64,6 +64,13 @@ export interface ElectronAPI {
   getHeadlessAgentsForPlan: (planId: string) => Promise<HeadlessAgentInfo[]>
   stopHeadlessAgent: (taskId: string) => Promise<void>
 
+  // OAuth token management
+  getOAuthToken: () => Promise<string | null>
+  setOAuthToken: (token: string) => Promise<boolean>
+  hasOAuthToken: () => Promise<boolean>
+  runOAuthSetup: () => Promise<string>
+  clearOAuthToken: () => Promise<boolean>
+
   // Git repository management
   detectGitRepository: (directory: string) => Promise<Repository | null>
   getRepositories: () => Promise<Repository[]>
