@@ -141,22 +141,25 @@ export function PlanCard({
           )}
 
           {plan.status === 'draft' && (
-            <div className="flex items-center gap-2">
+            <div className="space-y-2">
               <select
                 value={selectedReference}
                 onChange={(e) => setSelectedReference(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
-                className="flex-1 text-xs border rounded px-2 py-1 bg-background"
+                className="w-full text-xs border rounded px-2 py-1.5 bg-background"
               >
                 <option value="">Select reference agent...</option>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>
-                    {agent.name}
-                  </option>
-                ))}
+                {agents
+                  .filter((a) => !a.isOrchestrator && !a.isPlanAgent)
+                  .map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
               </select>
               <Button
                 size="sm"
+                className="w-full"
                 disabled={!selectedReference}
                 onClick={(e) => {
                   e.stopPropagation()
