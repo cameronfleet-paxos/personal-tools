@@ -107,10 +107,10 @@ export function createSessionStartHookScript(): void {
 # Runs at session start when env vars ARE available
 
 SESSION_ID=$(grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
-[ -z "$SESSION_ID" ] || [ -z "$BISMARK_WORKSPACE_ID" ] || [ -z "$BISMARK_INSTANCE_ID" ] && exit 0
+[ -z "$SESSION_ID" ] || [ -z "$BISMARCK_WORKSPACE_ID" ] || [ -z "$BISMARCK_INSTANCE_ID" ] && exit 0
 
 mkdir -p "$HOME/.bismark/sessions"
-printf '{"workspaceId":"%s","instanceId":"%s"}' "$BISMARK_WORKSPACE_ID" "$BISMARK_INSTANCE_ID" > "$HOME/.bismark/sessions/\${SESSION_ID}.json"
+printf '{"workspaceId":"%s","instanceId":"%s"}' "$BISMARCK_WORKSPACE_ID" "$BISMARCK_INSTANCE_ID" > "$HOME/.bismark/sessions/\${SESSION_ID}.json"
 exit 0
 `
 

@@ -137,7 +137,7 @@ export class HeadlessAgent extends EventEmitter {
         claudeFlags: options.claudeFlags,
         env: {
           ...options.env,
-          BISMARK_TASK_ID: options.taskId || '',
+          BISMARCK_TASK_ID: options.taskId || '',
         },
         useEntrypoint: options.useEntrypoint,
       }

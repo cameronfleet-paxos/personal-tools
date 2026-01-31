@@ -285,8 +285,8 @@ class CDPHelper {
           return { hasReactRoot: true };
         }
         // Check for exposed state
-        if (window.__BISMARK_STATE__) {
-          return window.__BISMARK_STATE__;
+        if (window.__BISMARCK_STATE__) {
+          return window.__BISMARCK_STATE__;
         }
         // Return basic DOM state
         return {

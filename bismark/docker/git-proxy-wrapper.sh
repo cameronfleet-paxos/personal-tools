@@ -17,10 +17,10 @@ set -e
 
 # Get proxy URL and host worktree path from environment (set by docker run)
 PROXY_URL="${TOOL_PROXY_URL:-http://host.docker.internal:9847}"
-HOST_WORKTREE_PATH="${BISMARK_HOST_WORKTREE_PATH:-}"
+HOST_WORKTREE_PATH="${BISMARCK_HOST_WORKTREE_PATH:-}"
 
 if [ -z "$HOST_WORKTREE_PATH" ]; then
-  echo "Error: BISMARK_HOST_WORKTREE_PATH environment variable not set" >&2
+  echo "Error: BISMARCK_HOST_WORKTREE_PATH environment variable not set" >&2
   echo "git commands must be proxied to the host because /workspace is a worktree" >&2
   exit 1
 fi

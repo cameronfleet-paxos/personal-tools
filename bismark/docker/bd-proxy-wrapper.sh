@@ -17,10 +17,10 @@ set -e
 
 # Get proxy URL and plan ID from environment (set by docker run)
 PROXY_URL="${TOOL_PROXY_URL:-http://host.docker.internal:9847}"
-PLAN_ID="${BISMARK_PLAN_ID:-}"
+PLAN_ID="${BISMARCK_PLAN_ID:-}"
 
 if [ -z "$PLAN_ID" ]; then
-  echo "Error: BISMARK_PLAN_ID environment variable not set" >&2
+  echo "Error: BISMARCK_PLAN_ID environment variable not set" >&2
   exit 1
 fi
 

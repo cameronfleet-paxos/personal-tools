@@ -17,7 +17,7 @@
  *   window.electronAPI.devStartMockAgent('test-task-1')
  *
  *   // Environment override
- *   BISMARK_MOCK_AGENTS=true
+ *   BISMARCK_MOCK_AGENTS=true
  */
 
 import { EventEmitter } from 'events'
@@ -624,7 +624,7 @@ export function setDevHarnessWindow(window: BrowserWindow | null): void {
  * Check if mock agents should be used
  */
 export function shouldUseMockAgents(): boolean {
-  return process.env.BISMARK_MOCK_AGENTS === 'true' || process.env.NODE_ENV === 'development'
+  return process.env.BISMARCK_MOCK_AGENTS === 'true' || process.env.NODE_ENV === 'development'
 }
 
 /**
@@ -804,7 +804,7 @@ export async function startMockAgentWithDocker(
     useEntrypoint: true,  // Use mock image's entrypoint, not claude command
     env: {
       MOCK_EVENT_INTERVAL_MS: String(eventIntervalMs),
-      BISMARK_TASK_ID: taskId,
+      BISMARCK_TASK_ID: taskId,
     },
   })
 
