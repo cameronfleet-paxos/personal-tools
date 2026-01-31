@@ -1,0 +1,294 @@
+/**
+ * Headless Agent
+ *
+ * High-level abstraction for running Claude Code agents in headless mode
+ * inside Docker containers. Wraps the container lifecycle and stream
+ * parsing into a simple interface.
+ *
+ * Usage:
+ *   const agent = new HeadlessAgent()
+ *   agent.on('event', (event) => console.log(event))
+ *   agent.on('complete', (result) => console.log('Done:', result))
+ *   await agent.start({ prompt: '...', worktreePath: '...' })
+ */
+
+import { EventEmitter } from 'events'
+import {
+  spawnContainerAgent,
+  ContainerConfig,
+  ContainerResult,
+} from './docker-sandbox'
+import {
+  StreamEventParser,
+  StreamEvent,
+  ResultEvent,
+  isCompletionEvent,
+  isErrorEvent,
+  extractTextContent,
+} from './stream-parser'
+
+export type HeadlessAgentStatus =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'completed'
+  | 'failed'
+
+export interface HeadlessAgentOptions {
+  prompt: string
+  worktreePath: string
+  planDir: string
+  taskId?: string
+  image?: string
+  claudeFlags?: string[]
+  env?: Record<string, string>
+}
+
+export interface AgentResult {
+  success: boolean
+  exitCode: number
+  result?: string
+  cost?: {
+    input_tokens: number
+    output_tokens: number
+    total_cost_usd?: number
+  }
+  duration_ms?: number
+  error?: string
+}
+
+/**
+ * HeadlessAgent class
+ *
+ * Events emitted:
+ * - 'event': (event: StreamEvent) - Raw stream events
+ * - 'message': (text: string) - Text content from Claude
+ * - 'tool_use': (event: ToolUseEvent) - Tool being called
+ * - 'tool_result': (event: ToolResultEvent) - Tool result
+ * - 'complete': (result: AgentResult) - Agent completed
+ * - 'error': (error: Error) - Error occurred
+ * - 'status': (status: HeadlessAgentStatus) - Status changed
+ */
+export class HeadlessAgent extends EventEmitter {
+  private status: HeadlessAgentStatus = 'idle'
+  private container: ContainerResult | null = null
+  private parser: StreamEventParser | null = null
+  private options: HeadlessAgentOptions | null = null
+  private events: StreamEvent[] = []
+  private startTime: number = 0
+
+  constructor() {
+    super()
+  }
+
+  /**
+   * Get current agent status
+   */
+  getStatus(): HeadlessAgentStatus {
+    return this.status
+  }
+
+  /**
+   * Get all events received so far
+   */
+  getEvents(): StreamEvent[] {
+    return [...this.events]
+  }
+
+  /**
+   * Start the agent
+   */
+  async start(options: HeadlessAgentOptions): Promise<void> {
+    if (this.status !== 'idle') {
+      throw new Error(`Cannot start agent in status: ${this.status}`)
+    }
+
+    this.options = options
+    this.events = []
+    this.startTime = Date.now()
+    this.setStatus('starting')
+
+    try {
+      // Build container config
+      const containerConfig: ContainerConfig = {
+        image: options.image || 'bismark-agent:latest',
+        workingDir: options.worktreePath,
+        planDir: options.planDir,
+        prompt: options.prompt,
+        claudeFlags: options.claudeFlags,
+        env: {
+          ...options.env,
+          BISMARK_TASK_ID: options.taskId || '',
+        },
+      }
+
+      // Spawn container
+      this.container = await spawnContainerAgent(containerConfig)
+      this.setStatus('running')
+
+      // Set up stream parser
+      this.parser = new StreamEventParser()
+      this.setupParserListeners()
+
+      // Pipe container stdout to parser
+      this.container.stdout.on('data', (data) => {
+        console.log(`[HeadlessAgent] stdout data received (${data.length} bytes):`, data.toString().substring(0, 200))
+        this.parser?.write(data)
+      })
+
+      // Log stderr (for debugging)
+      this.container.stderr.on('data', (data) => {
+        console.log(`[HeadlessAgent] stderr: ${data.toString()}`)
+      })
+
+      // Handle container exit
+      this.container.wait().then((exitCode) => {
+        this.parser?.end()
+        this.handleContainerExit(exitCode)
+      })
+    } catch (error) {
+      this.setStatus('failed')
+      this.emit('error', error)
+      throw error
+    }
+  }
+
+  /**
+   * Stop the agent
+   */
+  async stop(): Promise<void> {
+    if (this.status !== 'running' && this.status !== 'starting') {
+      return
+    }
+
+    this.setStatus('stopping')
+
+    try {
+      await this.container?.stop()
+    } catch (error) {
+      console.error('[HeadlessAgent] Error stopping container:', error)
+    }
+
+    this.setStatus('completed')
+  }
+
+  private setStatus(status: HeadlessAgentStatus): void {
+    this.status = status
+    this.emit('status', status)
+  }
+
+  private setupParserListeners(): void {
+    if (!this.parser) return
+
+    // Store all events
+    this.parser.on('event', (event: StreamEvent) => {
+      this.events.push(event)
+      this.emit('event', event)
+    })
+
+    // Extract and emit text content
+    this.parser.on('message', (event: StreamEvent) => {
+      const text = extractTextContent(event)
+      if (text) {
+        this.emit('message', text)
+      }
+    })
+
+    this.parser.on('assistant', (event: StreamEvent) => {
+      const text = extractTextContent(event)
+      if (text) {
+        this.emit('message', text)
+      }
+    })
+
+    this.parser.on('content_block_delta', (event: StreamEvent) => {
+      const text = extractTextContent(event)
+      if (text) {
+        this.emit('message', text)
+      }
+    })
+
+    // Emit tool events
+    this.parser.on('tool_use', (event: StreamEvent) => {
+      this.emit('tool_use', event)
+    })
+
+    this.parser.on('tool_result', (event: StreamEvent) => {
+      this.emit('tool_result', event)
+    })
+
+    // Handle completion
+    this.parser.on('result', (event: StreamEvent) => {
+      const resultEvent = event as ResultEvent
+      const result: AgentResult = {
+        success: true,
+        exitCode: 0,
+        result: resultEvent.result,
+        cost: resultEvent.cost,
+        duration_ms: resultEvent.duration_ms || Date.now() - this.startTime,
+      }
+      this.emit('result_event', result)
+    })
+  }
+
+  private handleContainerExit(exitCode: number): void {
+    const duration = Date.now() - this.startTime
+
+    // Find the result event if we received one
+    const resultEvent = this.events.find(
+      (e) => e.type === 'result'
+    ) as ResultEvent | undefined
+
+    const result: AgentResult = {
+      success: exitCode === 0,
+      exitCode,
+      result: resultEvent?.result,
+      cost: resultEvent?.cost,
+      duration_ms: resultEvent?.duration_ms || duration,
+    }
+
+    if (exitCode !== 0 && !resultEvent) {
+      result.error = `Container exited with code ${exitCode}`
+    }
+
+    this.setStatus(exitCode === 0 ? 'completed' : 'failed')
+    this.emit('complete', result)
+  }
+}
+
+/**
+ * Factory function for creating headless agents with common configuration
+ */
+export function createHeadlessAgent(): HeadlessAgent {
+  return new HeadlessAgent()
+}
+
+/**
+ * Run a headless agent and wait for completion
+ * Returns a promise that resolves with the agent result
+ */
+export async function runHeadlessAgent(
+  options: HeadlessAgentOptions
+): Promise<AgentResult> {
+  const agent = new HeadlessAgent()
+
+  return new Promise((resolve, reject) => {
+    agent.on('complete', resolve)
+    agent.on('error', reject)
+
+    agent.start(options).catch(reject)
+  })
+}
+
+/**
+ * Run a headless agent with event streaming
+ * Returns the agent instance for event subscription
+ */
+export async function startHeadlessAgent(
+  options: HeadlessAgentOptions
+): Promise<HeadlessAgent> {
+  const agent = new HeadlessAgent()
+  await agent.start(options)
+  return agent
+}

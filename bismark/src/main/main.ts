@@ -55,12 +55,20 @@ import {
   startTaskPolling,
   stopTaskPolling,
   completePlan,
+  cleanupPlanManager,
+  setHeadlessMode,
+  isHeadlessModeEnabled,
+  checkHeadlessModeAvailable,
+  getHeadlessAgentInfo,
+  getHeadlessAgentInfoForPlan,
+  stopHeadlessTaskAgent,
 } from './plan-manager'
 import {
   detectRepository,
   getAllRepositories,
   updateRepository,
 } from './repository-manager'
+import { initializeDockerEnvironment } from './docker-sandbox'
 import type { Workspace, AppPreferences, Repository } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -277,6 +285,32 @@ function registerIpcHandlers() {
     setActivePlanId(planId)
   })
 
+  // Headless mode management
+  ipcMain.handle('set-headless-mode', (_event, enabled: boolean) => {
+    setHeadlessMode(enabled)
+    return enabled
+  })
+
+  ipcMain.handle('get-headless-mode', () => {
+    return isHeadlessModeEnabled()
+  })
+
+  ipcMain.handle('check-headless-mode-available', async () => {
+    return checkHeadlessModeAvailable()
+  })
+
+  ipcMain.handle('get-headless-agent-info', (_event, taskId: string) => {
+    return getHeadlessAgentInfo(taskId)
+  })
+
+  ipcMain.handle('get-headless-agents-for-plan', (_event, planId: string) => {
+    return getHeadlessAgentInfoForPlan(planId)
+  })
+
+  ipcMain.handle('stop-headless-agent', async (_event, taskId: string) => {
+    return stopHeadlessTaskAgent(taskId)
+  })
+
   // External URL handling
   ipcMain.handle('open-external', (_event, url: string) => {
     return shell.openExternal(url)
@@ -296,7 +330,7 @@ function registerIpcHandlers() {
   })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Initialize config directory structure
   ensureConfigDirExists()
 
@@ -311,11 +345,29 @@ app.whenReady().then(() => {
   registerIpcHandlers()
 
   createWindow()
+
+  // Initialize Docker environment for headless mode (async, non-blocking)
+  // This builds the Docker image if it doesn't exist
+  initializeDockerEnvironment().then((result) => {
+    if (result.success) {
+      console.log('[Main] Docker environment ready:', result.message)
+      if (result.imageBuilt) {
+        // Notify renderer that image was built
+        mainWindow?.webContents.send('docker-image-built', result)
+      }
+    } else {
+      console.warn('[Main] Docker environment not ready:', result.message)
+      // Headless mode will fall back to interactive mode
+    }
+  }).catch((err) => {
+    console.error('[Main] Docker initialization error:', err)
+  })
 })
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
   closeAllTerminals()
   closeAllSocketServers()
+  await cleanupPlanManager()
   destroyTray()
   if (process.platform !== 'darwin') {
     app.quit()
@@ -328,8 +380,9 @@ app.on('activate', () => {
   }
 })
 
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
   closeAllTerminals()
   closeAllSocketServers()
+  await cleanupPlanManager()
   destroyTray()
 })

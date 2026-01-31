@@ -1,4 +1,4 @@
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent } from '../shared/types'
 
 export interface ElectronAPI {
   // Workspace management
@@ -59,6 +59,11 @@ export interface ElectronAPI {
   setPlanSidebarOpen: (open: boolean) => Promise<void>
   setActivePlanId: (planId: string | null) => Promise<void>
 
+  // Headless agent management
+  getHeadlessAgentInfo: (taskId: string) => Promise<HeadlessAgentInfo | undefined>
+  getHeadlessAgentsForPlan: (planId: string) => Promise<HeadlessAgentInfo[]>
+  stopHeadlessAgent: (taskId: string) => Promise<void>
+
   // Git repository management
   detectGitRepository: (directory: string) => Promise<Repository | null>
   getRepositories: () => Promise<Repository[]>
@@ -82,6 +87,11 @@ export interface ElectronAPI {
   onPlanActivity: (callback: (activity: PlanActivity) => void) => void
   onStateUpdate: (callback: (state: AppState) => void) => void
   onTerminalCreated: (callback: (data: { terminalId: string; workspaceId: string }) => void) => void
+
+  // Headless agent events
+  onHeadlessAgentStarted: (callback: (data: { taskId: string; planId: string; worktreePath: string }) => void) => void
+  onHeadlessAgentUpdate: (callback: (info: HeadlessAgentInfo) => void) => void
+  onHeadlessAgentEvent: (callback: (data: { planId: string; taskId: string; event: StreamEvent }) => void) => void
 
   // External URL handling
   openExternal: (url: string) => Promise<void>

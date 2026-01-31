@@ -20,7 +20,8 @@ import { Logo } from '@/renderer/components/Logo'
 import { SettingsModal } from '@/renderer/components/SettingsModal'
 import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
-import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity } from '@/shared/types'
+import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
+import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, HeadlessAgentInfo } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
 interface ActiveTerminal {
@@ -51,6 +52,9 @@ function App() {
   const [taskAssignments, setTaskAssignments] = useState<TaskAssignment[]>([])
   const [planActivities, setPlanActivities] = useState<Map<string, PlanActivity[]>>(new Map())
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false)
+
+  // Headless agent state
+  const [headlessAgents, setHeadlessAgents] = useState<Map<string, HeadlessAgentInfo>>(new Map())
 
   // Left sidebar collapse state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -188,12 +192,24 @@ function App() {
     const loadedPlans = await window.electronAPI?.getPlans?.()
     if (loadedPlans) {
       setPlans(loadedPlans)
-      // Load task assignments for the active plan if there is one
+      // Load task assignments and headless agents for the active plan if there is one
       const activePlan = loadedPlans.find(p => p.status === 'delegating' || p.status === 'in_progress')
       if (activePlan) {
         const loadedAssignments = await window.electronAPI?.getTaskAssignments?.(activePlan.id)
         if (loadedAssignments) {
           setTaskAssignments(loadedAssignments)
+        }
+        // Load headless agents for the active plan
+        const loadedHeadlessAgents = await window.electronAPI?.getHeadlessAgentsForPlan?.(activePlan.id)
+        if (loadedHeadlessAgents && loadedHeadlessAgents.length > 0) {
+          console.log('[Renderer] Loaded headless agents from main process:', loadedHeadlessAgents.length)
+          setHeadlessAgents((prev) => {
+            const newMap = new Map(prev)
+            for (const info of loadedHeadlessAgents) {
+              newMap.set(info.taskId, info)
+            }
+            return newMap
+          })
         }
       }
     }
@@ -275,6 +291,7 @@ function App() {
 
     // Plan event listeners (Team Mode)
     window.electronAPI?.onPlanUpdate?.((plan: Plan) => {
+      console.log('[Renderer] Received plan-update', { id: plan.id, orchestratorTabId: plan.orchestratorTabId, status: plan.status })
       setPlans((prev) => {
         const index = prev.findIndex((p) => p.id === plan.id)
         if (index >= 0) {
@@ -326,6 +343,47 @@ function App() {
       })
       // Also reload agents to ensure orchestrator workspace is in state
       loadAgents()
+    })
+
+    // Headless agent events
+    window.electronAPI?.onHeadlessAgentStarted?.((data) => {
+      console.log('[Renderer] Received headless-agent-started', data)
+      window.electronAPI?.getHeadlessAgentInfo?.(data.taskId).then((info) => {
+        console.log('[Renderer] getHeadlessAgentInfo returned:', info)
+        if (info) {
+          setHeadlessAgents((prev) => {
+            const newMap = new Map(prev).set(data.taskId, info)
+            console.log('[Renderer] Updated headlessAgents map, size:', newMap.size)
+            return newMap
+          })
+        }
+      })
+    })
+
+    window.electronAPI?.onHeadlessAgentUpdate?.((info: HeadlessAgentInfo) => {
+      console.log('[Renderer] Received headless-agent-update', { taskId: info.taskId, status: info.status })
+      const taskId = info.taskId
+      if (taskId) {
+        setHeadlessAgents((prev) => {
+          const newMap = new Map(prev).set(taskId, info)
+          console.log('[Renderer] Updated headlessAgents via update event, size:', newMap.size)
+          return newMap
+        })
+      }
+    })
+
+    window.electronAPI?.onHeadlessAgentEvent?.((data) => {
+      setHeadlessAgents((prev) => {
+        const updated = new Map(prev)
+        const existing = updated.get(data.taskId)
+        if (existing) {
+          updated.set(data.taskId, {
+            ...existing,
+            events: [...existing.events, data.event],
+          })
+        }
+        return updated
+      })
     })
   }
 
@@ -428,6 +486,20 @@ function App() {
   const handleEditAgent = (agent: Agent) => {
     setEditingAgent(agent)
     setModalOpen(true)
+  }
+
+  const handleStopHeadlessAgent = async (agent: Agent) => {
+    if (agent.taskId) {
+      await window.electronAPI?.stopHeadlessAgent?.(agent.taskId)
+      // Remove from headless agents map
+      setHeadlessAgents((prev) => {
+        const newMap = new Map(prev)
+        newMap.delete(agent.taskId!)
+        return newMap
+      })
+      // Reload agents to remove the headless agent workspace
+      await loadAgents()
+    }
   }
 
   const handleAddAgent = () => {
@@ -538,6 +610,26 @@ function App() {
   )
 
   const isAgentWaiting = (agentId: string) => waitingQueue.includes(agentId)
+
+  // Get headless agents for a plan tab
+  const getHeadlessAgentsForTab = useCallback((tab: AgentTab): HeadlessAgentInfo[] => {
+    const plan = plans.find((p) => p.orchestratorTabId === tab.id)
+    if (!plan) {
+      // Only log for plan tabs to avoid noise
+      if (tab.isPlanTab) {
+        console.log('[Renderer] getHeadlessAgentsForTab: No plan found for tab', tab.id, 'plans:', plans.map(p => ({ id: p.id, tabId: p.orchestratorTabId })))
+      }
+      return []
+    }
+    const agents = Array.from(headlessAgents.values()).filter((info) => info.planId === plan.id)
+    console.log('[Renderer] getHeadlessAgentsForTab:', { tabId: tab.id, planId: plan.id, agentsFound: agents.length, headlessAgentsTotal: headlessAgents.size, allHeadless: Array.from(headlessAgents.entries()) })
+    return agents
+  }, [plans, headlessAgents])
+
+  // Debug: Log headlessAgents state changes
+  useEffect(() => {
+    console.log('[Renderer] headlessAgents state changed:', headlessAgents.size, Array.from(headlessAgents.keys()))
+  }, [headlessAgents])
 
   // Plan handlers (Team Mode)
   // Note: We don't update local state here because the onPlanUpdate event listener handles it
@@ -757,6 +849,7 @@ function App() {
                       onLaunch={() => handleLaunchAgent(agent.id)}
                       onStop={() => handleStopAgent(agent.id)}
                       onMoveToTab={(tabId) => handleMoveAgentToTab(agent.id, tabId)}
+                      onStopHeadless={() => handleStopHeadlessAgent(agent)}
                     />
                   )
                 })}
@@ -910,6 +1003,40 @@ function App() {
                           </div>
                         )
                       })}
+                    {/* Headless agent terminals */}
+                    {getHeadlessAgentsForTab(tab).map((info) => {
+                      console.log('[Renderer] Rendering HeadlessTerminal for', { taskId: info.taskId, status: info.status })
+                      const isExpanded = expandedAgentId === info.id
+                      return (
+                        <div
+                          key={info.id}
+                          className={`rounded-lg border overflow-hidden transition-all duration-200 ${
+                            !isExpanded && expandedAgentId ? 'invisible h-0' : ''
+                          } ${isExpanded ? 'absolute inset-0 z-10 !h-full' : ''}`}
+                        >
+                          <div className="px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">headless</span>
+                              <span>Task {info.taskId}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                info.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
+                                info.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                info.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                                'bg-yellow-500/20 text-yellow-400'
+                              }`}>{info.status}</span>
+                              <Button size="sm" variant="ghost" onClick={() => setMaximizedAgentId(isExpanded ? null : info.id)} className="h-6 w-6 p-0">
+                                {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+                              </Button>
+                            </div>
+                          </div>
+                          <div className="h-[calc(100%-2rem)]">
+                            <HeadlessTerminal events={info.events} theme="teal" status={info.status} isVisible={!!shouldShowTab && (!expandedAgentId || isExpanded)} />
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 ) : (
                   // Regular 2x2 grid for normal tabs (max 4 agents)

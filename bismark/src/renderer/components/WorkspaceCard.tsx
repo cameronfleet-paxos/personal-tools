@@ -1,4 +1,4 @@
-import { Pencil, Trash2, Play, Square, MoreVertical } from 'lucide-react'
+import { Pencil, Trash2, Play, Square, MoreVertical, Container } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import {
   DropdownMenu,
@@ -25,6 +25,7 @@ interface AgentCardProps {
   onStop: () => void
   onClick: () => void
   onMoveToTab?: (tabId: string) => void
+  onStopHeadless?: () => void
 }
 
 export function AgentCard({
@@ -40,6 +41,7 @@ export function AgentCard({
   onStop,
   onClick,
   onMoveToTab,
+  onStopHeadless,
 }: AgentCardProps) {
   const themeColors = themes[agent.theme]
 
@@ -62,6 +64,12 @@ export function AgentCard({
           <AgentIcon icon={agent.icon} className="w-4 h-4" />
         </div>
         <h3 className="font-medium truncate flex-1">{agent.name}</h3>
+        {agent.isHeadless && (
+          <span className="text-xs bg-blue-600 text-white px-1.5 py-0.5 rounded flex-shrink-0 flex items-center gap-1">
+            <Container className="w-3 h-3" />
+            Headless
+          </span>
+        )}
         {isWaiting && (
           <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded flex-shrink-0">
             Waiting
@@ -130,7 +138,20 @@ export function AgentCard({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {isActive ? (
+        {agent.isHeadless ? (
+          // Headless agents only show a stop button (they can't be manually started)
+          <Button
+            variant="destructive"
+            size="icon-xs"
+            title="Stop headless container"
+            onClick={(e) => {
+              e.stopPropagation()
+              onStopHeadless?.()
+            }}
+          >
+            <Square className="h-3 w-3" />
+          </Button>
+        ) : isActive ? (
           <Button
             variant="destructive"
             size="icon-xs"

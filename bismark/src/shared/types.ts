@@ -34,6 +34,7 @@ export interface Agent {
   parentPlanId?: string         // Plan that created this task agent
   worktreePath?: string         // Path to worktree (for task agents)
   taskId?: string               // Associated task ID
+  isHeadless?: boolean          // Running in headless Docker mode (no interactive terminal)
 }
 
 // Alias for backwards compatibility
@@ -162,4 +163,130 @@ export interface PlanActivity {
   type: PlanActivityType
   message: string
   details?: string  // Optional extra context
+}
+
+// ============================================
+// Headless Agent & Docker Container Types
+// ============================================
+
+// Agent execution mode
+export type AgentExecutionMode = 'interactive' | 'headless'
+
+// Headless agent status
+export type HeadlessAgentStatus =
+  | 'idle'
+  | 'starting'
+  | 'running'
+  | 'stopping'
+  | 'completed'
+  | 'failed'
+
+// Container configuration for spawning Docker containers
+export interface ContainerConfig {
+  image: string           // Docker image name (e.g., "bismark-agent:latest")
+  workingDir: string      // Path to mount as /workspace
+  planDir?: string        // Path to mount as /plan (for bd commands)
+  proxyHost?: string      // Override proxy URL (default: auto-detect)
+  env?: Record<string, string>  // Additional environment variables
+  prompt: string          // The prompt to send to Claude
+  claudeFlags?: string[]  // Additional claude CLI flags
+}
+
+// Result from a headless agent execution
+export interface HeadlessAgentResult {
+  success: boolean
+  exitCode: number
+  result?: string
+  cost?: {
+    input_tokens: number
+    output_tokens: number
+    total_cost_usd?: number
+  }
+  duration_ms?: number
+  error?: string
+}
+
+// ============================================
+// Stream Event Types (from Claude's stream-json output)
+// ============================================
+
+// Base event structure
+export interface StreamEventBase {
+  type: string
+  timestamp: string
+}
+
+// Initialization event
+export interface StreamInitEvent extends StreamEventBase {
+  type: 'init'
+  session_id: string
+  model?: string
+}
+
+// Message content event
+export interface StreamMessageEvent extends StreamEventBase {
+  type: 'message'
+  content: string
+  role?: 'assistant' | 'user'
+}
+
+// Tool use event
+export interface StreamToolUseEvent extends StreamEventBase {
+  type: 'tool_use'
+  tool_name: string
+  tool_id: string
+  input: Record<string, unknown>
+}
+
+// Tool result event
+export interface StreamToolResultEvent extends StreamEventBase {
+  type: 'tool_result'
+  tool_id: string
+  output: string
+  is_error?: boolean
+}
+
+// Final result event
+export interface StreamResultEvent extends StreamEventBase {
+  type: 'result'
+  result?: string
+  cost?: {
+    input_tokens: number
+    output_tokens: number
+    total_cost_usd?: number
+  }
+  duration_ms?: number
+  num_turns?: number
+}
+
+// Union of all stream event types
+export type StreamEvent =
+  | StreamInitEvent
+  | StreamMessageEvent
+  | StreamToolUseEvent
+  | StreamToolResultEvent
+  | StreamResultEvent
+  | (StreamEventBase & Record<string, unknown>)  // Fallback for unknown events
+
+// ============================================
+// Headless Agent Tracking
+// ============================================
+
+// Tracks a headless agent instance (for UI state)
+export interface HeadlessAgentInfo {
+  id: string
+  taskId?: string
+  planId: string
+  status: HeadlessAgentStatus
+  worktreePath: string
+  events: StreamEvent[]
+  startedAt: string
+  completedAt?: string
+  result?: HeadlessAgentResult
+}
+
+// Extended Agent type to support both execution modes
+export interface AgentWithMode extends Agent {
+  executionMode?: AgentExecutionMode
+  headlessInfo?: HeadlessAgentInfo
 }

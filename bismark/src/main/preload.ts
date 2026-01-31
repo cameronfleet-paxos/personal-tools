@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -88,6 +88,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setActivePlanId: (planId: string | null): Promise<void> =>
     ipcRenderer.invoke('set-active-plan-id', planId),
 
+  // Headless agent management
+  getHeadlessAgentInfo: (taskId: string): Promise<HeadlessAgentInfo | undefined> =>
+    ipcRenderer.invoke('get-headless-agent-info', taskId),
+  getHeadlessAgentsForPlan: (planId: string): Promise<HeadlessAgentInfo[]> =>
+    ipcRenderer.invoke('get-headless-agents-for-plan', planId),
+  stopHeadlessAgent: (taskId: string): Promise<void> =>
+    ipcRenderer.invoke('stop-headless-agent', taskId),
+
   // Terminal events - use removeAllListeners before adding to prevent duplicates
   onTerminalData: (
     callback: (terminalId: string, data: string) => void
@@ -141,6 +149,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('terminal-created', (_event, data) => callback(data))
   },
 
+  // Headless agent events
+  onHeadlessAgentStarted: (callback: (data: { taskId: string; planId: string; worktreePath: string }) => void): void => {
+    ipcRenderer.on('headless-agent-started', (_event, data) => callback(data))
+  },
+  onHeadlessAgentUpdate: (callback: (info: HeadlessAgentInfo) => void): void => {
+    ipcRenderer.on('headless-agent-update', (_event, info) => callback(info))
+  },
+  onHeadlessAgentEvent: (callback: (data: { planId: string; taskId: string; event: StreamEvent }) => void): void => {
+    ipcRenderer.on('headless-agent-event', (_event, data) => callback(data))
+  },
+
   // Git repository management
   detectGitRepository: (directory: string): Promise<Repository | null> =>
     ipcRenderer.invoke('detect-git-repository', directory),
@@ -171,5 +190,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('plan-activity')
     ipcRenderer.removeAllListeners('state-update')
     ipcRenderer.removeAllListeners('terminal-created')
+    ipcRenderer.removeAllListeners('headless-agent-started')
+    ipcRenderer.removeAllListeners('headless-agent-update')
+    ipcRenderer.removeAllListeners('headless-agent-event')
   },
 })

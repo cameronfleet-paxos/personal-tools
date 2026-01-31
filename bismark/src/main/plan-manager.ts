@@ -16,7 +16,7 @@ import {
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
 import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState } from './state-manager'
-import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository } from '../shared/types'
+import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus } from '../shared/types'
 import {
   createWorktree,
   removeWorktree,
@@ -27,18 +27,97 @@ import {
   getRepositoryById,
   getAllRepositories,
 } from './repository-manager'
+import { HeadlessAgent, HeadlessAgentOptions } from './headless-agent'
+import { startToolProxy, stopToolProxy, isProxyRunning } from './tool-proxy'
+import { checkDockerAvailable, checkImageExists, stopAllContainers } from './docker-sandbox'
 
 let mainWindow: BrowserWindow | null = null
 let pollInterval: NodeJS.Timeout | null = null
 
 const POLL_INTERVAL_MS = 5000 // Poll bd every 5 seconds
 const DEFAULT_MAX_PARALLEL_AGENTS = 4
+const DOCKER_IMAGE_NAME = 'bismark-agent:latest'
 
 // In-memory activity storage per plan
 const planActivities: Map<string, PlanActivity[]> = new Map()
 
 // In-memory guard to prevent duplicate plan execution (React StrictMode double-invocation)
 const executingPlans: Set<string> = new Set()
+
+// Track headless agents for cleanup and status
+const headlessAgents: Map<string, HeadlessAgent> = new Map()
+
+// Track headless agent info for UI
+const headlessAgentInfo: Map<string, HeadlessAgentInfo> = new Map()
+
+// Feature flag for headless mode (can be made configurable later)
+// Default to true to test Docker sandboxing
+let useHeadlessMode = true
+
+/**
+ * Enable or disable headless Docker mode
+ */
+export function setHeadlessMode(enabled: boolean): void {
+  useHeadlessMode = enabled
+}
+
+/**
+ * Check if headless mode is enabled
+ */
+export function isHeadlessModeEnabled(): boolean {
+  return useHeadlessMode
+}
+
+/**
+ * Check if Docker is available for headless mode
+ */
+export async function checkHeadlessModeAvailable(): Promise<{
+  available: boolean
+  dockerAvailable: boolean
+  imageExists: boolean
+  message: string
+}> {
+  const dockerAvailable = await checkDockerAvailable()
+  if (!dockerAvailable) {
+    return {
+      available: false,
+      dockerAvailable: false,
+      imageExists: false,
+      message: 'Docker is not available. Install Docker to use headless mode.',
+    }
+  }
+
+  const imageExists = await checkImageExists(DOCKER_IMAGE_NAME)
+  if (!imageExists) {
+    return {
+      available: false,
+      dockerAvailable: true,
+      imageExists: false,
+      message: `Docker image '${DOCKER_IMAGE_NAME}' not found. Run: cd bismark/docker && ./build.sh`,
+    }
+  }
+
+  return {
+    available: true,
+    dockerAvailable: true,
+    imageExists: true,
+    message: 'Headless mode is available',
+  }
+}
+
+/**
+ * Get headless agent info for a task
+ */
+export function getHeadlessAgentInfo(taskId: string): HeadlessAgentInfo | undefined {
+  return headlessAgentInfo.get(taskId)
+}
+
+/**
+ * Get all headless agent info for a plan
+ */
+export function getHeadlessAgentInfoForPlan(planId: string): HeadlessAgentInfo[] {
+  return Array.from(headlessAgentInfo.values()).filter(info => info.planId === planId)
+}
 
 /**
  * Generate a unique activity ID
@@ -199,12 +278,14 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
   plan.referenceAgentId = referenceAgentId
   plan.status = 'delegating'
   plan.updatedAt = new Date().toISOString()
-  savePlan(plan)
-  emitPlanUpdate(plan)
 
-  // Create a dedicated tab for the orchestrator
+  // Create a dedicated tab for the orchestrator BEFORE emitting update
+  // so renderer has the orchestratorTabId for headless agent lookup
   const orchestratorTab = createTab(plan.title.substring(0, 20), { isPlanTab: true })
   plan.orchestratorTabId = orchestratorTab.id
+
+  savePlan(plan)
+  emitPlanUpdate(plan)
 
   // Create orchestrator workspace (runs in plan directory to work with bd tasks)
   const orchestratorWorkspace: Workspace = {
@@ -316,8 +397,8 @@ export async function cancelPlan(planId: string): Promise<Plan | null> {
   const plan = getPlanById(planId)
   if (!plan) return null
 
-  // 1. Kill all agents immediately (fast - just closes terminals)
-  killAllPlanAgents(plan)
+  // 1. Kill all agents immediately (closes terminals and stops containers)
+  await killAllPlanAgents(plan)
 
   // 2. Cleanup worktrees (slow - git operations)
   await cleanupAllWorktreesOnly(planId)
@@ -337,10 +418,13 @@ export async function cancelPlan(planId: string): Promise<Plan | null> {
 
 /**
  * Kill all agents for a plan without cleaning up worktrees
- * This is fast because it just closes terminals
+ * This is fast because it just closes terminals/containers
  */
-function killAllPlanAgents(plan: Plan): void {
-  // Kill task agents
+async function killAllPlanAgents(plan: Plan): Promise<void> {
+  // Stop all headless agents for this plan first
+  await stopAllHeadlessAgents(plan.id)
+
+  // Kill task agents (interactive mode)
   if (plan.worktrees) {
     for (const worktree of plan.worktrees) {
       if (worktree.agentId) {
@@ -660,34 +744,17 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
   const { agent, worktree } = result
   assignment.agentId = agent.id
 
-  // Add agent to orchestrator tab and create terminal
-  if (mainWindow && plan.orchestratorTabId) {
+  // Branch based on execution mode
+  if (useHeadlessMode) {
+    // Headless mode: start agent in Docker container
     try {
-      const taskPrompt = buildTaskPrompt(planId, task, repository)
-      const planDir = getPlanDir(planId)
-      const claudeFlags = `--add-dir "${worktree.path}" --add-dir "${planDir}"`
-
-      const terminalId = createTerminal(agent.id, mainWindow, taskPrompt, claudeFlags, true)
-      addActiveWorkspace(agent.id)
-      addWorkspaceToTab(agent.id, plan.orchestratorTabId)
-
-      // Notify renderer about the new terminal
-      mainWindow.webContents.send('terminal-created', {
-        terminalId,
-        workspaceId: agent.id,
-      })
-
-      // Set up listener for task completion
-      const terminalEmitter = getTerminalEmitter(terminalId)
-      if (terminalEmitter) {
-        const exitHandler = (data: string) => {
-          if (data.includes('Goodbye') || data.includes('Session ended')) {
-            terminalEmitter.removeListener('data', exitHandler)
-            markWorktreeReadyForReview(planId, task.id)
-          }
-        }
-        terminalEmitter.on('data', exitHandler)
+      // Ensure tool proxy is running
+      if (!isProxyRunning()) {
+        await startToolProxy()
+        addPlanActivity(planId, 'info', 'Tool proxy started')
       }
+
+      await startHeadlessTaskAgent(planId, task, worktree, repository)
 
       assignment.status = 'sent'
       saveTaskAssignment(planId, assignment)
@@ -699,15 +766,78 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
         addLabels: ['bismark-sent'],
       })
 
-      addPlanActivity(planId, 'success', `Task ${task.id} started`, `Agent created in worktree: ${worktreeName}`)
+      // Notify renderer about headless agent
+      console.log('[PlanManager] Sending headless-agent-started event', { taskId: task.id, planId, worktreePath: worktree.path })
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('headless-agent-started', {
+          taskId: task.id,
+          planId,
+          worktreePath: worktree.path,
+        })
+        console.log('[PlanManager] headless-agent-started event sent successfully')
+      } else {
+        console.log('[PlanManager] Cannot send headless-agent-started - mainWindow:', mainWindow ? 'exists but destroyed' : 'null')
+      }
+
       emitStateUpdate()
     } catch (error) {
       addPlanActivity(
         planId,
         'error',
-        `Failed to start task agent for ${task.id}`,
+        `Failed to start headless agent for ${task.id}`,
         error instanceof Error ? error.message : 'Unknown error'
       )
+    }
+  } else {
+    // Interactive mode: create terminal (existing behavior)
+    if (mainWindow && plan.orchestratorTabId) {
+      try {
+        const taskPrompt = buildTaskPrompt(planId, task, repository)
+        const planDir = getPlanDir(planId)
+        const claudeFlags = `--add-dir "${worktree.path}" --add-dir "${planDir}"`
+
+        const terminalId = createTerminal(agent.id, mainWindow, taskPrompt, claudeFlags, true)
+        addActiveWorkspace(agent.id)
+        addWorkspaceToTab(agent.id, plan.orchestratorTabId)
+
+        // Notify renderer about the new terminal
+        mainWindow.webContents.send('terminal-created', {
+          terminalId,
+          workspaceId: agent.id,
+        })
+
+        // Set up listener for task completion
+        const terminalEmitter = getTerminalEmitter(terminalId)
+        if (terminalEmitter) {
+          const exitHandler = (data: string) => {
+            if (data.includes('Goodbye') || data.includes('Session ended')) {
+              terminalEmitter.removeListener('data', exitHandler)
+              markWorktreeReadyForReview(planId, task.id)
+            }
+          }
+          terminalEmitter.on('data', exitHandler)
+        }
+
+        assignment.status = 'sent'
+        saveTaskAssignment(planId, assignment)
+        emitTaskAssignmentUpdate(assignment)
+
+        // Update bd labels
+        await bdUpdate(planId, task.id, {
+          removeLabels: ['bismark-ready'],
+          addLabels: ['bismark-sent'],
+        })
+
+        addPlanActivity(planId, 'success', `Task ${task.id} started`, `Agent created in worktree: ${worktreeName}`)
+        emitStateUpdate()
+      } catch (error) {
+        addPlanActivity(
+          planId,
+          'error',
+          `Failed to start task agent for ${task.id}`,
+          error instanceof Error ? error.message : 'Unknown error'
+        )
+      }
     }
   }
 }
@@ -1020,6 +1150,7 @@ async function createTaskAgentWithWorktree(
     worktreePath: worktreePath,
     taskId: task.id,
     repositoryId: repository.id,
+    isHeadless: useHeadlessMode,
   }
   saveWorkspace(taskAgent)
 
@@ -1047,6 +1178,185 @@ async function createTaskAgentWithWorktree(
 }
 
 /**
+ * Start a headless task agent in a Docker container
+ */
+async function startHeadlessTaskAgent(
+  planId: string,
+  task: BeadTask,
+  worktree: PlanWorktree,
+  repository: Repository
+): Promise<void> {
+  const planDir = getPlanDir(planId)
+  const taskPrompt = buildTaskPromptForHeadless(planId, task, repository)
+
+  // Create headless agent info for tracking
+  const agentInfo: HeadlessAgentInfo = {
+    id: `headless-${task.id}`,
+    taskId: task.id,
+    planId,
+    status: 'starting',
+    worktreePath: worktree.path,
+    events: [],
+    startedAt: new Date().toISOString(),
+  }
+  headlessAgentInfo.set(task.id, agentInfo)
+
+  // Emit initial state
+  emitHeadlessAgentUpdate(agentInfo)
+
+  // Create and start headless agent
+  const agent = new HeadlessAgent()
+  headlessAgents.set(task.id, agent)
+
+  // Set up event listeners
+  agent.on('status', (status: HeadlessAgentStatus) => {
+    agentInfo.status = status
+    emitHeadlessAgentUpdate(agentInfo)
+  })
+
+  agent.on('event', (event: StreamEvent) => {
+    agentInfo.events.push(event)
+    emitHeadlessAgentEvent(planId, task.id, event)
+  })
+
+  agent.on('message', (text: string) => {
+    // Log messages as activities for visibility
+    if (text.length > 100) {
+      addPlanActivity(planId, 'info', `[${task.id}] ${text.substring(0, 100)}...`)
+    }
+  })
+
+  agent.on('complete', (result) => {
+    agentInfo.status = result.success ? 'completed' : 'failed'
+    agentInfo.completedAt = new Date().toISOString()
+    agentInfo.result = result
+    emitHeadlessAgentUpdate(agentInfo)
+
+    // Clean up tracking
+    headlessAgents.delete(task.id)
+
+    if (result.success) {
+      addPlanActivity(planId, 'success', `Task ${task.id} completed (headless)`)
+      markWorktreeReadyForReview(planId, task.id)
+    } else {
+      addPlanActivity(planId, 'error', `Task ${task.id} failed`, result.error)
+    }
+  })
+
+  agent.on('error', (error: Error) => {
+    agentInfo.status = 'failed'
+    agentInfo.completedAt = new Date().toISOString()
+    emitHeadlessAgentUpdate(agentInfo)
+
+    headlessAgents.delete(task.id)
+    addPlanActivity(planId, 'error', `Task ${task.id} container error`, error.message)
+  })
+
+  // Start the agent
+  try {
+    await agent.start({
+      prompt: taskPrompt,
+      worktreePath: worktree.path,
+      planDir,
+      taskId: task.id,
+      image: DOCKER_IMAGE_NAME,
+    })
+
+    addPlanActivity(planId, 'info', `Task ${task.id} started (headless container)`)
+  } catch (error) {
+    agentInfo.status = 'failed'
+    agentInfo.completedAt = new Date().toISOString()
+    emitHeadlessAgentUpdate(agentInfo)
+
+    headlessAgents.delete(task.id)
+    headlessAgentInfo.delete(task.id)
+
+    throw error
+  }
+}
+
+/**
+ * Stop a headless task agent
+ */
+export async function stopHeadlessTaskAgent(taskId: string): Promise<void> {
+  const agent = headlessAgents.get(taskId)
+  if (agent) {
+    await agent.stop()
+    headlessAgents.delete(taskId)
+  }
+  headlessAgentInfo.delete(taskId)
+}
+
+/**
+ * Stop all headless agents for a plan
+ */
+async function stopAllHeadlessAgents(planId: string): Promise<void> {
+  const promises: Promise<void>[] = []
+
+  for (const [taskId, info] of headlessAgentInfo) {
+    if (info.planId === planId) {
+      promises.push(stopHeadlessTaskAgent(taskId))
+    }
+  }
+
+  await Promise.all(promises)
+}
+
+/**
+ * Build task prompt for headless mode (includes container-specific instructions)
+ */
+function buildTaskPromptForHeadless(planId: string, task: BeadTask, repository?: Repository): string {
+  // The bd CLI and gh commands go through the proxy in container mode
+  const prInstructions = repository?.prFlow?.enabled
+    ? `2. Create a PR: gh pr create --base ${repository.prFlow.baseBranch}
+${repository.prFlow.greenPRCriteria ? `3. Verify PR is green: ${repository.prFlow.greenPRCriteria}` : ''}
+4. Close task: bd --sandbox close ${task.id} --message "PR: <url>"`
+    : `2. Commit your changes
+3. Close task: bd --sandbox close ${task.id} --message "Completed"`
+
+  return `[BISMARK TASK - HEADLESS MODE]
+Task ID: ${task.id}
+Title: ${task.title}
+
+=== ENVIRONMENT ===
+You are running in a Docker container with:
+- Working directory: /workspace (your worktree)
+- Plan directory: /plan (read-only, for bd commands)
+- Tool proxy: gh commands are proxied to the host
+
+=== YOUR WORKING DIRECTORY ===
+You are working in a dedicated git worktree for this task.
+Base: ${repository?.prFlow?.baseBranch || repository?.defaultBranch || 'main'}
+
+=== COMPLETION REQUIREMENTS ===
+1. Complete the work described in the task
+${prInstructions}
+
+Note: You must complete your work and close the task. There is no interactive mode.`
+}
+
+/**
+ * Emit headless agent update to renderer
+ */
+function emitHeadlessAgentUpdate(info: HeadlessAgentInfo): void {
+  console.log('[PlanManager] Emitting headless-agent-update', { taskId: info.taskId, status: info.status })
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('headless-agent-update', info)
+  } else {
+    console.log('[PlanManager] Cannot emit headless-agent-update - mainWindow:', mainWindow ? 'exists but destroyed' : 'null')
+  }
+}
+
+/**
+ * Emit headless agent event to renderer
+ */
+function emitHeadlessAgentEvent(planId: string, taskId: string, event: StreamEvent): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('headless-agent-event', { planId, taskId, event })
+  }
+}
+
+/**
  * Cleanup a task agent and its worktree
  */
 async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
@@ -1056,9 +1366,12 @@ async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
   const worktree = plan.worktrees.find(w => w.taskId === taskId)
   if (!worktree) return
 
+  // Stop headless agent if running
+  await stopHeadlessTaskAgent(taskId)
+
   const agent = getWorkspaces().find(a => a.id === worktree.agentId)
 
-  // Close terminal if open
+  // Close terminal if open (for interactive mode)
   if (agent) {
     const terminalId = getTerminalForWorkspace(agent.id)
     if (terminalId) {
@@ -1158,6 +1471,9 @@ export async function completePlan(planId: string): Promise<Plan | null> {
   const plan = getPlanById(planId)
   if (!plan) return null
 
+  // Stop any remaining headless agents
+  await stopAllHeadlessAgents(planId)
+
   // Clean up all worktrees
   await cleanupAllWorktrees(planId)
 
@@ -1173,6 +1489,13 @@ export async function completePlan(planId: string): Promise<Plan | null> {
 
   // Remove from executing set
   executingPlans.delete(planId)
+
+  // Stop tool proxy if no more active plans
+  const activePlans = loadPlans().filter(p => p.status === 'delegating' || p.status === 'in_progress')
+  if (activePlans.length === 0 && isProxyRunning()) {
+    await stopToolProxy()
+    addPlanActivity(planId, 'info', 'Tool proxy stopped')
+  }
 
   return plan
 }
@@ -1275,4 +1598,41 @@ function emitStateUpdate(): void {
     const state = getState()
     mainWindow.webContents.send('state-update', state)
   }
+}
+
+/**
+ * Cleanup all plan-related resources (called on app shutdown)
+ */
+export async function cleanupPlanManager(): Promise<void> {
+  console.log('[PlanManager] Cleaning up...')
+
+  // Stop task polling
+  stopTaskPolling()
+
+  // Stop all headless agents
+  for (const [taskId] of headlessAgents) {
+    try {
+      await stopHeadlessTaskAgent(taskId)
+    } catch (error) {
+      console.error(`[PlanManager] Error stopping headless agent ${taskId}:`, error)
+    }
+  }
+
+  // Stop all Docker containers (belt and suspenders)
+  try {
+    await stopAllContainers()
+  } catch (error) {
+    console.error('[PlanManager] Error stopping containers:', error)
+  }
+
+  // Stop tool proxy
+  if (isProxyRunning()) {
+    try {
+      await stopToolProxy()
+    } catch (error) {
+      console.error('[PlanManager] Error stopping tool proxy:', error)
+    }
+  }
+
+  console.log('[PlanManager] Cleanup complete')
 }
