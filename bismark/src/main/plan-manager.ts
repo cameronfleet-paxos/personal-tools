@@ -21,7 +21,7 @@ import {
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
 import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState } from './state-manager'
-import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus, BranchStrategy, PlanCommit, PlanPullRequest } from '../shared/types'
+import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus, BranchStrategy, PlanCommit, PlanPullRequest, PlanDiscussion } from '../shared/types'
 import {
   createWorktree,
   removeWorktree,
@@ -328,6 +328,255 @@ export function updatePlanStatus(planId: string, status: PlanStatus): Plan | nul
   plan.updatedAt = new Date().toISOString()
   savePlan(plan)
   emitPlanUpdate(plan)
+  return plan
+}
+
+/**
+ * Generate a unique discussion ID
+ */
+function generateDiscussionId(): string {
+  return `disc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+}
+
+/**
+ * Build the prompt for the Discussion Agent
+ * This agent engages the user in structured brainstorming BEFORE task creation
+ */
+function buildDiscussionAgentPrompt(plan: Plan, codebasePath: string): string {
+  return `[BISMARK DISCUSSION AGENT]
+Plan: ${plan.title}
+${plan.description}
+
+=== YOUR ROLE ===
+You are a Discussion Agent helping to refine this plan BEFORE implementation.
+Your goal is to help the user think through the problem completely before any code is written.
+
+=== THE PROCESS ===
+1. **Understanding the idea:**
+   - Check the codebase at ${codebasePath} first to understand the existing architecture
+   - Ask questions ONE AT A TIME (never overwhelm with multiple questions)
+   - Prefer multiple choice when possible (easier for user to respond)
+   - Focus on: purpose, constraints, success criteria
+
+2. **Exploring approaches:**
+   - Propose 2-3 different approaches with trade-offs
+   - Lead with your recommended option and explain why
+   - Wait for user feedback before proceeding
+
+3. **Presenting the design:**
+   - Present in sections of 200-300 words
+   - Ask after each section if it looks right
+   - Cover: architecture, components, testing, monitoring, error handling
+
+=== CATEGORIES TO COVER ===
+Make sure to discuss these areas (in order):
+- **Requirements**: What are the acceptance criteria? What constraints exist? Who are the users?
+- **Architecture**: What patterns should we use? How does this integrate with existing code?
+- **Testing**: What test types do we need? What edge cases must we cover?
+- **Monitoring**: What metrics should we track? What logging is needed?
+- **Edge cases**: What failure modes exist? How do we handle errors?
+
+=== KEY PRINCIPLES ===
+- Ask ONE question at a time
+- Multiple choice is preferred (e.g., "Which approach do you prefer? A) ... B) ... C) ...")
+- YAGNI ruthlessly - challenge any unnecessary features
+- Always propose 2-3 approaches before settling on one
+- Present design in digestible sections (200-300 words)
+- Be opinionated - share your recommendation clearly
+
+=== WHEN COMPLETE ===
+When you have covered all the key areas and the user seems satisfied:
+1. Summarize the key decisions made in a clear list
+2. Ask: "Ready to create tasks for this plan? Type 'yes' to proceed."
+3. When the user confirms with 'yes', type /exit to signal that discussion is complete
+
+=== BEGIN ===
+Start by briefly reviewing the codebase structure, then ask your first clarifying question about the requirements.`
+}
+
+/**
+ * Start a discussion phase for a plan
+ * This engages the user in structured brainstorming before task creation
+ */
+export async function startDiscussion(planId: string, referenceAgentId: string): Promise<Plan | null> {
+  const plan = getPlanById(planId)
+  if (!plan) return null
+
+  // Only start discussion from draft status
+  if (plan.status !== 'draft') {
+    console.log(`[PlanManager] Cannot start discussion for plan ${planId} - status is ${plan.status}`)
+    return plan
+  }
+
+  // Get reference workspace for codebase path
+  const allAgents = getWorkspaces()
+  const referenceWorkspace = allAgents.find(a => a.id === referenceAgentId)
+
+  if (!referenceWorkspace) {
+    addPlanActivity(planId, 'error', `Reference agent not found: ${referenceAgentId}`)
+    return null
+  }
+
+  // Create discussion state
+  const discussion: PlanDiscussion = {
+    id: generateDiscussionId(),
+    planId,
+    status: 'active',
+    messages: [],
+    startedAt: new Date().toISOString(),
+  }
+
+  // Update plan status and set reference agent
+  plan.status = 'discussing'
+  plan.referenceAgentId = referenceAgentId
+  plan.discussion = discussion
+  plan.updatedAt = new Date().toISOString()
+
+  // Create a dedicated tab for the discussion
+  const discussionTab = createTab(`💬 ${plan.title.substring(0, 15)}`, { isPlanTab: true, planId: plan.id })
+  plan.orchestratorTabId = discussionTab.id
+
+  savePlan(plan)
+  emitPlanUpdate(plan)
+
+  addPlanActivity(planId, 'info', 'Discussion phase started')
+
+  // Create discussion agent workspace
+  const discussionWorkspace: Workspace = {
+    id: `discussion-${planId}`,
+    name: `Discussion (${plan.title})`,
+    directory: referenceWorkspace.directory, // Run in the codebase directory
+    purpose: 'Plan discussion and refinement',
+    theme: 'purple',
+    icon: getRandomUniqueIcon(allAgents),
+  }
+  saveWorkspace(discussionWorkspace)
+  plan.discussionAgentWorkspaceId = discussionWorkspace.id
+  savePlan(plan)
+
+  // Create terminal for discussion agent
+  if (mainWindow) {
+    try {
+      const discussionPrompt = buildDiscussionAgentPrompt(plan, referenceWorkspace.directory)
+      const claudeFlags = `--add-dir "${referenceWorkspace.directory}"`
+
+      console.log(`[PlanManager] Creating terminal for discussion agent ${discussionWorkspace.id}`)
+      const terminalId = createTerminal(discussionWorkspace.id, mainWindow, discussionPrompt, claudeFlags)
+      console.log(`[PlanManager] Created discussion terminal: ${terminalId}`)
+
+      addActiveWorkspace(discussionWorkspace.id)
+      addWorkspaceToTab(discussionWorkspace.id, discussionTab.id)
+      setActiveTab(discussionTab.id)
+
+      // Notify renderer about the new terminal
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('terminal-created', {
+          terminalId,
+          workspaceId: discussionWorkspace.id,
+        })
+      }
+
+      // Set up listener for discussion agent exit
+      const discussionEmitter = getTerminalEmitter(terminalId)
+      if (discussionEmitter) {
+        const exitHandler = (data: string) => {
+          // Claude shows "Goodbye!" when /exit is used
+          if (data.includes('Goodbye') || data.includes('Session ended')) {
+            discussionEmitter.removeListener('data', exitHandler)
+            completeDiscussion(planId)
+          }
+        }
+        discussionEmitter.on('data', exitHandler)
+      }
+
+      addPlanActivity(planId, 'success', 'Discussion agent started - waiting for input')
+      emitStateUpdate()
+    } catch (error) {
+      console.error(`[PlanManager] Failed to create discussion terminal:`, error)
+      addPlanActivity(planId, 'error', 'Failed to start discussion', error instanceof Error ? error.message : 'Unknown error')
+    }
+  } else {
+    console.error(`[PlanManager] Cannot create discussion terminal - mainWindow is null`)
+    addPlanActivity(planId, 'error', 'Cannot start discussion - window not available')
+  }
+
+  return plan
+}
+
+/**
+ * Complete the discussion phase and transition to execution
+ */
+async function completeDiscussion(planId: string): Promise<void> {
+  const plan = getPlanById(planId)
+  if (!plan || plan.status !== 'discussing') return
+
+  // Update discussion status
+  if (plan.discussion) {
+    plan.discussion.status = 'approved'
+    plan.discussion.approvedAt = new Date().toISOString()
+    // Generate a summary from the discussion (the agent should have done this)
+    plan.discussion.summary = 'Discussion completed - see terminal output for decisions made.'
+  }
+
+  // Cleanup discussion agent
+  if (plan.discussionAgentWorkspaceId) {
+    const terminalId = getTerminalForWorkspace(plan.discussionAgentWorkspaceId)
+    if (terminalId) {
+      closeTerminal(terminalId)
+    }
+    removeActiveWorkspace(plan.discussionAgentWorkspaceId)
+    removeWorkspaceFromTab(plan.discussionAgentWorkspaceId)
+    deleteWorkspace(plan.discussionAgentWorkspaceId)
+    plan.discussionAgentWorkspaceId = null
+  }
+
+  plan.updatedAt = new Date().toISOString()
+  savePlan(plan)
+
+  addPlanActivity(planId, 'success', 'Discussion completed - ready for execution')
+  emitPlanUpdate(plan)
+  emitStateUpdate()
+}
+
+/**
+ * Cancel a discussion and return to draft status
+ */
+export async function cancelDiscussion(planId: string): Promise<Plan | null> {
+  const plan = getPlanById(planId)
+  if (!plan || plan.status !== 'discussing') return plan || null
+
+  // Update discussion status
+  if (plan.discussion) {
+    plan.discussion.status = 'cancelled'
+  }
+
+  // Cleanup discussion agent
+  if (plan.discussionAgentWorkspaceId) {
+    const terminalId = getTerminalForWorkspace(plan.discussionAgentWorkspaceId)
+    if (terminalId) {
+      closeTerminal(terminalId)
+    }
+    removeActiveWorkspace(plan.discussionAgentWorkspaceId)
+    removeWorkspaceFromTab(plan.discussionAgentWorkspaceId)
+    deleteWorkspace(plan.discussionAgentWorkspaceId)
+    plan.discussionAgentWorkspaceId = null
+  }
+
+  // Delete the tab
+  if (plan.orchestratorTabId) {
+    deleteTab(plan.orchestratorTabId)
+    plan.orchestratorTabId = null
+  }
+
+  // Return to draft status
+  plan.status = 'draft'
+  plan.updatedAt = new Date().toISOString()
+  savePlan(plan)
+
+  addPlanActivity(planId, 'info', 'Discussion cancelled - returned to draft')
+  emitPlanUpdate(plan)
+  emitStateUpdate()
+
   return plan
 }
 
@@ -1107,12 +1356,26 @@ Begin by waiting for the Plan Agent to create tasks, then start assigning reposi
 function buildPlanAgentPrompt(plan: Plan, _agents: Agent[], codebasePath: string): string {
   const planDir = getPlanDir(plan.id)
 
+  // Include discussion context if a discussion was completed
+  const discussionContext = plan.discussion?.status === 'approved' && plan.discussion?.summary
+    ? `
+=== DISCUSSION OUTCOMES ===
+A brainstorming discussion was completed before task creation. Key decisions:
+
+${plan.discussion.summary}
+
+IMPORTANT: Create tasks that align with these decisions. The discussion covered
+requirements, architecture, testing, and edge cases. Honor these decisions.
+
+`
+    : ''
+
   return `[BISMARK PLAN AGENT]
 Plan ID: ${plan.id}
 Title: ${plan.title}
 
 ${plan.description}
-
+${discussionContext}
 === YOUR TASK ===
 You are the Plan Agent. Your job is to:
 1. Understand the problem/feature described above
@@ -1478,10 +1741,17 @@ All these commands work normally (they are proxied to the host automatically):
    - git commit -m "Your commit message"
    - git push origin HEAD
 
+   IMPORTANT: For git commit, always use -m "message" inline.
+   Do NOT use --file or -F flags - file paths don't work across the proxy
+   since files in the container aren't accessible to git on the host.
+
 2. GitHub CLI (gh):
    - gh pr create --base ${baseBranch} --title "..." --body "..."
    - gh pr view
    - All standard gh commands work
+
+   IMPORTANT: For gh pr create, always use --body "..." inline.
+   Do NOT use --body-file - file paths don't work across the proxy.
 
 3. Beads Task Management (bd):
    - bd close ${task.id} --message "..."  (REQUIRED when done)

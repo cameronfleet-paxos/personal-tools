@@ -12,6 +12,7 @@
  */
 
 import * as http from 'http'
+import * as net from 'net'
 import * as path from 'path'
 import * as os from 'os'
 import { spawn } from 'child_process'
@@ -33,6 +34,35 @@ const DEFAULT_CONFIG: ToolProxyConfig = {
     bd: { enabled: true },
     git: { enabled: true },
   },
+}
+
+// Port range for dynamic allocation
+const PORT_RANGE_START = 9847
+const PORT_RANGE_END = 9857
+
+/**
+ * Check if a port is available for binding
+ */
+function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const testServer = net.createServer()
+    testServer.once('error', () => resolve(false))
+    testServer.once('listening', () => {
+      testServer.close(() => resolve(true))
+    })
+    testServer.listen(port, '0.0.0.0')
+  })
+}
+
+/**
+ * Find the first available port in the configured range
+ */
+async function findAvailablePort(): Promise<number> {
+  for (let port = PORT_RANGE_START; port <= PORT_RANGE_END; port++) {
+    const available = await isPortAvailable(port)
+    if (available) return port
+  }
+  throw new Error(`No available ports in range ${PORT_RANGE_START}-${PORT_RANGE_END}`)
 }
 
 interface ProxyRequest {
@@ -341,16 +371,17 @@ async function handleRequest(
 /**
  * Start the tool proxy server
  */
-export function startToolProxy(config: Partial<ToolProxyConfig> = {}): Promise<void> {
+export async function startToolProxy(config: Partial<ToolProxyConfig> = {}): Promise<void> {
+  if (server) {
+    console.log('[ToolProxy] Server already running')
+    return
+  }
+
+  // Find available port if not explicitly specified
+  const port = config.port ?? (await findAvailablePort())
+  currentConfig = { ...DEFAULT_CONFIG, ...config, port }
+
   return new Promise((resolve, reject) => {
-    currentConfig = { ...DEFAULT_CONFIG, ...config }
-
-    if (server) {
-      console.log('[ToolProxy] Server already running')
-      resolve()
-      return
-    }
-
     server = http.createServer((req, res) => {
       handleRequest(req, res).catch((err) => {
         console.error('[ToolProxy] Request error:', err)
