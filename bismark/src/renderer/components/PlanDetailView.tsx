@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, Clock, CheckCircle2, AlertCircle } from 'lucide-react'
+import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -127,6 +127,24 @@ export function PlanDetailView({
           <p className="text-xs text-muted-foreground">{plan.description}</p>
         )}
 
+        {/* Branch strategy badge */}
+        <div className="flex items-center gap-2 text-xs">
+          {plan.branchStrategy === 'feature_branch' ? (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-500">
+              <GitBranch className="h-3 w-3" />
+              Feature Branch
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-500">
+              <GitPullRequest className="h-3 w-3" />
+              Raise PRs
+            </span>
+          )}
+          {plan.baseBranch && (
+            <span className="text-muted-foreground">Base: {plan.baseBranch}</span>
+          )}
+        </div>
+
         {/* Worktree info */}
         {plan.worktrees && plan.worktrees.length > 0 && (
           <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -184,6 +202,101 @@ export function PlanDetailView({
           </div>
         )}
       </div>
+
+      {/* Git Summary section */}
+      {plan.gitSummary && (
+        <div className="p-3 border-b">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+            Git Summary
+          </h3>
+
+          {/* Commits (feature_branch strategy) */}
+          {plan.gitSummary.commits && plan.gitSummary.commits.length > 0 && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                <GitCommit className="h-3 w-3" />
+                <span>{plan.gitSummary.commits.length} commit(s)</span>
+                {plan.featureBranch && (() => {
+                  // Extract GitHub repo URL from the first commit's githubUrl
+                  const firstCommit = plan.gitSummary.commits?.[0]
+                  const repoUrl = firstCommit?.githubUrl?.replace(/\/commit\/[a-f0-9]+$/, '')
+                  const branchUrl = repoUrl ? `${repoUrl}/tree/${plan.featureBranch}` : null
+
+                  return branchUrl ? (
+                    <button
+                      onClick={() => window.electronAPI.openExternal(branchUrl)}
+                      className="ml-1 flex items-center gap-0.5 hover:text-foreground"
+                      title="View feature branch on GitHub"
+                    >
+                      <span>→ {plan.featureBranch}</span>
+                      <ExternalLink className="h-2.5 w-2.5" />
+                    </button>
+                  ) : (
+                    <span className="ml-1">→ {plan.featureBranch}</span>
+                  )
+                })()}
+              </div>
+              <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                {plan.gitSummary.commits.map((commit) => (
+                  <div key={commit.sha} className="text-xs flex items-start gap-1.5 p-1 hover:bg-muted/30 rounded">
+                    <code className="text-muted-foreground font-mono shrink-0">{commit.shortSha}</code>
+                    <span className="truncate flex-1">{commit.message}</span>
+                    {commit.githubUrl && (
+                      <button
+                        onClick={() => window.electronAPI.openExternal(commit.githubUrl!)}
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        title="View on GitHub"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Pull Requests (raise_prs strategy) */}
+          {plan.gitSummary.pullRequests && plan.gitSummary.pullRequests.length > 0 && (
+            <div className="space-y-1">
+              <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                <GitPullRequest className="h-3 w-3" />
+                <span>{plan.gitSummary.pullRequests.length} PR(s)</span>
+              </div>
+              <div className="space-y-1">
+                {plan.gitSummary.pullRequests.map((pr) => (
+                  <div key={pr.number} className="text-xs flex items-center gap-2 p-1.5 border rounded hover:bg-muted/30">
+                    <span className={`px-1 py-0.5 rounded text-[10px] font-medium ${
+                      pr.status === 'merged' ? 'bg-purple-500/20 text-purple-500' :
+                      pr.status === 'open' ? 'bg-green-500/20 text-green-500' :
+                      'bg-red-500/20 text-red-500'
+                    }`}>
+                      {pr.status}
+                    </span>
+                    <span className="text-muted-foreground">#{pr.number}</span>
+                    <span className="truncate flex-1">{pr.title}</span>
+                    <button
+                      onClick={() => window.electronAPI.openExternal(pr.url)}
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      title="View PR on GitHub"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Empty state */}
+          {(!plan.gitSummary.commits || plan.gitSummary.commits.length === 0) &&
+           (!plan.gitSummary.pullRequests || plan.gitSummary.pullRequests.length === 0) && (
+            <div className="text-xs text-muted-foreground text-center py-2">
+              No git activity yet
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tasks section */}
       {planTasks.length > 0 && (

@@ -28,6 +28,7 @@ import {
   pruneWorktrees,
   generateUniqueBranchName,
   pushBranch,
+  pushBranchToRemoteBranch,
   getCommitsBetween,
   fetchAndRebase,
   getGitHubUrlFromRemote,
@@ -1704,15 +1705,16 @@ async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repositor
     // Record commits in worktree tracking
     worktree.commits = commits.map(c => c.sha)
 
-    // Fetch and rebase onto feature branch
+    // Fetch and rebase onto feature branch if it exists
     try {
       await fetchAndRebase(worktree.path, plan.featureBranch)
     } catch {
-      // Feature branch might not exist yet, that's OK
+      // Feature branch might not exist yet, that's OK - we'll create it with the push
     }
 
-    // Push to feature branch
-    await pushBranch(worktree.path, worktree.branch, 'origin', true)
+    // Push local branch to the shared feature branch on remote
+    // This merges all task work into a single feature branch
+    await pushBranchToRemoteBranch(worktree.path, 'HEAD', plan.featureBranch, 'origin')
 
     // Record commits in git summary
     const githubUrl = getGitHubUrlFromRemote(repository.remoteUrl)

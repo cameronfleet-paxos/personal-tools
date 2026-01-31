@@ -336,3 +336,166 @@ export async function generateUniqueBranchName(
 
   return name;
 }
+
+/**
+ * Push a branch to remote
+ */
+export async function pushBranch(
+  repoPath: string,
+  branchName: string,
+  remote = 'origin',
+  setUpstream = true
+): Promise<void> {
+  const upstreamFlag = setUpstream ? '-u ' : '';
+  await gitExec(
+    `git push ${upstreamFlag}${remote} "${branchName}"`,
+    repoPath
+  );
+}
+
+/**
+ * Push a local ref to a different remote branch name
+ * e.g., push HEAD to origin/feature-branch
+ */
+export async function pushBranchToRemoteBranch(
+  repoPath: string,
+  localRef: string,
+  remoteBranch: string,
+  remote = 'origin'
+): Promise<void> {
+  // git push origin HEAD:refs/heads/feature-branch
+  await gitExec(
+    `git push ${remote} "${localRef}:refs/heads/${remoteBranch}"`,
+    repoPath
+  );
+}
+
+/**
+ * Get commits between two refs (base..head)
+ * Returns array of commit objects with sha, message, timestamp
+ */
+export async function getCommitsBetween(
+  repoPath: string,
+  baseRef: string,
+  headRef: string
+): Promise<Array<{ sha: string; shortSha: string; message: string; timestamp: string }>> {
+  try {
+    // Use %H for full sha, %h for short sha, %s for subject, %aI for ISO timestamp
+    const { stdout } = await gitExec(
+      `git log --format="%H|%h|%s|%aI" "${baseRef}..${headRef}"`,
+      repoPath
+    );
+
+    if (!stdout.trim()) {
+      return [];
+    }
+
+    return stdout
+      .trim()
+      .split('\n')
+      .map((line) => {
+        const [sha, shortSha, message, timestamp] = line.split('|');
+        return { sha, shortSha, message, timestamp };
+      });
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch from remote and rebase current branch onto target branch
+ */
+export async function fetchAndRebase(
+  repoPath: string,
+  targetBranch: string,
+  remote = 'origin'
+): Promise<void> {
+  // Fetch latest from remote
+  await gitExec(`git fetch ${remote}`, repoPath);
+
+  // Rebase onto the target branch
+  await gitExec(`git rebase "${remote}/${targetBranch}"`, repoPath);
+}
+
+/**
+ * Get the GitHub URL for a repository from its remote URL
+ * Converts git@github.com:org/repo.git to https://github.com/org/repo
+ */
+export function getGitHubUrlFromRemote(remoteUrl: string | null | undefined): string | null {
+  if (!remoteUrl) return null;
+
+  // Handle SSH URLs: git@github.com:org/repo.git
+  const sshMatch = remoteUrl.match(/git@github\.com:(.+?)(?:\.git)?$/);
+  if (sshMatch) {
+    return `https://github.com/${sshMatch[1]}`;
+  }
+
+  // Handle HTTPS URLs: https://github.com/org/repo.git
+  const httpsMatch = remoteUrl.match(/https:\/\/github\.com\/(.+?)(?:\.git)?$/);
+  if (httpsMatch) {
+    return `https://github.com/${httpsMatch[1]}`;
+  }
+
+  return null;
+}
+
+/**
+ * Get the current HEAD commit SHA
+ */
+export async function getHeadCommit(repoPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await gitExec('git rev-parse HEAD', repoPath);
+    return stdout.trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Create and checkout a new branch from a base branch
+ */
+export async function createBranch(
+  repoPath: string,
+  branchName: string,
+  baseBranch: string
+): Promise<void> {
+  // Fetch latest first
+  try {
+    await gitExec('git fetch origin', repoPath);
+  } catch {
+    // Ignore fetch errors (might not have network)
+  }
+
+  // Create branch from origin/baseBranch if available, otherwise local
+  try {
+    await gitExec(
+      `git checkout -b "${branchName}" "origin/${baseBranch}"`,
+      repoPath
+    );
+  } catch {
+    await gitExec(
+      `git checkout -b "${branchName}" "${baseBranch}"`,
+      repoPath
+    );
+  }
+}
+
+/**
+ * Checkout an existing branch
+ */
+export async function checkoutBranch(
+  repoPath: string,
+  branchName: string
+): Promise<void> {
+  await gitExec(`git checkout "${branchName}"`, repoPath);
+}
+
+/**
+ * Pull latest changes for the current branch
+ */
+export async function pullBranch(
+  repoPath: string,
+  remote = 'origin'
+): Promise<void> {
+  await gitExec(`git pull ${remote}`, repoPath);
+}
