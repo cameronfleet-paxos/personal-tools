@@ -1395,6 +1395,7 @@ async function startHeadlessTaskAgent(
       planId,
       taskId: task.id,
       image: DOCKER_IMAGE_NAME,
+      claudeFlags: ['--model', 'opus'],
     })
 
     addPlanActivity(planId, 'info', `Task ${task.id} started (headless container)`)

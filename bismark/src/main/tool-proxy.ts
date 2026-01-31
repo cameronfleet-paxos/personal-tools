@@ -148,33 +148,9 @@ async function handleGhRequest(
   try {
     const body = (await parseBody(req)) as ProxyRequest
 
-    // Build gh command based on subpath
-    let args: string[] = []
-
-    switch (subpath) {
-      case '/pr/create':
-        args = ['pr', 'create', ...body.args]
-        break
-      case '/pr/view':
-        args = ['pr', 'view', ...body.args]
-        break
-      case '/pr/list':
-        args = ['pr', 'list', ...body.args]
-        break
-      case '/issue/create':
-        args = ['issue', 'create', ...body.args]
-        break
-      case '/issue/view':
-        args = ['issue', 'view', ...body.args]
-        break
-      case '/api':
-        // Raw API access - args should contain full gh api command
-        args = ['api', ...body.args]
-        break
-      default:
-        // Generic passthrough - use args directly
-        args = body.args || []
-    }
+    // Args already include subcommands from gh-proxy-wrapper.sh
+    // The subpath is only used for logging/routing, not command building
+    const args = body.args || []
 
     // Log the operation
     proxyEvents.emit('gh', { subpath, args })
