@@ -14,7 +14,8 @@ interface PlanSidebarProps {
   onCreatePlan: () => void
   onSelectPlan: (planId: string | null) => void
   onExecutePlan: (planId: string, referenceAgentId: string) => void
-  onCancelPlan: (planId: string) => void
+  onCancelPlan: (planId: string) => Promise<void>
+  onCompletePlan: (planId: string) => void
 }
 
 export function PlanSidebar({
@@ -29,11 +30,12 @@ export function PlanSidebar({
   onSelectPlan,
   onExecutePlan,
   onCancelPlan,
+  onCompletePlan,
 }: PlanSidebarProps) {
   if (!open) return null
 
   const activePlans = plans.filter(
-    (p) => p.status === 'delegating' || p.status === 'in_progress'
+    (p) => p.status === 'delegating' || p.status === 'in_progress' || p.status === 'ready_for_review'
   )
   const draftPlans = plans.filter((p) => p.status === 'draft')
   const completedPlans = plans.filter(
@@ -82,6 +84,7 @@ export function PlanSidebar({
                     isActive={activePlanId === plan.id}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
                     onCancel={() => onCancelPlan(plan.id)}
+                    onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
                   />
                 ))}
@@ -103,6 +106,7 @@ export function PlanSidebar({
                     isActive={activePlanId === plan.id}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
                     onCancel={() => onCancelPlan(plan.id)}
+                    onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
                   />
                 ))}
@@ -124,6 +128,7 @@ export function PlanSidebar({
                     isActive={activePlanId === plan.id}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
                     onCancel={() => onCancelPlan(plan.id)}
+                    onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
                   />
                 ))}

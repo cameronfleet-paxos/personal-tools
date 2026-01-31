@@ -115,11 +115,12 @@ export function setFocusedWorkspace(workspaceId: string | undefined): void {
 
 // Tab management functions
 
-export function createTab(name?: string): AgentTab {
+export function createTab(name?: string, options?: { isPlanTab?: boolean }): AgentTab {
   const tab: AgentTab = {
     id: generateTabId(),
     name: name || getNextTabName(),
     workspaceIds: [],
+    isPlanTab: options?.isPlanTab,
   }
   currentState.tabs.push(tab)
   persistState()
@@ -185,7 +186,14 @@ export function addWorkspaceToTab(
     return true
   }
 
-  // Find first empty slot (position 0-3)
+  // Plan tabs have no limit - just append
+  if (tab.isPlanTab) {
+    tab.workspaceIds.push(workspaceId)
+    persistState()
+    return true
+  }
+
+  // Regular tabs: find first empty slot (position 0-3)
   // workspaceIds may be sparse or shorter than 4
   let insertPosition = -1
   for (let i = 0; i < MAX_AGENTS_PER_TAB; i++) {

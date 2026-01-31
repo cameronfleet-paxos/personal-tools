@@ -54,8 +54,14 @@ import {
   setPlanManagerWindow,
   startTaskPolling,
   stopTaskPolling,
+  completePlan,
 } from './plan-manager'
-import type { Workspace, AppPreferences } from '../shared/types'
+import {
+  detectRepository,
+  getAllRepositories,
+  updateRepository,
+} from './repository-manager'
+import type { Workspace, AppPreferences, Repository } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -235,8 +241,8 @@ function registerIpcHandlers() {
   })
 
   // Plan management (Team Mode)
-  ipcMain.handle('create-plan', (_event, title: string, description: string) => {
-    return createPlan(title, description)
+  ipcMain.handle('create-plan', (_event, title: string, description: string, maxParallelAgents?: number) => {
+    return createPlan(title, description, maxParallelAgents)
   })
 
   ipcMain.handle('get-plans', () => {
@@ -247,8 +253,12 @@ function registerIpcHandlers() {
     return executePlan(planId, referenceAgentId)
   })
 
-  ipcMain.handle('cancel-plan', (_event, planId: string) => {
+  ipcMain.handle('cancel-plan', async (_event, planId: string) => {
     return cancelPlan(planId)
+  })
+
+  ipcMain.handle('complete-plan', async (_event, planId: string) => {
+    return completePlan(planId)
   })
 
   ipcMain.handle('get-task-assignments', (_event, planId: string) => {
@@ -270,6 +280,19 @@ function registerIpcHandlers() {
   // External URL handling
   ipcMain.handle('open-external', (_event, url: string) => {
     return shell.openExternal(url)
+  })
+
+  // Git repository management
+  ipcMain.handle('detect-git-repository', async (_event, directory: string) => {
+    return detectRepository(directory)
+  })
+
+  ipcMain.handle('get-repositories', async () => {
+    return getAllRepositories()
+  })
+
+  ipcMain.handle('update-repository', async (_event, id: string, updates: Partial<Pick<Repository, 'prFlow' | 'name'>>) => {
+    return updateRepository(id, updates)
   })
 }
 

@@ -1,4 +1,4 @@
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository } from '../shared/types'
 
 export interface ElectronAPI {
   // Workspace management
@@ -49,14 +49,20 @@ export interface ElectronAPI {
   setPreferences: (preferences: Partial<AppPreferences>) => Promise<AppPreferences>
 
   // Plan management (Team Mode)
-  createPlan: (title: string, description: string) => Promise<Plan>
+  createPlan: (title: string, description: string, maxParallelAgents?: number) => Promise<Plan>
   getPlans: () => Promise<Plan[]>
   executePlan: (planId: string, referenceAgentId: string) => Promise<Plan | null>
   cancelPlan: (planId: string) => Promise<Plan | null>
+  completePlan: (planId: string) => Promise<Plan | null>
   getTaskAssignments: (planId: string) => Promise<TaskAssignment[]>
   getPlanActivities: (planId: string) => Promise<PlanActivity[]>
   setPlanSidebarOpen: (open: boolean) => Promise<void>
   setActivePlanId: (planId: string | null) => Promise<void>
+
+  // Git repository management
+  detectGitRepository: (directory: string) => Promise<Repository | null>
+  getRepositories: () => Promise<Repository[]>
+  updateRepository: (id: string, updates: Partial<Pick<Repository, 'prFlow' | 'name'>>) => Promise<Repository | undefined>
 
   // Terminal events
   onTerminalData: (

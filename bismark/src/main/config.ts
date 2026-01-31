@@ -27,6 +27,14 @@ export function getTaskAssignmentsPath(planId: string): string {
   return path.join(getConfigDir(), 'plans', planId, 'task-assignments.json')
 }
 
+export function getPlanWorktreesPath(planId: string): string {
+  return path.join(getConfigDir(), 'plans', planId, 'worktrees')
+}
+
+export function getWorktreePath(planId: string, repoName: string, branchName: string): string {
+  return path.join(getPlanWorktreesPath(planId), repoName, branchName)
+}
+
 export function ensureConfigDirExists(): void {
   const configDir = getConfigDir()
   const dirs = [
@@ -71,9 +79,10 @@ export function getDefaultPreferences(): AppPreferences {
 }
 
 // Atomic write to prevent corruption
-function writeConfigAtomic(filePath: string, data: unknown): void {
+export function writeConfigAtomic(filePath: string, data: unknown | string): void {
   const tempPath = `${filePath}.tmp`
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2))
+  const content = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+  fs.writeFileSync(tempPath, content)
   fs.renameSync(tempPath, filePath)
 }
 

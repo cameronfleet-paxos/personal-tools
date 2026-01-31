@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity } from 'lucide-react'
+import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -11,7 +11,8 @@ interface PlanCardProps {
   activities: PlanActivity[]
   isActive: boolean
   onExecute: (referenceAgentId: string) => void
-  onCancel: () => void
+  onCancel: () => Promise<void>
+  onComplete: () => void
   onClick: () => void
 }
 
@@ -19,6 +20,7 @@ const statusIcons: Record<Plan['status'], React.ReactNode> = {
   draft: <Clock className="h-3 w-3 text-muted-foreground" />,
   delegating: <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />,
   in_progress: <Loader2 className="h-3 w-3 text-yellow-500 animate-spin" />,
+  ready_for_review: <CheckCircle2 className="h-3 w-3 text-purple-500" />,
   completed: <CheckCircle2 className="h-3 w-3 text-green-500" />,
   failed: <AlertCircle className="h-3 w-3 text-red-500" />,
 }
@@ -27,6 +29,7 @@ const statusLabels: Record<Plan['status'], string> = {
   draft: 'Draft',
   delegating: 'Delegating',
   in_progress: 'In Progress',
+  ready_for_review: 'Ready for Review',
   completed: 'Completed',
   failed: 'Failed',
 }
@@ -35,6 +38,7 @@ const statusColors: Record<Plan['status'], string> = {
   draft: 'bg-muted text-muted-foreground',
   delegating: 'bg-blue-500/20 text-blue-500',
   in_progress: 'bg-yellow-500/20 text-yellow-500',
+  ready_for_review: 'bg-purple-500/20 text-purple-500',
   completed: 'bg-green-500/20 text-green-500',
   failed: 'bg-red-500/20 text-red-500',
 }
@@ -72,12 +76,20 @@ export function PlanCard({
   isActive,
   onExecute,
   onCancel,
+  onComplete,
   onClick,
 }: PlanCardProps) {
   const [expanded, setExpanded] = useState(false)
   const [selectedReference, setSelectedReference] = useState<string>('')
   const [activityLogExpanded, setActivityLogExpanded] = useState(true)
+  const [isCancelling, setIsCancelling] = useState(false)
   const activityLogRef = useRef<HTMLDivElement>(null)
+
+  const handleCancel = async () => {
+    setIsCancelling(true)
+    await onCancel()
+    // Note: Component may unmount or plan status may change, but that's fine
+  }
 
   // Auto-scroll to latest activity
   useEffect(() => {
@@ -178,18 +190,73 @@ export function PlanCard({
             <Button
               size="sm"
               variant="destructive"
+              disabled={isCancelling}
               onClick={(e) => {
                 e.stopPropagation()
-                onCancel()
+                handleCancel()
               }}
             >
-              <X className="h-3 w-3 mr-1" />
-              Cancel
+              {isCancelling ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <X className="h-3 w-3 mr-1" />
+                  Cancel
+                </>
+              )}
             </Button>
           )}
 
+          {plan.status === 'ready_for_review' && (
+            <div className="space-y-2">
+              {/* Worktree info */}
+              {plan.worktrees && plan.worktrees.length > 0 && (
+                <div className="text-xs text-muted-foreground">
+                  <div className="flex items-center gap-1 mb-1">
+                    <GitBranch className="h-3 w-3" />
+                    <span>{plan.worktrees.filter(w => w.status !== 'cleaned').length} worktree(s) ready for review</span>
+                  </div>
+                </div>
+              )}
+              <Button
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onComplete()
+                }}
+              >
+                <Check className="h-3 w-3 mr-1" />
+                Mark Complete
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={isCancelling}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleCancel()
+                }}
+              >
+                {isCancelling ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <X className="h-3 w-3 mr-1" />
+                    Cancel
+                  </>
+                )}
+              </Button>
+            </div>
+          )}
+
           {/* Activity Log */}
-          {(plan.status === 'delegating' || plan.status === 'in_progress' || plan.status === 'completed' || plan.status === 'failed') && (
+          {(plan.status === 'delegating' || plan.status === 'in_progress' || plan.status === 'ready_for_review' || plan.status === 'completed' || plan.status === 'failed') && (
             <div className="border rounded-md overflow-hidden">
               <button
                 onClick={(e) => {

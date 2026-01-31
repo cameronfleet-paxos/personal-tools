@@ -1,4 +1,5 @@
 import { BrowserWindow } from 'electron'
+import * as fs from 'fs/promises'
 import {
   loadPlans,
   savePlan,
@@ -9,16 +10,29 @@ import {
   deleteWorkspace,
   getRandomUniqueIcon,
   getWorkspaces,
+  getWorktreePath,
+  getPlanWorktreesPath,
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
-import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter } from './terminal'
+import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
 import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState } from './state-manager'
-import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace } from '../shared/types'
+import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository } from '../shared/types'
+import {
+  createWorktree,
+  removeWorktree,
+  pruneWorktrees,
+  generateUniqueBranchName,
+} from './git-utils'
+import {
+  getRepositoryById,
+  getAllRepositories,
+} from './repository-manager'
 
 let mainWindow: BrowserWindow | null = null
 let pollInterval: NodeJS.Timeout | null = null
 
 const POLL_INTERVAL_MS = 5000 // Poll bd every 5 seconds
+const DEFAULT_MAX_PARALLEL_AGENTS = 4
 
 // In-memory activity storage per plan
 const planActivities: Map<string, PlanActivity[]> = new Map()
@@ -94,7 +108,7 @@ function generatePlanId(): string {
 /**
  * Create a new plan in draft status
  */
-export function createPlan(title: string, description: string): Plan {
+export function createPlan(title: string, description: string, maxParallelAgents?: number): Plan {
   const now = new Date().toISOString()
   const plan: Plan = {
     id: generatePlanId(),
@@ -107,6 +121,8 @@ export function createPlan(title: string, description: string): Plan {
     beadEpicId: null,
     orchestratorWorkspaceId: null,
     orchestratorTabId: null,
+    maxParallelAgents: maxParallelAgents ?? DEFAULT_MAX_PARALLEL_AGENTS,
+    worktrees: [],
   }
 
   savePlan(plan)
@@ -187,7 +203,7 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
   emitPlanUpdate(plan)
 
   // Create a dedicated tab for the orchestrator
-  const orchestratorTab = createTab(`Orchestrator: ${plan.title.substring(0, 20)}`)
+  const orchestratorTab = createTab(plan.title.substring(0, 20), { isPlanTab: true })
   plan.orchestratorTabId = orchestratorTab.id
 
   // Create orchestrator workspace (runs in plan directory to work with bd tasks)
@@ -212,7 +228,7 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
       // Claude will automatically process it when it's ready
       // Pass --add-dir flag so orchestrator has permission to access plan directory without prompts
       const claudeFlags = `--add-dir "${planDir}"`
-      const orchestratorPrompt = buildOrchestratorPrompt(plan, allAgents)
+      const orchestratorPrompt = await buildOrchestratorPrompt(plan, allAgents)
       console.log(`[PlanManager] Creating terminal for orchestrator ${orchestratorWorkspace.id}`)
       const orchestratorTerminalId = createTerminal(orchestratorWorkspace.id, mainWindow, orchestratorPrompt, claudeFlags)
       console.log(`[PlanManager] Created terminal: ${orchestratorTerminalId}`)
@@ -229,11 +245,11 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
         })
       }
 
-      // Create plan agent workspace (runs in reference agent's directory to analyze codebase)
+      // Create plan agent workspace (runs in plan directory so bd commands work without cd)
       const planAgentWorkspace: Workspace = {
         id: `plan-agent-${planId}`,
         name: `Plan Agent (${plan.title})`,
-        directory: referenceWorkspace.directory, // Plan agent runs in codebase directory
+        directory: planDir, // Plan agent runs in plan directory for bd commands
         purpose: 'Initial discovery and task creation',
         theme: 'blue',
         icon: getRandomUniqueIcon(allAgents),
@@ -244,10 +260,11 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
       savePlan(plan)
 
       // Create terminal with plan agent prompt
-      // Pass --add-dir flag so plan agent has permission to access plan directory without prompts
-      const planAgentPrompt = buildPlanAgentPrompt(plan, allAgents)
+      // Pass --add-dir flags so plan agent can access both plan directory and codebase
+      const planAgentClaudeFlags = `--add-dir "${planDir}" --add-dir "${referenceWorkspace.directory}"`
+      const planAgentPrompt = buildPlanAgentPrompt(plan, allAgents, referenceWorkspace.directory)
       console.log(`[PlanManager] Creating terminal for plan agent ${planAgentWorkspace.id}`)
-      const planAgentTerminalId = createTerminal(planAgentWorkspace.id, mainWindow, planAgentPrompt, claudeFlags)
+      const planAgentTerminalId = createTerminal(planAgentWorkspace.id, mainWindow, planAgentPrompt, planAgentClaudeFlags)
       console.log(`[PlanManager] Created plan agent terminal: ${planAgentTerminalId}`)
       addActiveWorkspace(planAgentWorkspace.id)
       addWorkspaceToTab(planAgentWorkspace.id, orchestratorTab.id)
@@ -295,16 +312,17 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
 /**
  * Cancel a plan
  */
-export function cancelPlan(planId: string): Plan | null {
+export async function cancelPlan(planId: string): Promise<Plan | null> {
   const plan = getPlanById(planId)
   if (!plan) return null
 
-  // Cleanup plan agent (if still running)
-  cleanupPlanAgentSilent(plan)
+  // 1. Kill all agents immediately (fast - just closes terminals)
+  killAllPlanAgents(plan)
 
-  // Cleanup orchestrator
-  cleanupOrchestrator(plan)
+  // 2. Cleanup worktrees (slow - git operations)
+  await cleanupAllWorktreesOnly(planId)
 
+  // 3. Update plan state
   plan.status = 'failed'
   plan.updatedAt = new Date().toISOString()
   savePlan(plan)
@@ -315,6 +333,84 @@ export function cancelPlan(planId: string): Plan | null {
   executingPlans.delete(planId)
 
   return plan
+}
+
+/**
+ * Kill all agents for a plan without cleaning up worktrees
+ * This is fast because it just closes terminals
+ */
+function killAllPlanAgents(plan: Plan): void {
+  // Kill task agents
+  if (plan.worktrees) {
+    for (const worktree of plan.worktrees) {
+      if (worktree.agentId) {
+        const terminalId = getTerminalForWorkspace(worktree.agentId)
+        if (terminalId) closeTerminal(terminalId)
+        removeActiveWorkspace(worktree.agentId)
+        removeWorkspaceFromTab(worktree.agentId)
+        deleteWorkspace(worktree.agentId)
+      }
+    }
+  }
+
+  // Kill plan agent
+  if (plan.planAgentWorkspaceId) {
+    const terminalId = getTerminalForWorkspace(plan.planAgentWorkspaceId)
+    if (terminalId) closeTerminal(terminalId)
+    removeActiveWorkspace(plan.planAgentWorkspaceId)
+    removeWorkspaceFromTab(plan.planAgentWorkspaceId)
+    deleteWorkspace(plan.planAgentWorkspaceId)
+    plan.planAgentWorkspaceId = null
+  }
+
+  // Kill orchestrator
+  if (plan.orchestratorWorkspaceId) {
+    const terminalId = getTerminalForWorkspace(plan.orchestratorWorkspaceId)
+    if (terminalId) closeTerminal(terminalId)
+    removeActiveWorkspace(plan.orchestratorWorkspaceId)
+    deleteWorkspace(plan.orchestratorWorkspaceId)
+    plan.orchestratorWorkspaceId = null
+  }
+
+  // Delete orchestrator tab
+  if (plan.orchestratorTabId) {
+    deleteTab(plan.orchestratorTabId)
+    plan.orchestratorTabId = null
+    emitStateUpdate()
+  }
+}
+
+/**
+ * Cleanup worktrees only (without killing agents - they should already be killed)
+ * This is the slow part due to git operations
+ */
+async function cleanupAllWorktreesOnly(planId: string): Promise<void> {
+  const plan = getPlanById(planId)
+  if (!plan || !plan.worktrees) return
+
+  for (const worktree of plan.worktrees) {
+    if (worktree.status === 'cleaned') continue
+
+    const repository = await getRepositoryById(worktree.repositoryId)
+    if (repository) {
+      try {
+        await removeWorktree(repository.rootPath, worktree.path, true)
+      } catch {
+        // Ignore errors, continue cleanup
+      }
+    }
+    worktree.status = 'cleaned'
+  }
+
+  savePlan(plan)
+
+  // Prune stale worktree refs
+  const repositories = await getAllRepositories()
+  for (const repo of repositories) {
+    try {
+      await pruneWorktrees(repo.rootPath)
+    } catch { /* ignore */ }
+  }
 }
 
 /**
@@ -434,11 +530,12 @@ async function syncTasksFromBd(): Promise<void> {
 
     // Check for completed tasks and update assignments
     const allAssignments = loadTaskAssignments(activePlan.id)
+    const closedTasks = await bdList(activePlan.id, { status: 'closed' })
+
     for (const assignment of allAssignments) {
       if (assignment.status === 'sent' || assignment.status === 'in_progress') {
         // Check if task is now closed in bd
-        const tasks = await bdList(activePlan.id, { status: 'closed' })
-        const closedTask = tasks.find((t) => t.id === assignment.beadId)
+        const closedTask = closedTasks.find((t) => t.id === assignment.beadId)
         if (closedTask) {
           assignment.status = 'completed'
           assignment.completedAt = new Date().toISOString()
@@ -453,6 +550,27 @@ async function syncTasksFromBd(): Promise<void> {
             `Task ${closedTask.id} completed`,
             agent ? `Completed by ${agent.name}` : undefined
           )
+
+          // Auto-exit the task agent since its bd task is now closed
+          // This triggers the exit handler which calls markWorktreeReadyForReview()
+          console.log(`[PlanManager] Task ${closedTask.id} closed, looking for task agent`)
+          console.log(`[PlanManager] Assignment beadId: ${assignment.beadId}`)
+          const allWorkspaces = getWorkspaces()
+          console.log(`[PlanManager] All workspaces with taskId:`, allWorkspaces.filter(a => a.taskId).map(a => ({ id: a.id, taskId: a.taskId })))
+
+          const taskAgent = allWorkspaces.find(a => a.taskId === assignment.beadId)
+          if (taskAgent) {
+            const terminalId = getTerminalForWorkspace(taskAgent.id)
+            console.log(`[PlanManager] Found task agent ${taskAgent.id}, terminal=${terminalId}`)
+            if (terminalId) {
+              sendExitToTerminal(terminalId)
+              addPlanActivity(activePlan.id, 'info', `Sending exit to task agent for ${closedTask.id}`)
+            } else {
+              addPlanActivity(activePlan.id, 'warning', `No terminal found for task agent ${taskAgent.id}`)
+            }
+          } else {
+            addPlanActivity(activePlan.id, 'warning', `No task agent found for closed task ${closedTask.id}`)
+          }
         }
       }
     }
@@ -472,13 +590,11 @@ async function syncTasksFromBd(): Promise<void> {
 
 /**
  * Process a task that's ready to be sent to an agent
+ * New model: Creates a fresh task agent with a worktree
  */
 async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
-  if (!task.assignee) {
-    console.warn(`Task ${task.id} is ready but has no assignee`)
-    addPlanActivity(planId, 'warning', `Task ${task.id} has no assignee`, 'Task is marked ready but no agent is assigned')
-    return
-  }
+  const plan = getPlanById(planId)
+  if (!plan) return
 
   // Check if we already have an assignment for this task
   const existingAssignments = loadTaskAssignments(planId)
@@ -487,50 +603,112 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
     return // Already processing or processed
   }
 
-  // Find the agent by name
-  const agents = getWorkspaces()
-  const agent = agents.find(
-    (a) => a.name.toLowerCase() === task.assignee?.toLowerCase() || a.id === task.assignee
-  )
+  // Check if we can spawn more agents
+  if (!canSpawnMoreAgents(planId)) {
+    // Queue for later - will be picked up on next poll when an agent finishes
+    return
+  }
 
-  if (!agent) {
-    console.warn(`Task ${task.id} assigned to unknown agent: ${task.assignee}`)
-    addPlanActivity(planId, 'warning', `Unknown agent: ${task.assignee}`, `Task ${task.id} cannot be dispatched`)
+  // Extract repository and worktree info from task
+  // Expected format: task has repo and worktree in labels or description
+  // The orchestrator sets these via: bd update <task-id> --repo "<repo-name>" --worktree "<name>"
+  const repoLabel = task.labels?.find(l => l.startsWith('repo:'))
+  const worktreeLabel = task.labels?.find(l => l.startsWith('worktree:'))
+
+  if (!repoLabel || !worktreeLabel) {
+    addPlanActivity(
+      planId,
+      'warning',
+      `Task ${task.id} missing repo/worktree assignment`,
+      'Orchestrator must assign repo and worktree before marking ready'
+    )
+    return
+  }
+
+  const repoName = repoLabel.substring('repo:'.length)
+  const worktreeName = worktreeLabel.substring('worktree:'.length)
+
+  // Find the repository
+  const repositories = await getAllRepositories()
+  const repository = repositories.find(r => r.name === repoName)
+
+  if (!repository) {
+    addPlanActivity(planId, 'warning', `Unknown repository: ${repoName}`, `Task ${task.id} cannot be dispatched`)
     return
   }
 
   // Log task discovery
-  addPlanActivity(planId, 'success', `Found task: ${task.id} -> ${agent.name}`, task.title)
+  addPlanActivity(planId, 'info', `Processing task: ${task.id}`, `Repo: ${repoName}, Worktree: ${worktreeName}`)
 
-  // Create assignment immediately to prevent duplicate dispatches during async wait
+  // Create task assignment
   const assignment: TaskAssignment = {
     beadId: task.id,
-    agentId: agent.id,
+    agentId: '', // Will be set after agent creation
     status: 'pending',
     assignedAt: new Date().toISOString(),
   }
   saveTaskAssignment(planId, assignment)
   emitTaskAssignmentUpdate(assignment)
 
-  // Try to send to agent terminal
-  const terminalId = getTerminalForWorkspace(agent.id)
-  if (terminalId) {
-    const taskPrompt = buildTaskPrompt(planId, task)
-    // Send /clear first, wait for it to complete (indicated by "(no content)" output), then send prompt
-    // Use 120s timeout since an existing prompt may need to finish first
-    await injectTextToTerminal(terminalId, '/clear\r')
-    await waitForTerminalOutput(terminalId, '(no content)', 120000)
-    await injectPromptToTerminal(terminalId, taskPrompt)
-    assignment.status = 'sent'
-    saveTaskAssignment(planId, assignment)
-    emitTaskAssignmentUpdate(assignment)
+  // Create worktree and task agent
+  const result = await createTaskAgentWithWorktree(planId, task, repository, worktreeName)
+  if (!result) {
+    addPlanActivity(planId, 'error', `Failed to create task agent for ${task.id}`)
+    return
+  }
 
-    // Remove the bismark-ready label since we've sent it
-    await bdUpdate(planId, task.id, { removeLabels: ['bismark-ready'], addLabels: ['bismark-sent'] })
+  const { agent, worktree } = result
+  assignment.agentId = agent.id
 
-    addPlanActivity(planId, 'success', `Task ${task.id} sent to ${agent.name}`)
-  } else {
-    addPlanActivity(planId, 'warning', `No terminal for ${agent.name}`, `Task ${task.id} queued until agent starts`)
+  // Add agent to orchestrator tab and create terminal
+  if (mainWindow && plan.orchestratorTabId) {
+    try {
+      const taskPrompt = buildTaskPrompt(planId, task, repository)
+      const planDir = getPlanDir(planId)
+      const claudeFlags = `--add-dir "${worktree.path}" --add-dir "${planDir}"`
+
+      const terminalId = createTerminal(agent.id, mainWindow, taskPrompt, claudeFlags, true)
+      addActiveWorkspace(agent.id)
+      addWorkspaceToTab(agent.id, plan.orchestratorTabId)
+
+      // Notify renderer about the new terminal
+      mainWindow.webContents.send('terminal-created', {
+        terminalId,
+        workspaceId: agent.id,
+      })
+
+      // Set up listener for task completion
+      const terminalEmitter = getTerminalEmitter(terminalId)
+      if (terminalEmitter) {
+        const exitHandler = (data: string) => {
+          if (data.includes('Goodbye') || data.includes('Session ended')) {
+            terminalEmitter.removeListener('data', exitHandler)
+            markWorktreeReadyForReview(planId, task.id)
+          }
+        }
+        terminalEmitter.on('data', exitHandler)
+      }
+
+      assignment.status = 'sent'
+      saveTaskAssignment(planId, assignment)
+      emitTaskAssignmentUpdate(assignment)
+
+      // Update bd labels
+      await bdUpdate(planId, task.id, {
+        removeLabels: ['bismark-ready'],
+        addLabels: ['bismark-sent'],
+      })
+
+      addPlanActivity(planId, 'success', `Task ${task.id} started`, `Agent created in worktree: ${worktreeName}`)
+      emitStateUpdate()
+    } catch (error) {
+      addPlanActivity(
+        planId,
+        'error',
+        `Failed to start task agent for ${task.id}`,
+        error instanceof Error ? error.message : 'Unknown error'
+      )
+    }
   }
 }
 
@@ -538,19 +716,30 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
  * Build the prompt to inject into a worker agent's terminal for a task
  * Returns only instructions with trailing newline (no /clear - handled separately)
  */
-function buildTaskPrompt(planId: string, task: BeadTask): string {
+function buildTaskPrompt(planId: string, task: BeadTask, repository?: Repository): string {
   const planDir = getPlanDir(planId)
+
+  const prInstructions = repository?.prFlow?.enabled
+    ? `2. Create a PR: gh pr create --base ${repository.prFlow.baseBranch}
+${repository.prFlow.greenPRCriteria ? `3. Verify PR is green: ${repository.prFlow.greenPRCriteria}` : ''}
+4. Close task with PR URL: cd ${planDir} && bd --sandbox close ${task.id} --message "PR: <url>"`
+    : `2. Commit your changes
+3. Close task: cd ${planDir} && bd --sandbox close ${task.id} --message "Completed"`
 
   const instructions = `[BISMARK TASK ASSIGNMENT]
 Task ID: ${task.id}
 Title: ${task.title}
 
+=== YOUR WORKING DIRECTORY ===
+You are working in a dedicated git worktree for this task.
+Branch: (see git branch)
+Base: ${repository?.prFlow?.baseBranch || repository?.defaultBranch || 'main'}
+
 === COMPLETION REQUIREMENTS ===
 1. Complete the work described in the task
-2. Create a PR: gh pr create
-3. Close task with PR URL: cd ${planDir} && bd --sandbox close ${task.id} --message "PR: <url>"
+${prInstructions}
 
-DO NOT close the task without creating a PR first.`
+When finished, type /exit to signal completion.`
 
   return instructions
 }
@@ -560,12 +749,27 @@ DO NOT close the task without creating a PR first.`
  * Returns only instructions with trailing newline (no /clear - handled separately)
  * Note: Orchestrator runs in the plan directory, so no 'cd' needed for bd commands
  */
-function buildOrchestratorPrompt(plan: Plan, agents: Agent[]): string {
-  // Filter out orchestrator and plan agents from available agents
-  const availableAgents = agents.filter(a => !a.isOrchestrator && !a.isPlanAgent)
-  const agentList = availableAgents
-    .map(a => `- ${a.name}: ${a.purpose || 'General purpose'}`)
-    .join('\n')
+async function buildOrchestratorPrompt(plan: Plan, agents: Agent[]): Promise<string> {
+  // Get repositories from agents that have them
+  const repositories = await getAllRepositories()
+
+  // Build repository list with purposes derived from agents
+  const repoInfoList: string[] = []
+  for (const repo of repositories) {
+    // Find agents that use this repo to get purpose info
+    const repoAgents = agents.filter(a => a.repositoryId === repo.id && !a.isOrchestrator && !a.isPlanAgent && !a.isTaskAgent)
+    const purposes = repoAgents.map(a => a.purpose).filter(Boolean)
+    const purpose = purposes.length > 0 ? purposes[0] : 'No description'
+
+    repoInfoList.push(`- ${repo.name}: ${repo.rootPath} (branch: ${repo.defaultBranch})
+    Purpose: ${purpose}`)
+  }
+
+  const repoList = repoInfoList.length > 0
+    ? repoInfoList.join('\n')
+    : '(No repositories detected - agents may not be linked to git repos)'
+
+  const maxParallel = plan.maxParallelAgents ?? DEFAULT_MAX_PARALLEL_AGENTS
 
   const instructions = `[BISMARK ORCHESTRATOR]
 Plan ID: ${plan.id}
@@ -573,24 +777,30 @@ Title: ${plan.title}
 
 You are the orchestrator. Your job is to:
 1. Wait for Plan Agent to finish creating tasks
-2. Assign unassigned tasks to appropriate agents
-3. Mark first task(s) as ready
+2. Assign each task to a repository and worktree
+3. Mark first task(s) as ready for execution
 4. Monitor task completion and unblock dependents
 
-=== AVAILABLE AGENTS ===
-${agentList}
+=== AVAILABLE REPOSITORIES ===
+${repoList}
+
+=== CONFIGURATION ===
+Max parallel agents: ${maxParallel}
+(Bismark will automatically queue tasks if this limit is reached)
 
 === RULES ===
 1. DO NOT pick up or work on tasks yourself
-2. Assign tasks based on agent purpose/expertise
-3. Mark tasks as ready ONLY when their dependencies are complete
+2. Assign tasks to repositories based on where the work should happen
+3. Choose descriptive worktree names (e.g., "fix-login-bug", "add-user-export")
+4. You can create multiple worktrees for the same repo for parallel work
+5. Mark tasks as ready ONLY when their dependencies are complete
 
 === COMMANDS ===
 List all tasks:
   bd --sandbox list --json
 
-Assign a task:
-  bd --sandbox update <task-id> --assignee "<agent-name>"
+Assign a task to a repository with worktree name:
+  bd --sandbox update <task-id> --add-label "repo:<repo-name>" --add-label "worktree:<descriptive-name>"
 
 Mark task ready for pickup:
   bd --sandbox update <task-id> --add-label bismark-ready
@@ -601,23 +811,26 @@ Check task dependencies:
 === WORKFLOW ===
 Phase 1 - Initial Setup (after Plan Agent exits):
 1. List all tasks: bd --sandbox list --json
-2. For each unassigned task, assign to an appropriate agent
+2. For each task:
+   a. Decide which repository it belongs to
+   b. Assign repo and worktree labels
 3. Mark first task(s) (those with no blockers) as ready
 
 Phase 2 - Monitoring (every 30 seconds):
 1. Check for closed tasks: bd --sandbox list --closed --json
 2. For each newly closed task, find dependents: bd --sandbox dep list <task-id> --direction=up
-3. Check if dependent's blockers are all closed, then mark ready
+3. Check if dependent's blockers are all closed
+4. If all blockers closed, mark the dependent task as ready
 
-Begin by waiting for the Plan Agent to create tasks, then start assigning.`
+Begin by waiting for the Plan Agent to create tasks, then start assigning repositories and worktrees.`
 
   return instructions
 }
 
 /**
  * Build the prompt for the plan agent that creates tasks
- * Note: Plan agent runs in the reference agent's codebase directory but
- * bd commands need to be run in the plan-specific directory
+ * Note: Plan agent runs in the plan directory so bd commands work directly
+ * It has access to the codebase via --add-dir flag for analysis
  *
  * The Plan Agent is responsible for:
  * - Analyzing the codebase
@@ -628,7 +841,7 @@ Begin by waiting for the Plan Agent to create tasks, then start assigning.`
  * - Assigning tasks to agents
  * - Marking tasks as ready
  */
-function buildPlanAgentPrompt(plan: Plan, _agents: Agent[]): string {
+function buildPlanAgentPrompt(plan: Plan, _agents: Agent[], codebasePath: string): string {
   const planDir = getPlanDir(plan.id)
 
   return `[BISMARK PLAN AGENT]
@@ -646,20 +859,24 @@ You are the Plan Agent. Your job is to:
 
 NOTE: The Orchestrator will handle task assignment and marking tasks as ready.
 
+=== IMPORTANT PATHS ===
+- You are running in: ${planDir} (for bd commands)
+- The codebase to analyze is at: ${codebasePath}
+
 === COMMANDS ===
-IMPORTANT: All bd commands must run in the plan directory: ${planDir}
+bd commands run directly (no cd needed):
 
 Create an epic:
-  cd ${planDir} && bd --sandbox create --type epic "${plan.title}"
+  bd --sandbox create --type epic "${plan.title}"
 
 Create a task under the epic:
-  cd ${planDir} && bd --sandbox create --parent <epic-id> "<task title>"
+  bd --sandbox create --parent <epic-id> "<task title>"
 
 Add dependency (task B depends on task A completing first):
-  cd ${planDir} && bd --sandbox dep <task-A-id> --blocks <task-B-id>
+  bd --sandbox dep <task-A-id> --blocks <task-B-id>
 
 === WORKFLOW ===
-1. Analyze the problem
+1. Analyze the codebase at ${codebasePath}
 2. Create an epic for the plan
 3. Create tasks with clear descriptions
 4. Set up dependencies between tasks
@@ -721,6 +938,274 @@ function cleanupPlanAgentSilent(plan: Plan): void {
   emitStateUpdate()
 }
 
+// ===============================================
+// WORKTREE-BASED TASK AGENT FUNCTIONS
+// ===============================================
+
+/**
+ * Check if we can spawn more task agents for a plan
+ */
+function canSpawnMoreAgents(planId: string): boolean {
+  const plan = getPlanById(planId)
+  if (!plan) return false
+
+  const maxParallel = plan.maxParallelAgents ?? DEFAULT_MAX_PARALLEL_AGENTS
+  const activeCount = getActiveTaskAgentCount(planId)
+
+  return activeCount < maxParallel
+}
+
+/**
+ * Get count of active task agents for a plan
+ */
+function getActiveTaskAgentCount(planId: string): number {
+  const plan = getPlanById(planId)
+  if (!plan || !plan.worktrees) return 0
+
+  return plan.worktrees.filter(w => w.status === 'active').length
+}
+
+/**
+ * Generate a unique ID for a worktree
+ */
+function generateWorktreeId(): string {
+  return `wt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+}
+
+/**
+ * Create a fresh worktree and task agent for a task
+ */
+async function createTaskAgentWithWorktree(
+  planId: string,
+  task: BeadTask,
+  repository: Repository,
+  worktreeName: string
+): Promise<{ agent: Agent; worktree: PlanWorktree } | null> {
+  const plan = getPlanById(planId)
+  if (!plan) return null
+
+  // Generate unique branch name
+  const baseBranchName = `bismark/${planId.split('-')[1]}/${worktreeName}`
+  const branchName = await generateUniqueBranchName(repository.rootPath, baseBranchName)
+
+  // Determine worktree path
+  const worktreePath = getWorktreePath(planId, repository.name, worktreeName)
+
+  // Create the worktree
+  try {
+    const baseBranch = repository.prFlow?.baseBranch || repository.defaultBranch
+    await createWorktree(repository.rootPath, worktreePath, branchName, baseBranch)
+    addPlanActivity(planId, 'info', `Created worktree: ${worktreeName}`, `Branch: ${branchName}`)
+  } catch (error) {
+    addPlanActivity(
+      planId,
+      'error',
+      `Failed to create worktree: ${worktreeName}`,
+      error instanceof Error ? error.message : 'Unknown error'
+    )
+    return null
+  }
+
+  // Create task agent workspace pointing to the worktree
+  const allAgents = getWorkspaces()
+  const taskAgent: Agent = {
+    id: `task-agent-${task.id}`,
+    name: `Task: ${task.title.substring(0, 30)}`,
+    directory: worktreePath,
+    purpose: task.title,
+    theme: 'teal',
+    icon: getRandomUniqueIcon(allAgents),
+    isTaskAgent: true,
+    parentPlanId: planId,
+    worktreePath: worktreePath,
+    taskId: task.id,
+    repositoryId: repository.id,
+  }
+  saveWorkspace(taskAgent)
+
+  // Create worktree tracking entry
+  const planWorktree: PlanWorktree = {
+    id: generateWorktreeId(),
+    planId,
+    taskId: task.id,
+    repositoryId: repository.id,
+    path: worktreePath,
+    branch: branchName,
+    agentId: taskAgent.id,
+    status: 'active',
+    createdAt: new Date().toISOString(),
+  }
+
+  // Add worktree to plan
+  if (!plan.worktrees) {
+    plan.worktrees = []
+  }
+  plan.worktrees.push(planWorktree)
+  savePlan(plan)
+
+  return { agent: taskAgent, worktree: planWorktree }
+}
+
+/**
+ * Cleanup a task agent and its worktree
+ */
+async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
+  const plan = getPlanById(planId)
+  if (!plan || !plan.worktrees) return
+
+  const worktree = plan.worktrees.find(w => w.taskId === taskId)
+  if (!worktree) return
+
+  const agent = getWorkspaces().find(a => a.id === worktree.agentId)
+
+  // Close terminal if open
+  if (agent) {
+    const terminalId = getTerminalForWorkspace(agent.id)
+    if (terminalId) {
+      closeTerminal(terminalId)
+    }
+    removeActiveWorkspace(agent.id)
+    removeWorkspaceFromTab(agent.id)
+    deleteWorkspace(agent.id)
+  }
+
+  // Remove the worktree from git
+  const repository = await getRepositoryById(worktree.repositoryId)
+  if (repository) {
+    try {
+      await removeWorktree(repository.rootPath, worktree.path, true)
+      addPlanActivity(planId, 'info', `Removed worktree: ${worktree.path.split('/').pop()}`)
+    } catch (error) {
+      addPlanActivity(
+        planId,
+        'warning',
+        `Failed to remove worktree`,
+        error instanceof Error ? error.message : 'Unknown error'
+      )
+    }
+  }
+
+  // Update worktree status
+  worktree.status = 'cleaned'
+  savePlan(plan)
+}
+
+/**
+ * Mark a worktree as ready for review (task agent completed)
+ */
+function markWorktreeReadyForReview(planId: string, taskId: string): void {
+  const plan = getPlanById(planId)
+  if (!plan || !plan.worktrees) return
+
+  const worktree = plan.worktrees.find(w => w.taskId === taskId)
+  if (!worktree || worktree.status !== 'active') return
+
+  // Cleanup the agent window (but NOT the git worktree - that stays for review)
+  if (worktree.agentId) {
+    const agent = getWorkspaces().find(a => a.id === worktree.agentId)
+    if (agent) {
+      const terminalId = getTerminalForWorkspace(agent.id)
+      if (terminalId) {
+        closeTerminal(terminalId)
+      }
+      removeActiveWorkspace(agent.id)
+      removeWorkspaceFromTab(agent.id)
+      deleteWorkspace(agent.id)
+    }
+  }
+
+  worktree.status = 'ready_for_review'
+  // Note: agentId kept for reference even though agent is cleaned up
+  savePlan(plan)
+  emitPlanUpdate(plan)
+  emitStateUpdate()
+
+  addPlanActivity(planId, 'success', `Task ${taskId} ready for review`, `Worktree: ${worktree.branch}`)
+}
+
+/**
+ * Cleanup all worktrees for a plan (used when user marks plan complete)
+ */
+export async function cleanupAllWorktrees(planId: string): Promise<void> {
+  const plan = getPlanById(planId)
+  if (!plan || !plan.worktrees) return
+
+  addPlanActivity(planId, 'info', 'Cleaning up worktrees...')
+
+  for (const worktree of plan.worktrees) {
+    if (worktree.status === 'cleaned') continue
+
+    await cleanupTaskAgent(planId, worktree.taskId)
+  }
+
+  // Prune any stale worktree references
+  const repositories = await getAllRepositories()
+  for (const repo of repositories) {
+    try {
+      await pruneWorktrees(repo.rootPath)
+    } catch {
+      // Ignore prune errors
+    }
+  }
+
+  addPlanActivity(planId, 'success', 'All worktrees cleaned up')
+}
+
+/**
+ * Mark a plan as complete (triggers cleanup)
+ */
+export async function completePlan(planId: string): Promise<Plan | null> {
+  const plan = getPlanById(planId)
+  if (!plan) return null
+
+  // Clean up all worktrees
+  await cleanupAllWorktrees(planId)
+
+  // Cleanup orchestrator
+  cleanupOrchestrator(plan)
+
+  plan.status = 'completed'
+  plan.updatedAt = new Date().toISOString()
+  savePlan(plan)
+  emitPlanUpdate(plan)
+
+  addPlanActivity(planId, 'success', 'Plan completed', 'All work finished and cleaned up')
+
+  // Remove from executing set
+  executingPlans.delete(planId)
+
+  return plan
+}
+
+/**
+ * Get available repositories for a plan based on reference agents
+ */
+async function getRepositoriesForPlan(planId: string): Promise<Repository[]> {
+  const plan = getPlanById(planId)
+  if (!plan || !plan.referenceAgentId) return []
+
+  // Get all non-system agents
+  const agents = getWorkspaces().filter(a => !a.isOrchestrator && !a.isPlanAgent && !a.isTaskAgent)
+
+  // Collect unique repositories
+  const repoIds = new Set<string>()
+  const repositories: Repository[] = []
+
+  for (const agent of agents) {
+    if (agent.repositoryId) {
+      if (!repoIds.has(agent.repositoryId)) {
+        const repo = await getRepositoryById(agent.repositoryId)
+        if (repo) {
+          repoIds.add(repo.id)
+          repositories.push(repo)
+        }
+      }
+    }
+  }
+
+  return repositories
+}
+
 /**
  * Update plan statuses based on task completion
  */
@@ -736,15 +1221,13 @@ async function updatePlanStatuses(): Promise<void> {
         const hasOpenTasks = childTasks.some((t) => t.status === 'open')
 
         if (allClosed) {
-          // Cleanup orchestrator on plan completion
-          cleanupOrchestrator(plan)
-          plan.status = 'completed'
+          // All tasks closed - mark as ready_for_review (don't auto-cleanup)
+          // User must explicitly click "Mark Complete" to trigger cleanup
+          plan.status = 'ready_for_review'
           plan.updatedAt = new Date().toISOString()
           savePlan(plan)
           emitPlanUpdate(plan)
-          addPlanActivity(plan.id, 'success', 'All tasks completed', `Plan "${plan.title}" finished successfully`)
-          // Remove from executing set
-          executingPlans.delete(plan.id)
+          addPlanActivity(plan.id, 'success', 'All tasks completed', 'Click "Mark Complete" to cleanup worktrees')
         } else if (hasOpenTasks && plan.status === 'delegating') {
           plan.status = 'in_progress'
           plan.updatedAt = new Date().toISOString()

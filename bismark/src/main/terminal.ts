@@ -45,7 +45,8 @@ export function createTerminal(
   workspaceId: string,
   mainWindow: BrowserWindow | null,
   initialPrompt?: string,
-  claudeFlags?: string
+  claudeFlags?: string,
+  autoAcceptMode?: boolean
 ): string {
   const workspace = getWorkspaceById(workspaceId)
   if (!workspace) {
@@ -108,6 +109,8 @@ export function createTerminal(
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       AGENTOP_WORKSPACE_ID: workspaceId,
+      // Help Claude find its own executable for subagent spawning
+      CLAUDE_CODE_ENTRY_POINT: process.env.CLAUDE_CODE_ENTRY_POINT || 'claude',
     },
   })
 
@@ -139,6 +142,78 @@ export function createTerminal(
       }
     }
   })
+
+  // Auto-accept workspace trust prompts for .bismark directories
+  // This handles both the main terminal and subagents spawned by Claude's Task tool
+  // The prompt shows "Yes, I trust this folder" as option 1
+  // Buffer data to handle prompts that arrive across multiple chunks
+  let trustPromptBuffer = ''
+  let trustPromptDebounce = false
+  let trustBufferClearTimeout: NodeJS.Timeout | null = null
+
+  ptyProcess.onData((data) => {
+    // Accumulate data for trust prompt detection
+    trustPromptBuffer += data
+
+    // Clear buffer after 2 seconds of inactivity to avoid stale matches
+    if (trustBufferClearTimeout) clearTimeout(trustBufferClearTimeout)
+    trustBufferClearTimeout = setTimeout(() => {
+      trustPromptBuffer = ''
+    }, 2000)
+
+    // Check for the trust prompt in accumulated buffer
+    if (trustPromptBuffer.includes('Yes, I trust this folder') && trustPromptBuffer.includes('.bismark')) {
+      if (trustPromptDebounce) return
+      trustPromptDebounce = true
+      trustPromptBuffer = '' // Clear buffer once matched
+      console.log(`[Terminal] Auto-accepting workspace trust prompt for .bismark directory`)
+      // Send '1' to select "Yes, I trust this folder" after a short delay
+      setTimeout(() => {
+        ptyProcess.write('1\r')
+        trustPromptDebounce = false
+      }, 200)
+    }
+  })
+
+  // Auto-cycle to "accept edits on" mode for task agents
+  // Shift+Tab cycles through accept modes until we see the desired state
+  if (autoAcceptMode) {
+    let acceptModeAttempts = 0
+    const MAX_ACCEPT_MODE_ATTEMPTS = 5
+    let acceptModeDebounce = false
+    let acceptModeDone = false
+
+    ptyProcess.onData((data) => {
+      if (acceptModeDone) return
+
+      // Already in accept mode - stop listening
+      if (data.includes('accept edits on')) {
+        console.log(`[Terminal] Task agent in auto-accept mode`)
+        acceptModeDone = true
+        return
+      }
+
+      // Claude is ready (showing status line) but not in accept mode yet
+      // Look for the mode indicator without "accept edits on"
+      if (data.includes('⏵') && !data.includes('accept edits on')) {
+        if (acceptModeDebounce) return
+        if (acceptModeAttempts >= MAX_ACCEPT_MODE_ATTEMPTS) {
+          console.log(`[Terminal] Max accept mode attempts reached`)
+          acceptModeDone = true
+          return
+        }
+
+        acceptModeDebounce = true
+        acceptModeAttempts++
+        console.log(`[Terminal] Cycling accept mode (attempt ${acceptModeAttempts})`)
+
+        setTimeout(() => {
+          ptyProcess.write('\x1b[Z') // Shift+Tab
+          acceptModeDebounce = false
+        }, 300)
+      }
+    })
+  }
 
   // Auto-start claude after a short delay to let shell initialize
   setTimeout(() => {
@@ -293,6 +368,17 @@ function waitForOutput(emitter: EventEmitter, pattern: string, timeoutMs: number
  * Wait for terminal output matching a pattern
  * Returns true if pattern matched, false if timeout
  */
+/**
+ * Send /exit command to a terminal to trigger graceful shutdown
+ * Used to programmatically exit Claude sessions when work is detected as complete
+ */
+export function sendExitToTerminal(terminalId: string): void {
+  const terminal = terminals.get(terminalId)
+  if (terminal) {
+    terminal.pty.write('/exit\r')
+  }
+}
+
 export function waitForTerminalOutput(
   terminalId: string,
   pattern: string | RegExp,

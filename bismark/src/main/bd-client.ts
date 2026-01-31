@@ -51,7 +51,9 @@ export async function ensureBeadsRepo(planId: string): Promise<string> {
         permissions: {
           allow: [
             'Bash(bd *)',
-            'Bash(bd --sandbox *)'
+            'Bash(bd --sandbox *)',
+            `Read(${planDir}/**)`,
+            `Edit(${planDir}/**)`
           ]
         }
       }

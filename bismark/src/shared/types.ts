@@ -1,5 +1,19 @@
 import type { AgentIconName } from './constants'
 
+// Repository configuration (stored in ~/.bismark/repositories.json)
+export interface Repository {
+  id: string              // Hash of rootPath
+  rootPath: string        // Absolute path to repository root
+  name: string            // Directory basename
+  defaultBranch: string   // Usually 'main' or 'master'
+  remoteUrl?: string      // Origin remote URL
+  prFlow?: {
+    enabled: boolean
+    baseBranch: string
+    greenPRCriteria?: string  // Instructions for verifying PR is ready
+  }
+}
+
 // Agent definition (stored in ~/.bismark/config.json)
 export interface Agent {
   id: string
@@ -11,6 +25,15 @@ export interface Agent {
   sessionId?: string // Claude session ID for resuming sessions across app restarts
   isOrchestrator?: boolean // Marks orchestrator workspaces (hidden from UI)
   isPlanAgent?: boolean // Marks plan agent workspaces (temporary, for task creation)
+
+  // Repository linkage
+  repositoryId?: string         // Reference to Repository.id
+
+  // Task agent fields (for agents created by plan execution)
+  isTaskAgent?: boolean         // Created for a specific plan task
+  parentPlanId?: string         // Plan that created this task agent
+  worktreePath?: string         // Path to worktree (for task agents)
+  taskId?: string               // Associated task ID
 }
 
 // Alias for backwards compatibility
@@ -21,6 +44,7 @@ export interface AgentTab {
   id: string
   name: string
   workspaceIds: string[] // Max 4, order = grid position (TL, TR, BL, BR)
+  isPlanTab?: boolean // Identifies plan orchestrator tabs
 }
 
 // Attention mode determines how waiting agents are displayed
@@ -77,7 +101,24 @@ export interface TerminalSession {
 }
 
 // Plan status for team mode
-export type PlanStatus = 'draft' | 'delegating' | 'in_progress' | 'completed' | 'failed'
+// 'ready_for_review' = all agents done, awaiting user review before cleanup
+export type PlanStatus = 'draft' | 'delegating' | 'in_progress' | 'ready_for_review' | 'completed' | 'failed'
+
+// Worktree status for plan execution
+export type PlanWorktreeStatus = 'active' | 'ready_for_review' | 'cleaned'
+
+// Worktree created for a plan task
+export interface PlanWorktree {
+  id: string
+  planId: string
+  taskId: string
+  repositoryId: string
+  path: string                  // e.g., ~/.bismark/plans/{planId}/worktrees/pax/fix-bug
+  branch: string
+  agentId: string               // Task agent working in this worktree
+  status: PlanWorktreeStatus    // ready_for_review = agent done, awaiting user review
+  createdAt: string
+}
 
 // Plan definition for team mode coordination
 export interface Plan {
@@ -92,6 +133,10 @@ export interface Plan {
   orchestratorWorkspaceId: string | null // Tracks orchestrator workspace
   orchestratorTabId: string | null // Tracks orchestrator's dedicated tab
   planAgentWorkspaceId?: string | null // Tracks plan agent workspace (temporary)
+
+  // Worktree tracking for new plan execution model
+  worktrees?: PlanWorktree[]
+  maxParallelAgents?: number    // Default: 4
 }
 
 // Task assignment status

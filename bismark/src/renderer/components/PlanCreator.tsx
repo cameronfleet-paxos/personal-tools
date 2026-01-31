@@ -14,18 +14,20 @@ import { Textarea } from '@/renderer/components/ui/textarea'
 interface PlanCreatorProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreatePlan: (title: string, description: string) => void
+  onCreatePlan: (title: string, description: string, maxParallelAgents?: number) => void
 }
 
 export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
+  const [maxParallelAgents, setMaxParallelAgents] = useState(4)
 
   const handleSubmit = () => {
     if (title.trim()) {
-      onCreatePlan(title.trim(), description.trim())
+      onCreatePlan(title.trim(), description.trim(), maxParallelAgents)
       setTitle('')
       setDescription('')
+      setMaxParallelAgents(4)
       onOpenChange(false)
     }
   }
@@ -34,6 +36,7 @@ export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorPro
     if (!newOpen) {
       setTitle('')
       setDescription('')
+      setMaxParallelAgents(4)
     }
     onOpenChange(newOpen)
   }
@@ -69,6 +72,23 @@ export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorPro
               onChange={(e) => setDescription(e.target.value)}
               rows={4}
             />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="maxParallel">Max Parallel Agents</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="maxParallel"
+                type="number"
+                min={1}
+                max={8}
+                value={maxParallelAgents}
+                onChange={(e) => setMaxParallelAgents(Math.max(1, Math.min(8, parseInt(e.target.value) || 1)))}
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">
+                agents can run simultaneously
+              </span>
+            </div>
           </div>
         </div>
         <DialogFooter>

@@ -541,8 +541,8 @@ function App() {
 
   // Plan handlers (Team Mode)
   // Note: We don't update local state here because the onPlanUpdate event listener handles it
-  const handleCreatePlan = async (title: string, description: string) => {
-    await window.electronAPI?.createPlan?.(title, description)
+  const handleCreatePlan = async (title: string, description: string, maxParallelAgents?: number) => {
+    await window.electronAPI?.createPlan?.(title, description, maxParallelAgents)
   }
 
   const handleExecutePlan = async (planId: string, referenceAgentId: string) => {
@@ -551,6 +551,10 @@ function App() {
 
   const handleCancelPlan = async (planId: string) => {
     await window.electronAPI?.cancelPlan?.(planId)
+  }
+
+  const handleCompletePlan = async (planId: string) => {
+    await window.electronAPI?.completePlan?.(planId)
   }
 
   const handleSelectPlan = async (planId: string | null) => {
@@ -784,7 +788,131 @@ function App() {
                   <div className="h-full flex items-center justify-center text-muted-foreground">
                     Launch an agent to see the terminal
                   </div>
+                ) : tab.isPlanTab ? (
+                  // Scrollable 2-column grid for plan tabs (unlimited agents)
+                  // Use CSS grid with fixed row heights that match the regular 2x2 layout
+                  <div
+                    className="h-full overflow-y-auto grid gap-2"
+                    style={{
+                      gridTemplateColumns: '1fr 1fr',
+                      gridAutoRows: 'calc(50% - 4px)',
+                    }}
+                  >
+                    {activeTerminals
+                      .filter((t) => tabWorkspaceIds.includes(t.workspaceId))
+                      .map((terminal) => {
+                        const workspaceId = terminal.workspaceId
+                        const agent = agents.find((a) => a.id === workspaceId)
+                        if (!agent) return null
+
+                        const isWaiting = isAgentWaiting(workspaceId)
+                        const isFocused = focusedAgentId === workspaceId
+                        const isExpanded = expandedAgentId === workspaceId
+                        const isAutoExpanded = autoExpandedAgentId === workspaceId
+
+                        return (
+                          <div
+                            key={terminal.terminalId}
+                            className={`rounded-lg border overflow-hidden transition-all duration-200 ${
+                              isFocused ? 'ring-2 ring-primary' : ''
+                            } ${isWaiting ? 'ring-2 ring-yellow-500' : ''} ${
+                              !isExpanded && expandedAgentId ? 'invisible h-0' : ''
+                            } ${isExpanded ? 'absolute inset-0 z-10 !h-full' : ''}`}
+                            onClick={() => {
+                              if (!isExpanded) {
+                                handleFocusAgent(workspaceId)
+                              }
+                            }}
+                          >
+                            <div
+                              className={`px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between ${
+                                isWaiting ? 'bg-yellow-500/20' : ''
+                              }`}
+                            >
+                              <div className="flex items-center gap-2">
+                                <AgentIcon icon={agent.icon} className="w-4 h-4" />
+                                <span>{agent.name}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {isWaiting && (
+                                  <span className="text-xs bg-yellow-500 text-black px-1.5 py-0.5 rounded">
+                                    Waiting
+                                  </span>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (isExpanded) {
+                                      setMaximizedAgentId(null)
+                                    } else {
+                                      setMaximizedAgentId(workspaceId)
+                                    }
+                                  }}
+                                  className="h-6 w-6 p-0"
+                                >
+                                  {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setStopConfirmAgentId(workspaceId)
+                                  }}
+                                  className="h-6 w-6 p-0"
+                                >
+                                  <X className="h-3 w-3" />
+                                </Button>
+                                {isAutoExpanded && (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleFocusAgent(workspaceId)
+                                      }}
+                                      className="h-6 text-xs"
+                                    >
+                                      <Check className="h-3 w-3 mr-1" />
+                                      Dismiss {navigator.platform.includes('Mac') ? '⌘D' : 'Ctrl+D'}
+                                    </Button>
+                                    {waitingQueue.length > 1 && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleNextWaiting()
+                                        }}
+                                        className="h-6 text-xs text-yellow-600 border-yellow-500 hover:bg-yellow-500/10"
+                                      >
+                                        <ChevronRight className="h-3 w-3 mr-1" />
+                                        Next ({waitingQueue.length - 1}) {navigator.platform.includes('Mac') ? '⌘N' : 'Ctrl+N'}
+                                      </Button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            <div className="h-[calc(100%-2rem)]">
+                              <Terminal
+                                terminalId={terminal.terminalId}
+                                theme={agent.theme}
+                                isBooting={!bootedTerminals.has(terminal.terminalId)}
+                                isVisible={!!shouldShowTab && (!expandedAgentId || isExpanded)}
+                                registerWriter={registerWriter}
+                                unregisterWriter={unregisterWriter}
+                              />
+                            </div>
+                          </div>
+                        )
+                      })}
+                  </div>
                 ) : (
+                  // Regular 2x2 grid for normal tabs (max 4 agents)
                   <div
                     className="h-full grid gap-2"
                     style={{
@@ -1013,6 +1141,7 @@ function App() {
             onSelectPlan={handleSelectPlan}
             onExecutePlan={handleExecutePlan}
             onCancelPlan={handleCancelPlan}
+            onCompletePlan={handleCompletePlan}
           />
         )}
       </div>

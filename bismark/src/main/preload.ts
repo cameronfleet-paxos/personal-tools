@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -69,14 +69,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('set-preferences', preferences),
 
   // Plan management (Team Mode)
-  createPlan: (title: string, description: string): Promise<Plan> =>
-    ipcRenderer.invoke('create-plan', title, description),
+  createPlan: (title: string, description: string, maxParallelAgents?: number): Promise<Plan> =>
+    ipcRenderer.invoke('create-plan', title, description, maxParallelAgents),
   getPlans: (): Promise<Plan[]> =>
     ipcRenderer.invoke('get-plans'),
   executePlan: (planId: string, referenceAgentId: string): Promise<Plan | null> =>
     ipcRenderer.invoke('execute-plan', planId, referenceAgentId),
   cancelPlan: (planId: string): Promise<Plan | null> =>
     ipcRenderer.invoke('cancel-plan', planId),
+  completePlan: (planId: string): Promise<Plan | null> =>
+    ipcRenderer.invoke('complete-plan', planId),
   getTaskAssignments: (planId: string): Promise<TaskAssignment[]> =>
     ipcRenderer.invoke('get-task-assignments', planId),
   getPlanActivities: (planId: string): Promise<PlanActivity[]> =>
@@ -138,6 +140,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onTerminalCreated: (callback: (data: { terminalId: string; workspaceId: string }) => void): void => {
     ipcRenderer.on('terminal-created', (_event, data) => callback(data))
   },
+
+  // Git repository management
+  detectGitRepository: (directory: string): Promise<Repository | null> =>
+    ipcRenderer.invoke('detect-git-repository', directory),
+  getRepositories: (): Promise<Repository[]> =>
+    ipcRenderer.invoke('get-repositories'),
+  updateRepository: (id: string, updates: Partial<Pick<Repository, 'prFlow' | 'name'>>): Promise<Repository | undefined> =>
+    ipcRenderer.invoke('update-repository', id, updates),
 
   // External URL handling
   openExternal: (url: string): Promise<void> =>

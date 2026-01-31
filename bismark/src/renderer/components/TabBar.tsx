@@ -64,9 +64,13 @@ export function TabBar({
           <div
             key={tab.id}
             className={`group flex items-center gap-1 px-3 py-1.5 rounded-md text-sm cursor-pointer transition-colors ${
-              isActive
-                ? 'bg-background border shadow-sm'
-                : 'hover:bg-muted/50'
+              tab.isPlanTab
+                ? isActive
+                  ? 'bg-blue-600 text-white border border-blue-500 shadow-sm'
+                  : 'bg-blue-500/20 text-blue-300 hover:bg-blue-500/30'
+                : isActive
+                  ? 'bg-background border shadow-sm'
+                  : 'hover:bg-muted/50'
             }`}
             onClick={() => !isEditing && onTabSelect(tab.id)}
           >
@@ -92,7 +96,7 @@ export function TabBar({
                   {tab.name}
                 </span>
                 <span className="text-muted-foreground text-xs">
-                  ({agentCount}/4)
+                  {tab.isPlanTab ? `(${agentCount})` : `(${agentCount}/4)`}
                 </span>
               </>
             )}

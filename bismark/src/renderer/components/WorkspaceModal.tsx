@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -17,10 +17,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/renderer/components/ui/select'
+import { Switch } from '@/renderer/components/ui/switch'
 import { AgentIcon } from '@/renderer/components/AgentIcon'
-import type { Agent, ThemeName } from '@/shared/types'
+import type { Agent, ThemeName, Repository } from '@/shared/types'
 import type { AgentIconName } from '@/shared/constants'
 import { themes, agentIcons } from '@/shared/constants'
+import { GitBranch, Check, X } from 'lucide-react'
 
 interface AgentModalProps {
   open: boolean
@@ -44,6 +46,46 @@ export function AgentModal({
   const [icon, setIcon] = useState<AgentIconName>('beethoven')
   const [error, setError] = useState<string | null>(null)
 
+  // Git repository detection state
+  const [detectedRepo, setDetectedRepo] = useState<Repository | null>(null)
+  const [isDetecting, setIsDetecting] = useState(false)
+  const [prFlowEnabled, setPrFlowEnabled] = useState(false)
+  const [prBaseBranch, setPrBaseBranch] = useState('')
+  const [greenPRCriteria, setGreenPRCriteria] = useState('')
+
+  // Detect git repository when directory changes
+  const detectRepository = useCallback(async (dir: string) => {
+    if (!dir.trim()) {
+      setDetectedRepo(null)
+      return
+    }
+
+    setIsDetecting(true)
+    try {
+      const repo = await window.electronAPI.detectGitRepository(dir.trim())
+      setDetectedRepo(repo)
+      if (repo) {
+        // Initialize PR flow settings from repo config
+        setPrFlowEnabled(repo.prFlow?.enabled ?? false)
+        setPrBaseBranch(repo.prFlow?.baseBranch ?? repo.defaultBranch)
+        setGreenPRCriteria(repo.prFlow?.greenPRCriteria ?? '')
+      }
+    } catch (err) {
+      console.error('Failed to detect repository:', err)
+      setDetectedRepo(null)
+    } finally {
+      setIsDetecting(false)
+    }
+  }, [])
+
+  // Debounce directory detection
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      detectRepository(directory)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [directory, detectRepository])
+
   useEffect(() => {
     if (agent) {
       setName(agent.name)
@@ -60,9 +102,13 @@ export function AgentModal({
       setIcon(agentIcons[Math.floor(Math.random() * agentIcons.length)])
     }
     setError(null)
+    setDetectedRepo(null)
+    setPrFlowEnabled(false)
+    setPrBaseBranch('')
+    setGreenPRCriteria('')
   }, [agent, open])
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) {
       setError('Name is required')
       return
@@ -72,6 +118,21 @@ export function AgentModal({
       return
     }
 
+    // Save PR flow config to repository if detected
+    if (detectedRepo) {
+      try {
+        await window.electronAPI.updateRepository(detectedRepo.id, {
+          prFlow: {
+            enabled: prFlowEnabled,
+            baseBranch: prBaseBranch || detectedRepo.defaultBranch,
+            greenPRCriteria: greenPRCriteria || undefined,
+          },
+        })
+      } catch (err) {
+        console.error('Failed to update repository config:', err)
+      }
+    }
+
     const newAgent: Agent = {
       id: agent?.id || crypto.randomUUID(),
       name: name.trim(),
@@ -79,6 +140,7 @@ export function AgentModal({
       purpose: purpose.trim(),
       theme,
       icon,
+      repositoryId: detectedRepo?.id,
     }
 
     onSave(newAgent)
@@ -109,7 +171,67 @@ export function AgentModal({
               onChange={(e) => setDirectory(e.target.value)}
               placeholder="/Users/cameron/dev/pax"
             />
+            {/* Git repository detection status */}
+            {directory.trim() && (
+              <div className="text-xs flex items-center gap-1.5 mt-1">
+                {isDetecting ? (
+                  <span className="text-muted-foreground">Detecting repository...</span>
+                ) : detectedRepo ? (
+                  <div className="flex items-center gap-1.5 text-green-600">
+                    <GitBranch className="w-3.5 h-3.5" />
+                    <span>Git repo: {detectedRepo.name}</span>
+                    <span className="text-muted-foreground">({detectedRepo.defaultBranch})</span>
+                  </div>
+                ) : (
+                  <span className="text-muted-foreground flex items-center gap-1">
+                    <X className="w-3.5 h-3.5" />
+                    Not a git repository
+                  </span>
+                )}
+              </div>
+            )}
           </div>
+          {/* PR Flow Configuration (only shown if git repo detected) */}
+          {detectedRepo && (
+            <div className="grid gap-3 p-3 border rounded-md bg-muted/30">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="pr-flow" className="text-sm font-medium">PR Flow</Label>
+                  <p className="text-xs text-muted-foreground">Create PRs instead of direct commits</p>
+                </div>
+                <Switch
+                  id="pr-flow"
+                  checked={prFlowEnabled}
+                  onCheckedChange={setPrFlowEnabled}
+                />
+              </div>
+              {prFlowEnabled && (
+                <>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="base-branch" className="text-xs">Base Branch</Label>
+                    <Input
+                      id="base-branch"
+                      value={prBaseBranch}
+                      onChange={(e) => setPrBaseBranch(e.target.value)}
+                      placeholder={detectedRepo.defaultBranch}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="green-pr" className="text-xs">Green PR Criteria (optional)</Label>
+                    <Textarea
+                      id="green-pr"
+                      value={greenPRCriteria}
+                      onChange={(e) => setGreenPRCriteria(e.target.value)}
+                      placeholder="e.g., All CI checks pass, tests green..."
+                      rows={2}
+                      className="text-sm"
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
           <div className="grid gap-2">
             <Label htmlFor="purpose">Purpose</Label>
             <Textarea
