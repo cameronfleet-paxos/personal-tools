@@ -115,12 +115,13 @@ export function setFocusedWorkspace(workspaceId: string | undefined): void {
 
 // Tab management functions
 
-export function createTab(name?: string, options?: { isPlanTab?: boolean }): AgentTab {
+export function createTab(name?: string, options?: { isPlanTab?: boolean; planId?: string }): AgentTab {
   const tab: AgentTab = {
     id: generateTabId(),
     name: name || getNextTabName(),
     workspaceIds: [],
     isPlanTab: options?.isPlanTab,
+    planId: options?.planId,
   }
   currentState.tabs.push(tab)
   persistState()

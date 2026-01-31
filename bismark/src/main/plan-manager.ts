@@ -13,6 +13,10 @@ import {
   getWorktreePath,
   getPlanWorktreesPath,
   getClaudeOAuthToken,
+  loadPlanActivities,
+  savePlanActivities,
+  loadHeadlessAgentInfo,
+  saveHeadlessAgentInfo,
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
@@ -48,6 +52,10 @@ const executingPlans: Set<string> = new Set()
 
 // Track headless agents for cleanup and status
 const headlessAgents: Map<string, HeadlessAgent> = new Map()
+
+// Debounce timers for headless agent event persistence
+const eventPersistTimers: Map<string, NodeJS.Timeout> = new Map()
+const EVENT_PERSIST_DEBOUNCE_MS = 2000 // Persist events every 2 seconds max
 
 // Track headless agent info for UI
 const headlessAgentInfo: Map<string, HeadlessAgentInfo> = new Map()
@@ -173,6 +181,9 @@ export function addPlanActivity(
   }
   planActivities.get(planId)!.push(activity)
 
+  // Persist to disk
+  savePlanActivities(planId, planActivities.get(planId)!)
+
   // Emit to renderer
   emitPlanActivity(activity)
 
@@ -198,6 +209,37 @@ export function clearPlanActivities(planId: string): void {
  */
 export function setPlanManagerWindow(window: BrowserWindow | null): void {
   mainWindow = window
+  if (window) {
+    initializePlanState()
+  }
+}
+
+/**
+ * Initialize plan state on startup - loads persisted activities and headless agent info
+ */
+function initializePlanState(): void {
+  const plans = loadPlans()
+
+  for (const plan of plans) {
+    // Only load state for active plans
+    if (plan.status === 'delegating' || plan.status === 'in_progress' || plan.status === 'ready_for_review') {
+      // Load persisted activities into memory
+      const activities = loadPlanActivities(plan.id)
+      if (activities.length > 0) {
+        planActivities.set(plan.id, activities)
+        console.log(`[PlanManager] Loaded ${activities.length} activities for plan ${plan.id}`)
+      }
+
+      // Load persisted headless agent info into memory
+      const agents = loadHeadlessAgentInfo(plan.id)
+      for (const agent of agents) {
+        if (agent.taskId) {
+          headlessAgentInfo.set(agent.taskId, agent)
+          console.log(`[PlanManager] Loaded headless agent info for task ${agent.taskId}`)
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -304,7 +346,7 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
 
   // Create a dedicated tab for the orchestrator BEFORE emitting update
   // so renderer has the orchestratorTabId for headless agent lookup
-  const orchestratorTab = createTab(plan.title.substring(0, 20), { isPlanTab: true })
+  const orchestratorTab = createTab(plan.title.substring(0, 20), { isPlanTab: true, planId: plan.id })
   plan.orchestratorTabId = orchestratorTab.id
 
   savePlan(plan)
@@ -1410,10 +1452,22 @@ CRITICAL: There is no interactive mode. You must:
 }
 
 /**
+ * Persist all headless agent info for a plan to disk
+ */
+function persistHeadlessAgentInfo(planId: string): void {
+  const agents = Array.from(headlessAgentInfo.values()).filter(info => info.planId === planId)
+  saveHeadlessAgentInfo(planId, agents)
+}
+
+/**
  * Emit headless agent update to renderer
  */
 function emitHeadlessAgentUpdate(info: HeadlessAgentInfo): void {
   console.log('[PlanManager] Emitting headless-agent-update', { taskId: info.taskId, status: info.status })
+
+  // Persist to disk on status changes
+  persistHeadlessAgentInfo(info.planId)
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('headless-agent-update', info)
   } else {
@@ -1428,6 +1482,17 @@ function emitHeadlessAgentEvent(planId: string, taskId: string, event: StreamEve
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('headless-agent-event', { planId, taskId, event })
   }
+
+  // Debounced persistence for events (avoid writing on every single event)
+  const timerKey = `${planId}:${taskId}`
+  const existingTimer = eventPersistTimers.get(timerKey)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+  }
+  eventPersistTimers.set(timerKey, setTimeout(() => {
+    persistHeadlessAgentInfo(planId)
+    eventPersistTimers.delete(timerKey)
+  }, EVENT_PERSIST_DEBOUNCE_MS))
 }
 
 /**

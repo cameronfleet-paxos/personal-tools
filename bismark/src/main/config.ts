@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { app } from 'electron'
-import type { Workspace, AppConfig, AppState, AppPreferences, Plan, TaskAssignment } from '../shared/types'
+import type { Workspace, AppConfig, AppState, AppPreferences, Plan, TaskAssignment, PlanActivity, HeadlessAgentInfo } from '../shared/types'
 import { agentIcons, type AgentIconName } from '../shared/constants'
 
 const CONFIG_DIR_NAME = '.bismark'
@@ -25,6 +25,14 @@ export function getPlansPath(): string {
 
 export function getTaskAssignmentsPath(planId: string): string {
   return path.join(getConfigDir(), 'plans', planId, 'task-assignments.json')
+}
+
+export function getPlanActivitiesPath(planId: string): string {
+  return path.join(getConfigDir(), 'plans', planId, 'activities.json')
+}
+
+export function getHeadlessAgentInfoPath(planId: string): string {
+  return path.join(getConfigDir(), 'plans', planId, 'headless-agents.json')
 }
 
 export function getPlanWorktreesPath(planId: string): string {
@@ -312,4 +320,46 @@ export function clearClaudeOAuthToken(): void {
   } catch {
     // File doesn't exist, that's fine
   }
+}
+
+// Plan activities persistence (per-plan)
+export function loadPlanActivities(planId: string): PlanActivity[] {
+  const activitiesPath = getPlanActivitiesPath(planId)
+  try {
+    const content = fs.readFileSync(activitiesPath, 'utf-8')
+    return JSON.parse(content) as PlanActivity[]
+  } catch {
+    return []
+  }
+}
+
+export function savePlanActivities(planId: string, activities: PlanActivity[]): void {
+  const activitiesPath = getPlanActivitiesPath(planId)
+  // Ensure the plan directory exists
+  const planDir = path.dirname(activitiesPath)
+  if (!fs.existsSync(planDir)) {
+    fs.mkdirSync(planDir, { recursive: true })
+  }
+  writeConfigAtomic(activitiesPath, activities)
+}
+
+// Headless agent info persistence (per-plan)
+export function loadHeadlessAgentInfo(planId: string): HeadlessAgentInfo[] {
+  const agentInfoPath = getHeadlessAgentInfoPath(planId)
+  try {
+    const content = fs.readFileSync(agentInfoPath, 'utf-8')
+    return JSON.parse(content) as HeadlessAgentInfo[]
+  } catch {
+    return []
+  }
+}
+
+export function saveHeadlessAgentInfo(planId: string, agents: HeadlessAgentInfo[]): void {
+  const agentInfoPath = getHeadlessAgentInfoPath(planId)
+  // Ensure the plan directory exists
+  const planDir = path.dirname(agentInfoPath)
+  if (!fs.existsSync(planDir)) {
+    fs.mkdirSync(planDir, { recursive: true })
+  }
+  writeConfigAtomic(agentInfoPath, agents)
 }

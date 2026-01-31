@@ -46,6 +46,7 @@ export interface AgentTab {
   name: string
   workspaceIds: string[] // Max 4, order = grid position (TL, TR, BL, BR)
   isPlanTab?: boolean // Identifies plan orchestrator tabs
+  planId?: string // Links tab to plan for restoration
 }
 
 // Attention mode determines how waiting agents are displayed
