@@ -194,4 +194,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('headless-agent-update')
     ipcRenderer.removeAllListeners('headless-agent-event')
   },
+
+  // Dev test harness (development mode only)
+  devRunMockFlow: (): Promise<{ planId: string; planDir: string; tasks: Array<{ id: string; subject: string }> } | undefined> =>
+    ipcRenderer.invoke('dev-run-mock-flow'),
+  devStartMockAgent: (taskId: string, planId?: string, worktreePath?: string): Promise<void> =>
+    ipcRenderer.invoke('dev-start-mock-agent', taskId, planId, worktreePath),
+  devStopMock: (): Promise<void> =>
+    ipcRenderer.invoke('dev-stop-mock'),
 })

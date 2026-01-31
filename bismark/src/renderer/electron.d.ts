@@ -101,6 +101,11 @@ export interface ElectronAPI {
 
   // Cleanup
   removeAllListeners: () => void
+
+  // Dev test harness (development mode only)
+  devRunMockFlow?: () => Promise<{ planId: string; planDir: string; tasks: Array<{ id: string; subject: string }> } | undefined>
+  devStartMockAgent?: (taskId: string, planId?: string, worktreePath?: string) => Promise<void>
+  devStopMock?: () => Promise<void>
 }
 
 declare global {

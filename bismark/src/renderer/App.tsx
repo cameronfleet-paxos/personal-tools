@@ -21,6 +21,7 @@ import { SettingsModal } from '@/renderer/components/SettingsModal'
 import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
 import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
+import { DevConsole } from '@/renderer/components/DevConsole'
 import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, HeadlessAgentInfo } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
@@ -73,6 +74,9 @@ function App() {
 
   // Stop confirmation dialog state
   const [stopConfirmAgentId, setStopConfirmAgentId] = useState<string | null>(null)
+
+  // Dev console state (development only)
+  const [devConsoleOpen, setDevConsoleOpen] = useState(false)
 
   // Central registry of terminal writers - Map of terminalId -> write function
   const terminalWritersRef = useRef<Map<string, TerminalWriter>>(new Map())
@@ -135,9 +139,16 @@ function App() {
     }
   }, [focusedAgentId, waitingQueue])
 
-  // Keyboard shortcuts for expand mode
+  // Keyboard shortcuts for expand mode and dev console
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd/Ctrl+Shift+D to toggle dev console (development only)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'd') {
+        e.preventDefault()
+        setDevConsoleOpen(prev => !prev)
+        return
+      }
+
       // Determine if we're in auto-expand mode (not manually maximized)
       const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
       const autoExpandedAgentId = isExpandModeActive ? waitingQueue[0] : null
@@ -206,7 +217,9 @@ function App() {
           setHeadlessAgents((prev) => {
             const newMap = new Map(prev)
             for (const info of loadedHeadlessAgents) {
-              newMap.set(info.taskId, info)
+              if (info.taskId) {
+                newMap.set(info.taskId, info)
+              }
             }
             return newMap
           })
@@ -1326,6 +1339,12 @@ function App() {
         open={planCreatorOpen}
         onOpenChange={setPlanCreatorOpen}
         onCreatePlan={handleCreatePlan}
+      />
+
+      {/* Dev Console (development only) */}
+      <DevConsole
+        open={devConsoleOpen}
+        onClose={() => setDevConsoleOpen(false)}
       />
     </div>
   )

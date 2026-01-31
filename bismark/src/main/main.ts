@@ -69,6 +69,15 @@ import {
   updateRepository,
 } from './repository-manager'
 import { initializeDockerEnvironment } from './docker-sandbox'
+import {
+  setDevHarnessWindow,
+  runMockFlow,
+  startMockAgent,
+  stopMockFlow,
+  getMockAgentInfo,
+  getMockAgentsForPlan,
+  cleanupDevHarness,
+} from './dev-test-harness'
 import type { Workspace, AppPreferences, Repository } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
@@ -84,9 +93,10 @@ function createWindow() {
     },
   })
 
-  // Set the main window reference for socket server and plan manager
+  // Set the main window reference for socket server, plan manager, and dev harness
   setMainWindow(mainWindow)
   setPlanManagerWindow(mainWindow)
+  setDevHarnessWindow(mainWindow)
 
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173')
@@ -99,6 +109,7 @@ function createWindow() {
     mainWindow = null
     setMainWindow(null)
     setPlanManagerWindow(null)
+    setDevHarnessWindow(null)
   })
 
   // Create system tray
@@ -328,6 +339,29 @@ function registerIpcHandlers() {
   ipcMain.handle('update-repository', async (_event, id: string, updates: Partial<Pick<Repository, 'prFlow' | 'name'>>) => {
     return updateRepository(id, updates)
   })
+
+  // Dev test harness (development mode only)
+  if (process.env.NODE_ENV === 'development') {
+    ipcMain.handle('dev-run-mock-flow', async () => {
+      return runMockFlow()
+    })
+
+    ipcMain.handle('dev-start-mock-agent', async (_event, taskId: string, planId?: string, worktreePath?: string) => {
+      return startMockAgent(taskId, planId, worktreePath)
+    })
+
+    ipcMain.handle('dev-stop-mock', async () => {
+      return stopMockFlow()
+    })
+
+    ipcMain.handle('dev-get-mock-agent-info', (_event, taskId: string) => {
+      return getMockAgentInfo(taskId)
+    })
+
+    ipcMain.handle('dev-get-mock-agents-for-plan', (_event, planId: string) => {
+      return getMockAgentsForPlan(planId)
+    })
+  }
 }
 
 app.whenReady().then(async () => {
@@ -368,6 +402,7 @@ app.on('window-all-closed', async () => {
   closeAllTerminals()
   closeAllSocketServers()
   await cleanupPlanManager()
+  await cleanupDevHarness()
   destroyTray()
   if (process.platform !== 'darwin') {
     app.quit()
@@ -384,5 +419,6 @@ app.on('before-quit', async () => {
   closeAllTerminals()
   closeAllSocketServers()
   await cleanupPlanManager()
+  await cleanupDevHarness()
   destroyTray()
 })
