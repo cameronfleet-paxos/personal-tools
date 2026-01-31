@@ -1925,42 +1925,37 @@ async function updatePlanStatuses(): Promise<void> {
   for (const plan of plans) {
     if (plan.status === 'delegating' || plan.status === 'in_progress') {
       // Get all tasks for this plan (not just children of an epic)
-      // This is more robust as it doesn't require tracking the epic ID
       // Use status: 'all' to include closed tasks for completion checks
       const allTasks = await bdList(plan.id, { status: 'all' })
 
-      // Filter to just tasks (not epics) that belong to this plan
-      // A task belongs to this plan if it has any bismark label (bismark-ready, bismark-sent)
-      // This prevents unrelated closed tasks from triggering "All tasks completed"
-      const hasBismarkLabel = (t: BeadTask) =>
-        t.labels?.some(l => l.startsWith('bismark-')) ?? false
+      // Filter to just tasks (not epics)
+      const allTaskItems = allTasks.filter(t => t.type === 'task')
 
-      const trackedTasks = allTasks.filter(t =>
-        t.type === 'task' && hasBismarkLabel(t)
-      )
-
-      if (trackedTasks.length === 0) {
-        // No tasks have been sent yet, stay in current status
+      if (allTaskItems.length === 0) {
+        // No tasks have been created yet, stay in current status
         continue
       }
 
-      const allClosed = trackedTasks.every((t) => t.status === 'closed')
-      const hasOpenTasks = trackedTasks.some((t) => t.status === 'open')
+      // Check task states
+      const openTasks = allTaskItems.filter(t => t.status === 'open')
+      const closedTasks = allTaskItems.filter(t => t.status === 'closed')
+      const allClosed = openTasks.length === 0 && closedTasks.length > 0
 
       if (allClosed) {
-        // All tracked tasks closed - mark as ready_for_review (don't auto-cleanup)
+        // All tasks closed - mark as ready_for_review (don't auto-cleanup)
         // User must explicitly click "Mark Complete" to trigger cleanup
         plan.status = 'ready_for_review'
         plan.updatedAt = new Date().toISOString()
         savePlan(plan)
         emitPlanUpdate(plan)
         addPlanActivity(plan.id, 'success', 'All tasks completed', 'Click "Mark Complete" to cleanup worktrees')
-      } else if (hasOpenTasks && plan.status === 'delegating') {
+      } else if (openTasks.length > 0 && plan.status === 'delegating') {
+        // Has open tasks, move to in_progress
         plan.status = 'in_progress'
         plan.updatedAt = new Date().toISOString()
         savePlan(plan)
         emitPlanUpdate(plan)
-        addPlanActivity(plan.id, 'info', 'Tasks are being worked on', `${trackedTasks.filter(t => t.status === 'open').length} task(s) in progress`)
+        addPlanActivity(plan.id, 'info', 'Tasks are being worked on', `${openTasks.length} task(s) remaining`)
       }
     }
   }
