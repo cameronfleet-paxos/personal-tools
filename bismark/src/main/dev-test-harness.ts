@@ -41,6 +41,8 @@ import type {
 import { createTab, addWorkspaceToTab, getState, setActiveTab } from './state-manager'
 import { savePlan } from './config'
 import { registerHeadlessAgentInfo, emitHeadlessAgentUpdatePublic, emitHeadlessAgentEventPublic } from './plan-manager'
+import { HeadlessAgent } from './headless-agent'
+import { MOCK_IMAGE, checkImageExists } from './docker-sandbox'
 
 const execAsync = promisify(exec)
 
@@ -424,21 +426,30 @@ export class MockOrchestrator extends EventEmitter {
     return tasks
   }
 
-  private async markDependentTasksReady(_completedTaskId: string, tasks: Array<{ id: string; status: string; blockedBy: string[] }>): Promise<void> {
-    // Find tasks that can now be started
+  private async markDependentTasksReady(completedTaskId: string, tasks: Array<{ id: string; status: string; blockedBy: string[] }>): Promise<void> {
+    // Find tasks that were blocked by the completed task and can now be started
     const dbPath = path.join(this.planDir, '.beads', 'beads.db')
+
     for (const task of tasks) {
       if (task.status !== 'completed') {
-        // In a real implementation, would check blockedBy
-        // For mock, just mark the next pending task
+        // Check if this task's blockers are all complete
         try {
-          await execAsync(`bd --sandbox --db "${dbPath}" label add "${task.id}" bismark-ready`)
-          console.log('[MockOrchestrator] Marked task ready:', task.id)
-          this.emitActivity('info', `Marked task ready: ${task.id}`)
-          if (this.onTaskReadyCallback) {
-            this.onTaskReadyCallback(task.id)
+          const { stdout: depOutput } = await execAsync(`bd --sandbox --db "${dbPath}" dep list "${task.id}"`)
+
+          // Parse dependencies - look for "via blocks" entries
+          // Format: "  task-id: Subject [P2] (closed) via blocks" or "(open) via blocks"
+          const blockerLines = depOutput.split('\n').filter(line => line.includes('via blocks'))
+          const hasOpenBlockers = blockerLines.some(line => line.includes('(open)'))
+
+          if (!hasOpenBlockers) {
+            // All blockers are closed (or no blockers), mark as ready
+            await execAsync(`bd --sandbox --db "${dbPath}" label add "${task.id}" bismark-ready`)
+            console.log('[MockOrchestrator] Marked task ready:', task.id, '(blocker completed:', completedTaskId, ')')
+            this.emitActivity('info', `Marked task ready: ${task.id}`)
+            if (this.onTaskReadyCallback) {
+              this.onTaskReadyCallback(task.id)
+            }
           }
-          break // Only mark one at a time
         } catch {
           // Task might already have label or be closed
         }
@@ -473,6 +484,8 @@ export interface MockFlowOptions {
   taskCount?: number
   /** If true, tasks have no dependencies and can run in parallel (default: false) */
   parallelTasks?: boolean
+  /** Use Docker mock image instead of MockHeadlessAgent (default: false) */
+  useMockImage?: boolean
 }
 
 /**
@@ -686,6 +699,122 @@ export async function startMockAgent(
 }
 
 /**
+ * Start a mock agent using Docker with the mock image
+ * This tests the full pipeline: Docker → stdout → StreamEventParser → IPC → renderer
+ */
+export async function startMockAgentWithDocker(
+  taskId: string,
+  planId: string = 'test-plan',
+  worktreePath: string = '/tmp/mock-worktree',
+  options?: { eventIntervalMs?: number }
+): Promise<HeadlessAgent> {
+  const eventIntervalMs = options?.eventIntervalMs ?? mockFlowOptions.eventIntervalMs ?? 1500
+  console.log('[DevHarness] Starting Docker mock agent:', taskId, 'planId:', planId, 'eventIntervalMs:', eventIntervalMs)
+
+  // Check if mock image exists
+  const imageExists = await checkImageExists(MOCK_IMAGE)
+  if (!imageExists) {
+    throw new Error(`Mock image ${MOCK_IMAGE} not found. Run: cd bismark/docker && ./build-mock.sh`)
+  }
+
+  // Create the real HeadlessAgent with mock image
+  const agent = new HeadlessAgent()
+
+  // Create HeadlessAgentInfo for the main registry
+  const agentInfo: HeadlessAgentInfo = {
+    id: `docker-mock-agent-${taskId}`,
+    taskId,
+    planId,
+    status: 'starting',
+    worktreePath,
+    events: [],
+    startedAt: new Date().toISOString(),
+  }
+
+  // Register in plan-manager's map so renderer can find it
+  registerHeadlessAgentInfo(agentInfo)
+  console.log('[DevHarness] Registered Docker mock agent info:', agentInfo.id, 'planId:', planId)
+
+  // Log errors for debugging
+  agent.on('error', (error) => {
+    console.error('[DevHarness] Docker mock agent error:', taskId, error)
+  })
+
+  // Forward events to renderer using proper IPC
+  agent.on('status', (status: HeadlessAgentStatus) => {
+    agentInfo.status = status
+    console.log('[DevHarness] Docker mock agent status changed:', taskId, status)
+    emitHeadlessAgentUpdatePublic(agentInfo)
+  })
+
+  agent.on('event', (event: StreamEvent) => {
+    agentInfo.events.push(event)
+    emitHeadlessAgentUpdatePublic(agentInfo)
+    emitHeadlessAgentEventPublic(planId, taskId, event)
+  })
+
+  agent.on('complete', async (result) => {
+    console.log('[DevHarness] Docker mock agent completed:', taskId, result)
+    agentInfo.status = result.success ? 'completed' : 'failed'
+    agentInfo.completedAt = new Date().toISOString()
+    agentInfo.result = result
+    emitHeadlessAgentUpdatePublic(agentInfo)
+
+    // Send activity log to renderer for visibility
+    const activityType = result.success ? 'success' : 'error'
+    const activityMsg = result.success
+      ? `Docker agent ${taskId} completed`
+      : `Docker agent ${taskId} failed: exitCode=${result.exitCode}, error=${result.error || 'unknown'}, events=${agentInfo.events.length}`
+    mainWindow?.webContents.send('plan-activity', {
+      id: `docker-${Date.now()}`,
+      planId,
+      timestamp: new Date().toISOString(),
+      type: activityType,
+      message: activityMsg,
+      source: 'docker-agent',
+    })
+
+    // Close the beads task so orchestrator can detect completion
+    try {
+      const dbPath = path.join(worktreePath, '.beads', 'beads.db')
+      await execAsync(`bd --sandbox --db "${dbPath}" close "${taskId}"`)
+      console.log('[DevHarness] Closed bd task:', taskId)
+    } catch (error) {
+      console.error('[DevHarness] Failed to close bd task:', taskId, error)
+    }
+
+    activeDockerAgents.delete(taskId)
+  })
+
+  // Notify renderer that agent started
+  mainWindow?.webContents.send('headless-agent-started', { taskId, planId, worktreePath })
+  emitHeadlessAgentUpdatePublic(agentInfo)
+  console.log('[DevHarness] Emitted headless-agent-started and update for Docker mock:', taskId)
+
+  activeDockerAgents.set(taskId, agent)
+
+  // Start the agent with mock image
+  // Note: planDir uses worktreePath since that's where we have the beads db
+  await agent.start({
+    prompt: `Mock task ${taskId}`,  // Prompt is ignored by mock image
+    worktreePath,
+    planDir: worktreePath,
+    taskId,
+    image: MOCK_IMAGE,
+    useEntrypoint: true,  // Use mock image's entrypoint, not claude command
+    env: {
+      MOCK_EVENT_INTERVAL_MS: String(eventIntervalMs),
+      BISMARK_TASK_ID: taskId,
+    },
+  })
+
+  return agent
+}
+
+// Track Docker-based agents separately
+const activeDockerAgents = new Map<string, HeadlessAgent>()
+
+/**
  * Stop a mock agent
  */
 export async function stopMockAgent(taskId: string): Promise<void> {
@@ -693,6 +822,12 @@ export async function stopMockAgent(taskId: string): Promise<void> {
   if (agent) {
     await agent.stop()
     activeAgents.delete(taskId)
+  }
+
+  const dockerAgent = activeDockerAgents.get(taskId)
+  if (dockerAgent) {
+    await dockerAgent.stop()
+    activeDockerAgents.delete(taskId)
   }
 }
 
@@ -778,6 +913,27 @@ export async function runMockFlow(options?: Partial<MockFlowOptions>): Promise<M
     await new Promise(resolve => setTimeout(resolve, opts.startDelayMs))
   }
 
+  // Helper to start agent (either Docker mock or JS mock)
+  const startAgent = async (taskId: string) => {
+    if (opts.useMockImage) {
+      await startMockAgentWithDocker(taskId, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
+    } else {
+      await startMockAgent(taskId, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
+    }
+  }
+
+  // Check if Docker mock image is available when requested
+  if (opts.useMockImage) {
+    const imageExists = await checkImageExists(MOCK_IMAGE)
+    if (!imageExists) {
+      console.warn(`[DevHarness] Mock image ${MOCK_IMAGE} not found, falling back to JS mock`)
+      console.warn('[DevHarness] To use Docker mock, run: cd bismark/docker && ./build-mock.sh')
+      opts.useMockImage = false
+    } else {
+      console.log('[DevHarness] Using Docker mock image:', MOCK_IMAGE)
+    }
+  }
+
   // Start mock orchestrator
   activeOrchestrator = new MockOrchestrator({
     planId: plan.planId,
@@ -785,7 +941,7 @@ export async function runMockFlow(options?: Partial<MockFlowOptions>): Promise<M
     mainWindow,
     onTaskReady: async (taskId: string) => {
       // Start a mock agent for the ready task
-      await startMockAgent(taskId, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
+      await startAgent(taskId)
     },
   })
 
@@ -805,11 +961,11 @@ export async function runMockFlow(options?: Partial<MockFlowOptions>): Promise<M
       // For parallel tasks, start all agents at once
       console.log('[DevHarness] Starting all agents in parallel mode')
       for (const task of plan.tasks) {
-        await startMockAgent(task.id, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
+        await startAgent(task.id)
       }
     } else {
       // For sequential tasks, start only the first one
-      await startMockAgent(plan.tasks[0].id, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
+      await startAgent(plan.tasks[0].id)
     }
   }
 
@@ -820,11 +976,17 @@ export async function runMockFlow(options?: Partial<MockFlowOptions>): Promise<M
  * Stop all mock components
  */
 export async function stopMockFlow(): Promise<void> {
-  // Stop all agents
+  // Stop all JS mock agents
   for (const [taskId, agent] of activeAgents) {
     await agent.stop()
   }
   activeAgents.clear()
+
+  // Stop all Docker mock agents
+  for (const [taskId, agent] of activeDockerAgents) {
+    await agent.stop()
+  }
+  activeDockerAgents.clear()
 
   // Stop orchestrator
   if (activeOrchestrator) {

@@ -13,11 +13,26 @@
  */
 
 import { EventEmitter } from 'events'
+import * as fs from 'fs'
 import {
   spawnContainerAgent,
   ContainerConfig,
   ContainerResult,
 } from './docker-sandbox'
+
+// Debug log file
+const DEBUG_LOG_PATH = '/tmp/claude/bismark-docker-debug.log'
+
+function debugLog(message: string): void {
+  const timestamp = new Date().toISOString()
+  const line = `[${timestamp}] ${message}\n`
+  try {
+    fs.appendFileSync(DEBUG_LOG_PATH, line)
+  } catch {
+    // Ignore write errors
+  }
+  console.log(message)
+}
 import {
   StreamEventParser,
   StreamEvent,
@@ -43,6 +58,7 @@ export interface HeadlessAgentOptions {
   image?: string
   claudeFlags?: string[]
   env?: Record<string, string>
+  useEntrypoint?: boolean // If true, use image's entrypoint instead of claude command (for mock images)
 }
 
 export interface AgentResult {
@@ -121,6 +137,7 @@ export class HeadlessAgent extends EventEmitter {
           ...options.env,
           BISMARK_TASK_ID: options.taskId || '',
         },
+        useEntrypoint: options.useEntrypoint,
       }
 
       // Spawn container
@@ -133,13 +150,13 @@ export class HeadlessAgent extends EventEmitter {
 
       // Pipe container stdout to parser
       this.container.stdout.on('data', (data) => {
-        console.log(`[HeadlessAgent] stdout data received (${data.length} bytes):`, data.toString().substring(0, 200))
+        debugLog(`[HeadlessAgent] stdout data received (${data.length} bytes): ${data.toString().substring(0, 200)}`)
         this.parser?.write(data)
       })
 
       // Log stderr (for debugging)
       this.container.stderr.on('data', (data) => {
-        console.log(`[HeadlessAgent] stderr: ${data.toString()}`)
+        debugLog(`[HeadlessAgent] stderr: ${data.toString()}`)
       })
 
       // Handle container exit
@@ -234,6 +251,8 @@ export class HeadlessAgent extends EventEmitter {
 
   private handleContainerExit(exitCode: number): void {
     const duration = Date.now() - this.startTime
+
+    debugLog(`[HeadlessAgent] Container exited with code ${exitCode} after ${duration}ms, received ${this.events.length} events`)
 
     // Find the result event if we received one
     const resultEvent = this.events.find(

@@ -5,6 +5,7 @@ import { getConfigDir } from './config'
 
 const HOOK_SCRIPT_NAME = 'stop-hook.sh'
 const NOTIFICATION_HOOK_SCRIPT_NAME = 'notification-hook.sh'
+const SESSION_START_HOOK_SCRIPT_NAME = 'session-start-hook.sh'
 
 interface HookCommand {
   type: 'command'
@@ -38,31 +39,32 @@ function getNotificationHookScriptPath(): string {
   return path.join(getConfigDir(), 'hooks', NOTIFICATION_HOOK_SCRIPT_NAME)
 }
 
+function getSessionStartHookScriptPath(): string {
+  return path.join(getConfigDir(), 'hooks', SESSION_START_HOOK_SCRIPT_NAME)
+}
+
 export function createHookScript(): void {
   const hookScript = `#!/bin/bash
 # Bismark StopHook - signals when agent needs input
-# This script is called by Claude Code when the agent stops
+# Optimized: single jq call, grep for mapping file
 
-WORKSPACE_ID="$BISMARK_WORKSPACE_ID"
-INSTANCE_ID="$BISMARK_INSTANCE_ID"
-SOCKET_PATH="$HOME/.bismark/sockets/\${INSTANCE_ID}/agent-\${WORKSPACE_ID}.sock"
-DEBUG_LOG="$HOME/.bismark/hooks/debug.log"
+# Extract session_id with grep (faster than jq for simple extraction)
+SESSION_ID=$(grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -z "$SESSION_ID" ] && exit 0
 
-# Debug logging
-echo "$(date): Hook called for workspace '$WORKSPACE_ID' instance '$INSTANCE_ID'" >> "$DEBUG_LOG"
+MAPPING="$HOME/.bismark/sessions/\${SESSION_ID}.json"
+[ ! -f "$MAPPING" ] && exit 0
 
-if [ -z "$WORKSPACE_ID" ] || [ -z "$INSTANCE_ID" ]; then
-  echo "$(date): ERROR - WORKSPACE_ID or INSTANCE_ID is empty" >> "$DEBUG_LOG"
-  exit 0
-fi
+# Read both values in one pass using grep (avoids jq startup overhead)
+WORKSPACE_ID=$(grep -o '"workspaceId":"[^"]*"' "$MAPPING" | cut -d'"' -f4)
+INSTANCE_ID=$(grep -o '"instanceId":"[^"]*"' "$MAPPING" | cut -d'"' -f4)
+[ -z "$WORKSPACE_ID" ] || [ -z "$INSTANCE_ID" ] && exit 0
 
-if [ -S "$SOCKET_PATH" ]; then
-  # Send JSON message with newline to signal EOF (macOS nc doesn't support -q flag)
-  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
-  echo "$(date): Sent to socket $SOCKET_PATH (exit code: $?)" >> "$DEBUG_LOG"
-else
-  echo "$(date): Socket not found at $SOCKET_PATH" >> "$DEBUG_LOG"
-fi
+# Shortened IDs for macOS socket path limit
+SOCKET_PATH="/tmp/bm/\${INSTANCE_ID:0:8}/\${WORKSPACE_ID:0:8}.sock"
+
+[ -S "$SOCKET_PATH" ] && printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
+exit 0
 `
 
   const hookPath = getHookScriptPath()
@@ -73,30 +75,46 @@ fi
 export function createNotificationHookScript(): void {
   const hookScript = `#!/bin/bash
 # Bismark NotificationHook - signals when agent needs permission
-# This script is called by Claude Code for permission prompts
+# Optimized: single jq call, grep for mapping file
 
-WORKSPACE_ID="$BISMARK_WORKSPACE_ID"
-INSTANCE_ID="$BISMARK_INSTANCE_ID"
-SOCKET_PATH="$HOME/.bismark/sockets/\${INSTANCE_ID}/agent-\${WORKSPACE_ID}.sock"
-DEBUG_LOG="$HOME/.bismark/hooks/debug.log"
+# Extract session_id with grep (faster than jq for simple extraction)
+SESSION_ID=$(grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -z "$SESSION_ID" ] && exit 0
 
-# Debug logging
-echo "$(date): Notification hook called for workspace '$WORKSPACE_ID' instance '$INSTANCE_ID'" >> "$DEBUG_LOG"
+MAPPING="$HOME/.bismark/sessions/\${SESSION_ID}.json"
+[ ! -f "$MAPPING" ] && exit 0
 
-if [ -z "$WORKSPACE_ID" ] || [ -z "$INSTANCE_ID" ]; then
-  echo "$(date): ERROR - WORKSPACE_ID or INSTANCE_ID is empty" >> "$DEBUG_LOG"
-  exit 0
-fi
+# Read both values in one pass using grep (avoids jq startup overhead)
+WORKSPACE_ID=$(grep -o '"workspaceId":"[^"]*"' "$MAPPING" | cut -d'"' -f4)
+INSTANCE_ID=$(grep -o '"instanceId":"[^"]*"' "$MAPPING" | cut -d'"' -f4)
+[ -z "$WORKSPACE_ID" ] || [ -z "$INSTANCE_ID" ] && exit 0
 
-if [ -S "$SOCKET_PATH" ]; then
-  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
-  echo "$(date): Sent notification to socket $SOCKET_PATH (exit code: $?)" >> "$DEBUG_LOG"
-else
-  echo "$(date): Socket not found at $SOCKET_PATH" >> "$DEBUG_LOG"
-fi
+# Shortened IDs for macOS socket path limit
+SOCKET_PATH="/tmp/bm/\${INSTANCE_ID:0:8}/\${WORKSPACE_ID:0:8}.sock"
+
+[ -S "$SOCKET_PATH" ] && printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
+exit 0
 `
 
   const hookPath = getNotificationHookScriptPath()
+  fs.writeFileSync(hookPath, hookScript)
+  fs.chmodSync(hookPath, '755')
+}
+
+export function createSessionStartHookScript(): void {
+  const hookScript = `#!/bin/bash
+# Bismark SessionStart hook - creates session-to-workspace mapping
+# Runs at session start when env vars ARE available
+
+SESSION_ID=$(grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
+[ -z "$SESSION_ID" ] || [ -z "$BISMARK_WORKSPACE_ID" ] || [ -z "$BISMARK_INSTANCE_ID" ] && exit 0
+
+mkdir -p "$HOME/.bismark/sessions"
+printf '{"workspaceId":"%s","instanceId":"%s"}' "$BISMARK_WORKSPACE_ID" "$BISMARK_INSTANCE_ID" > "$HOME/.bismark/sessions/\${SESSION_ID}.json"
+exit 0
+`
+
+  const hookPath = getSessionStartHookScriptPath()
   fs.writeFileSync(hookPath, hookScript)
   fs.chmodSync(hookPath, '755')
 }
@@ -105,10 +123,12 @@ export function configureClaudeHook(): void {
   const settingsPath = getClaudeSettingsPath()
   const hookScriptPath = getHookScriptPath()
   const notificationHookScriptPath = getNotificationHookScriptPath()
+  const sessionStartHookScriptPath = getSessionStartHookScriptPath()
 
   // Ensure hook scripts exist
   createHookScript()
   createNotificationHookScript()
+  createSessionStartHookScript()
 
   // Read existing settings or create new
   let settings: ClaudeSettings = {}
@@ -178,6 +198,29 @@ export function configureClaudeHook(): void {
     console.log('Configured Claude Code Notification hook for Bismark')
   }
 
+  // Configure SessionStart hook to create session-to-workspace mapping
+  const sessionStartHookExists = settings.hooks.SessionStart?.some((config) =>
+    config.hooks.some((hook) => hook.command.includes('bismark'))
+  )
+
+  if (!sessionStartHookExists) {
+    const newSessionStartHook: HookConfig = {
+      hooks: [
+        {
+          type: 'command',
+          command: sessionStartHookScriptPath,
+        },
+      ],
+    }
+
+    if (!settings.hooks.SessionStart) {
+      settings.hooks.SessionStart = []
+    }
+    settings.hooks.SessionStart.push(newSessionStartHook)
+    settingsChanged = true
+    console.log('Configured Claude Code SessionStart hook for Bismark')
+  }
+
   if (settingsChanged) {
     // Ensure .claude directory exists
     const claudeDir = path.dirname(settingsPath)
@@ -211,7 +254,12 @@ export function isHookConfigured(): boolean {
         config.hooks.some((hook) => hook.command.includes('bismark'))
       ) ?? false
 
-    return stopHookExists && notificationHookExists
+    const sessionStartHookExists =
+      settings.hooks?.SessionStart?.some((config) =>
+        config.hooks.some((hook) => hook.command.includes('bismark'))
+      ) ?? false
+
+    return stopHookExists && notificationHookExists && sessionStartHookExists
   } catch {
     return false
   }

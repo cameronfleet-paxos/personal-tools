@@ -15,7 +15,22 @@ import { spawn, ChildProcess } from 'child_process'
 import { Readable, PassThrough } from 'stream'
 import { EventEmitter } from 'events'
 import * as path from 'path'
+import * as fs from 'fs'
 import { getProxyUrl } from './tool-proxy'
+
+// Debug log file for Docker operations
+const DEBUG_LOG_PATH = '/tmp/claude/bismark-docker-debug.log'
+
+function debugLog(message: string): void {
+  const timestamp = new Date().toISOString()
+  const line = `[${timestamp}] ${message}\n`
+  try {
+    fs.appendFileSync(DEBUG_LOG_PATH, line)
+  } catch {
+    // Ignore write errors
+  }
+  console.log(message)
+}
 
 export interface ContainerConfig {
   image: string // Docker image name (e.g., "bismark-agent:latest")
@@ -25,6 +40,7 @@ export interface ContainerConfig {
   env?: Record<string, string> // Additional environment variables
   prompt: string // The prompt to send to Claude
   claudeFlags?: string[] // Additional claude CLI flags
+  useEntrypoint?: boolean // If true, use image's entrypoint instead of claude command (for mock images)
 }
 
 export interface ContainerResult {
@@ -37,6 +53,9 @@ export interface ContainerResult {
 
 // Default image name - should match what's built by Dockerfile
 const DEFAULT_IMAGE = 'bismark-agent:latest'
+
+// Mock image for testing without real Claude API calls
+export const MOCK_IMAGE = 'bismark-agent-mock:test'
 
 // Event emitter for container lifecycle events
 export const containerEvents = new EventEmitter()
@@ -98,16 +117,19 @@ function buildDockerArgs(config: ContainerConfig): string[] {
   // Image name
   args.push(config.image || DEFAULT_IMAGE)
 
-  // Claude command with arguments
-  args.push('claude')
-  args.push('--dangerously-skip-permissions')
-  args.push('-p', config.prompt)
-  args.push('--output-format', 'stream-json')
-  args.push('--verbose')
+  // For mock images, use the image's entrypoint instead of claude command
+  if (!config.useEntrypoint) {
+    // Claude command with arguments
+    args.push('claude')
+    args.push('--dangerously-skip-permissions')
+    args.push('-p', config.prompt)
+    args.push('--output-format', 'stream-json')
+    args.push('--verbose')
 
-  // Add any additional claude flags
-  if (config.claudeFlags) {
-    args.push(...config.claudeFlags)
+    // Add any additional claude flags
+    if (config.claudeFlags) {
+      args.push(...config.claudeFlags)
+    }
   }
 
   return args
@@ -122,7 +144,13 @@ export async function spawnContainerAgent(
   const args = buildDockerArgs(config)
   const trackingId = `container-${Date.now()}`
 
-  console.log(`[DockerSandbox] Spawning container with args:`, args.join(' '))
+  debugLog(`[DockerSandbox] Spawning container with config: ${JSON.stringify({
+    image: config.image,
+    useEntrypoint: config.useEntrypoint,
+    workingDir: config.workingDir,
+    env: config.env,
+  })}`)
+  debugLog(`[DockerSandbox] Docker command: docker ${args.join(' ')}`)
 
   const dockerProcess = spawn('docker', args, {
     stdio: ['pipe', 'pipe', 'pipe'],

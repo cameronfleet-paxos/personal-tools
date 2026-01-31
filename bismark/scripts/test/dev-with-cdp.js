@@ -30,6 +30,8 @@ const PORTS = {
 };
 
 const PROJECT_DIR = path.resolve(__dirname, '../..');
+const DOCKER_DIR = path.join(PROJECT_DIR, 'docker');
+const MOCK_IMAGE = 'bismark-agent-mock:test';
 const children = [];
 
 /**
@@ -109,25 +111,22 @@ function killProcessOnPort(port) {
 }
 
 /**
- * Check service status
+ * Check service status using HTTP requests (more reliable than port binding)
  */
 async function checkServices() {
-  const viteUp = await isPortInUse(PORTS.VITE);
+  // Check Vite by making HTTP request
+  const viteUp = await waitForHttp(`http://localhost:${PORTS.VITE}/`, 2000);
 
-  let cdpUp = false;
-  if (await isPortInUse(PORTS.CDP)) {
-    cdpUp = await waitForHttp(`http://localhost:${PORTS.CDP}/json`, 2000);
-  }
+  // Check Electron CDP endpoint
+  const cdpUp = await waitForHttp(`http://localhost:${PORTS.CDP}/json`, 2000);
 
-  let cdpServerUp = false;
-  if (await isPortInUse(PORTS.CDP_SERVER)) {
-    cdpServerUp = await waitForHttp(`http://localhost:${PORTS.CDP_SERVER}/health`, 2000);
-  }
+  // Check CDP server health endpoint
+  const cdpServerUp = await waitForHttp(`http://localhost:${PORTS.CDP_SERVER}/health`, 2000);
 
   console.log('Service Status:');
   console.log(`  Vite (${PORTS.VITE}):          ${viteUp ? 'UP' : 'DOWN'}`);
-  console.log(`  Electron CDP (${PORTS.CDP}):  ${cdpUp ? 'UP (HTTP OK)' : await isPortInUse(PORTS.CDP) ? 'UP (port only)' : 'DOWN'}`);
-  console.log(`  CDP Server (${PORTS.CDP_SERVER}):    ${cdpServerUp ? 'UP (HTTP OK)' : await isPortInUse(PORTS.CDP_SERVER) ? 'UP (port only)' : 'DOWN'}`);
+  console.log(`  Electron CDP (${PORTS.CDP}):  ${cdpUp ? 'UP' : 'DOWN'}`);
+  console.log(`  CDP Server (${PORTS.CDP_SERVER}):    ${cdpServerUp ? 'UP' : 'DOWN'}`);
   console.log('');
 
   const allUp = viteUp && cdpUp && cdpServerUp;
@@ -218,6 +217,58 @@ function buildMain() {
     stdio: 'inherit'
   });
   console.log('  Build complete');
+}
+
+/**
+ * Check if Docker is available
+ */
+function isDockerAvailable() {
+  try {
+    execSync('docker version', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if a Docker image exists
+ */
+function dockerImageExists(imageName) {
+  try {
+    execSync(`docker image inspect ${imageName}`, { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build mock Docker image if it doesn't exist
+ */
+function ensureMockDockerImage() {
+  if (!isDockerAvailable()) {
+    console.log('Docker not available, skipping mock image build');
+    return false;
+  }
+
+  if (dockerImageExists(MOCK_IMAGE)) {
+    console.log(`Mock image ${MOCK_IMAGE} already exists`);
+    return true;
+  }
+
+  console.log(`Building mock Docker image ${MOCK_IMAGE}...`);
+  try {
+    execSync(`docker build -t ${MOCK_IMAGE} -f Dockerfile.mock .`, {
+      cwd: DOCKER_DIR,
+      stdio: 'inherit'
+    });
+    console.log(`  Mock image ${MOCK_IMAGE} built successfully`);
+    return true;
+  } catch (error) {
+    console.error(`  Failed to build mock image: ${error.message}`);
+    return false;
+  }
 }
 
 /**
@@ -366,6 +417,9 @@ async function main() {
 
     // Build main process
     buildMain();
+
+    // Ensure mock Docker image is built (for testing without real Claude API)
+    ensureMockDockerImage();
 
     // Start Electron if not running
     if (!cdpRunning) {

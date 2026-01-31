@@ -43,7 +43,7 @@ Ports used:
 - **9222**: Electron CDP endpoint
 - **9333**: CDP HTTP server
 
-**Important:** When using Claude Code's Bash tool to start the Electron app, always use `dangerouslyDisableSandbox: true` as Electron requires macOS bootstrap permissions that are blocked in sandbox mode.
+These commands are excluded from sandbox mode in `.claude/settings.local.json` since Electron requires macOS bootstrap permissions.
 
 ### Building
 

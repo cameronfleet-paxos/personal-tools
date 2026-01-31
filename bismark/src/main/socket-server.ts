@@ -23,6 +23,18 @@ export function getInstanceId(): string {
   return instanceId
 }
 
+// Use /tmp for sockets to avoid macOS 104-char Unix socket path limit
+// Full UUIDs exceed limit, so we use shortened IDs (first 8 chars)
+function getSocketsDir(): string {
+  // Shorten instance ID to first 8 chars
+  return path.join('/tmp', 'bm', instanceId.slice(0, 8))
+}
+
+function getSocketPath(workspaceId: string): string {
+  // Shorten workspace ID to first 8 chars
+  return path.join(getSocketsDir(), `${workspaceId.slice(0, 8)}.sock`)
+}
+
 export function setMainWindow(window: BrowserWindow | null): void {
   mainWindow = window
 }
@@ -89,14 +101,17 @@ function handleStopEvent(event: StopEvent): void {
 }
 
 export function createSocketServer(workspaceId: string): void {
-  const socketsDir = path.join(getConfigDir(), 'sockets', instanceId)
+  console.log(`[SocketServer] Creating socket for workspace ${workspaceId}, instanceId=${instanceId}`)
+
+  const socketsDir = getSocketsDir()
 
   // Ensure instance socket directory exists
   if (!fs.existsSync(socketsDir)) {
     fs.mkdirSync(socketsDir, { recursive: true })
   }
 
-  const socketPath = path.join(socketsDir, `agent-${workspaceId}.sock`)
+  const socketPath = getSocketPath(workspaceId)
+  console.log(`[SocketServer] Socket path: ${socketPath}`)
 
   // Remove existing socket file
   if (fs.existsSync(socketPath)) {
@@ -155,11 +170,11 @@ export function createSocketServer(workspaceId: string): void {
   })
 
   server.listen(socketPath, () => {
-    console.log(`Socket server listening for workspace ${workspaceId}`)
+    console.log(`[SocketServer] Socket server listening at ${socketPath}`)
   })
 
   server.on('error', (err) => {
-    console.error(`Server error for workspace ${workspaceId}:`, err)
+    console.error(`[SocketServer] Server error for workspace ${workspaceId}:`, err)
   })
 
   servers.set(workspaceId, server)
@@ -173,12 +188,7 @@ export function closeSocketServer(workspaceId: string): void {
   }
 
   // Remove socket file
-  const socketPath = path.join(
-    getConfigDir(),
-    'sockets',
-    instanceId,
-    `agent-${workspaceId}.sock`
-  )
+  const socketPath = getSocketPath(workspaceId)
   if (fs.existsSync(socketPath)) {
     fs.unlinkSync(socketPath)
   }

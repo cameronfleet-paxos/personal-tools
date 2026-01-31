@@ -41,6 +41,7 @@ export function ensureConfigDirExists(): void {
     configDir,
     path.join(configDir, 'sockets'),
     path.join(configDir, 'hooks'),
+    path.join(configDir, 'sessions'),
   ]
 
   for (const dir of dirs) {

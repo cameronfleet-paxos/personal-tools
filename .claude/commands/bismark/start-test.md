@@ -4,11 +4,13 @@ Start the Bismark Electron app with Chrome DevTools Protocol (CDP) enabled for a
 
 ## Quick Start
 
-Run the unified dev+CDP command:
+Run the unified dev+CDP command in background:
 
 ```bash
 cd /Users/cameronfleet/dev/personal-tools/bismark && npm run dev:cdp:clean
 ```
+
+Use `run_in_background: true` since the command stays running to manage child processes.
 
 This single command:
 1. Kills any existing processes on ports 5173, 9222, 9333
@@ -17,14 +19,22 @@ This single command:
 4. Starts Electron with CDP (port 9222)
 5. Starts the CDP HTTP server (port 9333)
 
-**IMPORTANT**: This command MUST use `dangerouslyDisableSandbox: true` due to macOS Mach port permissions required by Electron.
-
 ## Verification
 
-After starting, verify all services are running:
+After starting (wait ~25 seconds), verify all services are running:
 
 ```bash
 npm run dev:check
+```
+
+Expected output when all services are up:
+```
+Service Status:
+  Vite (5173):          UP
+  Electron CDP (9222):  UP
+  CDP Server (9333):    UP
+
+All services running.
 ```
 
 Or test the CDP server directly:
@@ -35,7 +45,7 @@ curl -s localhost:9333/health
 
 ## Notes
 
-- The command stays running to manage child processes - press Ctrl+C to stop all
-- After starting, you can use `/bismark:screenshot` or `/bismark:test` to interact with the app
+- The background command manages child processes - use `/tasks` to see running tasks
+- After starting, use `/bismark:screenshot` or `/bismark:test` to interact with the app
 - CDP endpoint: `http://localhost:9222`
 - CDP server: `http://localhost:9333`
