@@ -215,10 +215,32 @@ export function createTerminal(
     })
   }
 
-  // Auto-start claude after a short delay to let shell initialize
+  // Auto-start claude when shell prompt is detected (instead of fixed delay)
+  // This ensures asdf and other shell initialization is complete
+  let promptDetected = false
+  const promptHandler = (data: string) => {
+    // Detect common shell prompts (ends with $, %, >, or contains username@hostname)
+    if (!promptDetected && (
+      /[$%>]\s*$/.test(data) ||
+      /\w+@\w+/.test(data) ||
+      data.includes(os.userInfo().username)
+    )) {
+      promptDetected = true
+      // Small additional delay to ensure shell is fully ready
+      setTimeout(() => {
+        ptyProcess.write(claudeCmd)
+      }, 100)
+    }
+  }
+  ptyProcess.onData(promptHandler)
+
+  // Fallback: if no prompt detected after 3 seconds, send anyway
   setTimeout(() => {
-    ptyProcess.write(claudeCmd)
-  }, 500)
+    if (!promptDetected) {
+      promptDetected = true
+      ptyProcess.write(claudeCmd)
+    }
+  }, 3000)
 
   // Handle process exit
   ptyProcess.onExit(({ exitCode }) => {
