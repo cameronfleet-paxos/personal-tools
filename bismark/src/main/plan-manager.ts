@@ -1613,7 +1613,8 @@ async function updatePlanStatuses(): Promise<void> {
     if (plan.status === 'delegating' || plan.status === 'in_progress') {
       // Get all tasks for this plan (not just children of an epic)
       // This is more robust as it doesn't require tracking the epic ID
-      const allTasks = await bdList(plan.id, {})
+      // Use status: 'all' to include closed tasks for completion checks
+      const allTasks = await bdList(plan.id, { status: 'all' })
 
       // Filter to just tasks (not epics) that have been sent to agents
       // A task is "tracked" if it has the bismark-sent label or is closed

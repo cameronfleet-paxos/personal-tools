@@ -117,9 +117,13 @@ export async function bdList(planId: string, opts?: {
     cmd += ` --parent ${opts.parent}`
   }
 
-  if (opts?.status && opts.status !== 'all') {
-    cmd += opts.status === 'closed' ? ' --closed' : ''
+  // Add --all flag when status is 'all' or undefined (for status checks that need all tasks)
+  if (opts?.status === 'all' || opts?.status === undefined) {
+    cmd += ' --all'
+  } else if (opts?.status === 'closed') {
+    cmd += ' --closed'
   }
+  // 'open' is the default, no flag needed
 
   if (opts?.labels && opts.labels.length > 0) {
     for (const label of opts.labels) {
@@ -134,9 +138,22 @@ export async function bdList(planId: string, opts?: {
       return []
     }
 
-    // Parse JSON output from bd
-    const tasks = JSON.parse(stdout)
-    return Array.isArray(tasks) ? tasks : []
+    // Parse JSON output from bd and map fields to our interface
+    const rawTasks = JSON.parse(stdout)
+    if (!Array.isArray(rawTasks)) {
+      return []
+    }
+
+    // Map bd's field names to our interface
+    return rawTasks.map((task: Record<string, unknown>) => ({
+      id: task.id as string,
+      title: task.title as string,
+      status: task.status as 'open' | 'closed',
+      type: task.issue_type as 'epic' | 'task' | undefined,  // bd uses issue_type
+      parent: task.parent as string | undefined,
+      assignee: task.owner as string | undefined,  // bd uses owner
+      labels: task.labels as string[] | undefined,
+    }))
   } catch (error) {
     // If bd list fails (e.g., no tasks), return empty array
     console.error('bdList error:', error)

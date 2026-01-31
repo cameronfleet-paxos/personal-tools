@@ -192,8 +192,12 @@ export function HeadlessTerminal({
     const text = events.map(extractText).filter(Boolean).join('')
     if (!text.trim()) return null
 
-    // Split into paragraphs on double newlines
-    const paragraphs = text.split(/\n\n+/).filter((p) => p.trim())
+    // Split on double newlines OR patterns like ".Let me" or ".Now I" where
+    // sentences run together (common when Claude's output lacks proper spacing)
+    const paragraphs = text
+      .replace(/\.(?=[A-Z][a-z])/g, '.\n\n')  // Add break after period followed by capital letter
+      .split(/\n\n+/)
+      .filter((p) => p.trim())
 
     return (
       <div key={key} className="mb-4 space-y-3">
