@@ -22,7 +22,9 @@ import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
 import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
 import { DevConsole } from '@/renderer/components/DevConsole'
-import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, HeadlessAgentInfo } from '@/shared/types'
+import { PlanAgentGroup } from '@/renderer/components/PlanAgentGroup'
+import { CollapsedPlanGroup } from '@/renderer/components/CollapsedPlanGroup'
+import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, HeadlessAgentInfo, BranchStrategy } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
 interface ActiveTerminal {
@@ -68,6 +70,7 @@ function App() {
   // Drag-and-drop state
   const [draggedWorkspaceId, setDraggedWorkspaceId] = useState<string | null>(null)
   const [dropTargetPosition, setDropTargetPosition] = useState<number | null>(null)
+  const [dropTargetTabId, setDropTargetTabId] = useState<string | null>(null)
 
   // Manual maximize state (independent of waiting queue expand mode)
   const [maximizedAgentId, setMaximizedAgentId] = useState<string | null>(null)
@@ -77,6 +80,9 @@ function App() {
 
   // Dev console state (development only)
   const [devConsoleOpen, setDevConsoleOpen] = useState(false)
+
+  // Collapsed plan groups in sidebar
+  const [collapsedPlanGroups, setCollapsedPlanGroups] = useState<Set<string>>(new Set())
 
   // Central registry of terminal writers - Map of terminalId -> write function
   const terminalWritersRef = useRef<Map<string, TerminalWriter>>(new Map())
@@ -600,6 +606,19 @@ function App() {
     }
   }
 
+  const handleDropOnTab = async (workspaceId: string, targetTabId: string) => {
+    const success = await window.electronAPI?.moveWorkspaceToTab?.(workspaceId, targetTabId)
+    if (success) {
+      const state = await window.electronAPI.getState()
+      setTabs(state.tabs || [])
+      // Switch to target tab
+      setActiveTabId(targetTabId)
+      await window.electronAPI?.setActiveTab?.(targetTabId)
+    }
+    setDropTargetTabId(null)
+    setDraggedWorkspaceId(null)
+  }
+
   const handleReorderInTab = async (sourceWorkspaceId: string, targetPosition: number) => {
     if (!activeTabId) return
 
@@ -644,10 +663,74 @@ function App() {
     console.log('[Renderer] headlessAgents state changed:', headlessAgents.size, Array.from(headlessAgents.keys()))
   }, [headlessAgents])
 
+  // Group agents by plan for sidebar display
+  const groupAgentsByPlan = useCallback(() => {
+    const planGroups: Map<string, { plan: Plan; agents: Agent[] }> = new Map()
+    const standaloneAgents: Agent[] = []
+
+    // Helper to add agent to a plan group
+    const addToPlanGroup = (plan: Plan, agent: Agent) => {
+      const existing = planGroups.get(plan.id)
+      if (existing) {
+        existing.agents.push(agent)
+      } else {
+        planGroups.set(plan.id, { plan, agents: [agent] })
+      }
+    }
+
+    for (const agent of agents) {
+      // Check if this is an orchestrator or plan agent - group by their plan
+      if (agent.isOrchestrator) {
+        const plan = plans.find((p) => p.orchestratorWorkspaceId === agent.id)
+        if (plan) {
+          addToPlanGroup(plan, agent)
+          continue
+        }
+      }
+      if (agent.isPlanAgent) {
+        const plan = plans.find((p) => p.planAgentWorkspaceId === agent.id)
+        if (plan) {
+          addToPlanGroup(plan, agent)
+          continue
+        }
+      }
+
+      // Check if this is a task agent with parentPlanId
+      if (agent.parentPlanId) {
+        const plan = plans.find((p) => p.id === agent.parentPlanId)
+        if (plan) {
+          addToPlanGroup(plan, agent)
+        } else {
+          // Plan not found, treat as standalone
+          standaloneAgents.push(agent)
+        }
+      } else {
+        standaloneAgents.push(agent)
+      }
+    }
+
+    // Sort plan groups by status: active first, then ready_for_review, then completed
+    const statusOrder: Record<string, number> = {
+      delegating: 0,
+      in_progress: 0,
+      ready_for_review: 1,
+      completed: 2,
+      failed: 2,
+      draft: 3,
+    }
+    const sortedPlanGroups = Array.from(planGroups.values()).sort((a, b) => {
+      const aOrder = statusOrder[a.plan.status] ?? 4
+      const bOrder = statusOrder[b.plan.status] ?? 4
+      return aOrder - bOrder
+    })
+
+    return { planGroups: sortedPlanGroups, standaloneAgents }
+  }, [agents, plans])
+
   // Plan handlers (Team Mode)
   // Note: We don't update local state here because the onPlanUpdate event listener handles it
-  const handleCreatePlan = async (title: string, description: string, maxParallelAgents?: number) => {
-    await window.electronAPI?.createPlan?.(title, description, maxParallelAgents)
+  const handleCreatePlan = async (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }) => {
+    await window.electronAPI?.createPlan?.(title, description, options)
   }
 
   const handleExecutePlan = async (planId: string, referenceAgentId: string) => {
@@ -777,6 +860,11 @@ function App() {
         onTabRename={handleTabRename}
         onTabDelete={handleTabDelete}
         onTabCreate={handleTabCreate}
+        draggedWorkspaceId={draggedWorkspaceId}
+        dropTargetTabId={dropTargetTabId}
+        onTabDragOver={(tabId) => setDropTargetTabId(tabId)}
+        onTabDragLeave={() => setDropTargetTabId(null)}
+        onTabDrop={handleDropOnTab}
       />
 
       {/* Main content */}
@@ -800,73 +888,135 @@ function App() {
           <div className="flex-1 overflow-y-auto p-2">
             {sidebarCollapsed ? (
               /* Collapsed: icon-only view - horizontal layout */
-              <div className="flex flex-row flex-wrap gap-2 justify-center">
-                {agents.map((agent) => {
-                  const isActive = activeTerminals.some((t) => t.workspaceId === agent.id)
-                  const isWaiting = isAgentWaiting(agent.id)
-                  const isFocused = focusedAgentId === agent.id
-                  const agentTab = tabs.find((t) => t.workspaceIds.includes(agent.id))
-                  const themeColors = themes[agent.theme]
-                  return (
-                    <button
-                      key={agent.id}
-                      onClick={() => {
-                        setSidebarCollapsed(false)
-                        if (isActive) {
-                          if (agentTab && agentTab.id !== activeTabId) {
-                            handleTabSelect(agentTab.id)
-                          }
-                          handleFocusAgent(agent.id)
-                        }
-                      }}
-                      className={`p-1.5 rounded-md hover:brightness-110 transition-all ${
-                        isWaiting ? 'ring-2 ring-yellow-500' : ''
-                      } ${isFocused ? 'ring-2 ring-white/50' : ''}`}
-                      style={{ backgroundColor: themeColors.bg }}
-                      title={agent.name}
-                    >
-                      <AgentIcon icon={agent.icon} className="w-5 h-5" />
-                    </button>
-                  )
-                })}
-              </div>
+              (() => {
+                const { planGroups, standaloneAgents } = groupAgentsByPlan()
+                return (
+                  <div className="flex flex-row flex-wrap gap-2 justify-center">
+                    {/* Plan groups */}
+                    {planGroups.map(({ plan, agents: planAgents }) => (
+                      <CollapsedPlanGroup
+                        key={plan.id}
+                        plan={plan}
+                        agents={planAgents}
+                        waitingQueue={waitingQueue}
+                        activeTerminals={activeTerminals}
+                        onExpandSidebar={() => setSidebarCollapsed(false)}
+                      />
+                    ))}
+                    {/* Standalone agents */}
+                    {standaloneAgents.map((agent) => {
+                      const isActive = activeTerminals.some((t) => t.workspaceId === agent.id)
+                      const isWaiting = isAgentWaiting(agent.id)
+                      const isFocused = focusedAgentId === agent.id
+                      const agentTab = tabs.find((t) => t.workspaceIds.includes(agent.id))
+                      const themeColors = themes[agent.theme]
+                      return (
+                        <button
+                          key={agent.id}
+                          onClick={() => {
+                            setSidebarCollapsed(false)
+                            if (isActive) {
+                              if (agentTab && agentTab.id !== activeTabId) {
+                                handleTabSelect(agentTab.id)
+                              }
+                              handleFocusAgent(agent.id)
+                            }
+                          }}
+                          className={`p-1.5 rounded-md hover:brightness-110 transition-all ${
+                            isWaiting ? 'ring-2 ring-yellow-500' : ''
+                          } ${isFocused ? 'ring-2 ring-white/50' : ''}`}
+                          style={{ backgroundColor: themeColors.bg }}
+                          title={agent.name}
+                        >
+                          <AgentIcon icon={agent.icon} className="w-5 h-5" />
+                        </button>
+                      )
+                    })}
+                  </div>
+                )
+              })()
             ) : (
-              /* Expanded: full cards */
-              <div className="space-y-3">
-                {agents.map((agent) => {
-                  const agentTab = tabs.find((t) =>
-                    t.workspaceIds.includes(agent.id)
-                  )
-                  return (
-                    <AgentCard
-                      key={agent.id}
-                      agent={agent}
-                      isActive={activeTerminals.some(
-                        (t) => t.workspaceId === agent.id
-                      )}
-                      isWaiting={isAgentWaiting(agent.id)}
-                      isFocused={focusedAgentId === agent.id}
-                      tabs={tabs}
-                      currentTabId={agentTab?.id}
-                      onClick={() => {
-                        if (activeTerminals.some((t) => t.workspaceId === agent.id)) {
-                          // Find which tab contains this agent and switch to it
-                          if (agentTab && agentTab.id !== activeTabId) {
-                            handleTabSelect(agentTab.id)
-                          }
-                          handleFocusAgent(agent.id)
-                        }
-                      }}
-                      onEdit={() => handleEditAgent(agent)}
-                      onDelete={() => handleDeleteAgent(agent.id)}
-                      onLaunch={() => handleLaunchAgent(agent.id)}
-                      onStop={() => handleStopAgent(agent.id)}
-                      onMoveToTab={(tabId) => handleMoveAgentToTab(agent.id, tabId)}
-                      onStopHeadless={() => handleStopHeadlessAgent(agent)}
-                    />
-                  )
-                })}
-              </div>
+              /* Expanded: full cards with plan grouping */
+              (() => {
+                const { planGroups, standaloneAgents } = groupAgentsByPlan()
+                const handleAgentClick = (agentId: string, agentTab: AgentTab | undefined) => {
+                  if (activeTerminals.some((t) => t.workspaceId === agentId)) {
+                    if (agentTab && agentTab.id !== activeTabId) {
+                      handleTabSelect(agentTab.id)
+                    }
+                    handleFocusAgent(agentId)
+                  }
+                }
+                return (
+                  <div className="space-y-3">
+                    {/* Plan groups */}
+                    {planGroups.map(({ plan, agents: planAgents }) => (
+                      <PlanAgentGroup
+                        key={plan.id}
+                        plan={plan}
+                        agents={planAgents}
+                        isCollapsed={collapsedPlanGroups.has(plan.id)}
+                        onToggleCollapse={() => {
+                          setCollapsedPlanGroups((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(plan.id)) {
+                              next.delete(plan.id)
+                            } else {
+                              next.add(plan.id)
+                            }
+                            return next
+                          })
+                        }}
+                        activeTerminals={activeTerminals}
+                        waitingQueue={waitingQueue}
+                        focusedAgentId={focusedAgentId}
+                        tabs={tabs}
+                        activeTabId={activeTabId}
+                        onAgentClick={handleAgentClick}
+                        onEditAgent={handleEditAgent}
+                        onDeleteAgent={handleDeleteAgent}
+                        onLaunchAgent={handleLaunchAgent}
+                        onStopAgent={handleStopAgent}
+                        onMoveToTab={handleMoveAgentToTab}
+                        onStopHeadless={handleStopHeadlessAgent}
+                      />
+                    ))}
+                    {/* Standalone agents */}
+                    {standaloneAgents.map((agent) => {
+                      const agentTab = tabs.find((t) =>
+                        t.workspaceIds.includes(agent.id)
+                      )
+                      return (
+                        <AgentCard
+                          key={agent.id}
+                          agent={agent}
+                          isActive={activeTerminals.some(
+                            (t) => t.workspaceId === agent.id
+                          )}
+                          isWaiting={isAgentWaiting(agent.id)}
+                          isFocused={focusedAgentId === agent.id}
+                          tabs={tabs}
+                          currentTabId={agentTab?.id}
+                          onClick={() => {
+                            if (activeTerminals.some((t) => t.workspaceId === agent.id)) {
+                              if (agentTab && agentTab.id !== activeTabId) {
+                                handleTabSelect(agentTab.id)
+                              }
+                              handleFocusAgent(agent.id)
+                            }
+                          }}
+                          onEdit={() => handleEditAgent(agent)}
+                          onDelete={() => handleDeleteAgent(agent.id)}
+                          onLaunch={() => handleLaunchAgent(agent.id)}
+                          onStop={() => handleStopAgent(agent.id)}
+                          onMoveToTab={(tabId) => handleMoveAgentToTab(agent.id, tabId)}
+                          onStopHeadless={() => handleStopHeadlessAgent(agent)}
+                        />
+                      )
+                    })}
+                  </div>
+                )
+              })()
             )}
           </div>
         </aside>
@@ -898,7 +1048,7 @@ function App() {
                   // Scrollable 2-column grid for plan tabs (unlimited agents)
                   // Use CSS grid with fixed row heights that match the regular 2x2 layout
                   <div
-                    className="h-full overflow-y-auto grid gap-2 p-1"
+                    className="h-full overflow-y-auto grid gap-2 p-1 relative"
                     style={{
                       gridTemplateColumns: '1fr 1fr',
                       gridAutoRows: 'calc(50% - 4px)',
@@ -918,12 +1068,12 @@ function App() {
 
                         return (
                           <div
-                            key={terminal.terminalId}
+                            key={`${terminal.terminalId}-${tab.id}`}
                             className={`rounded-lg border overflow-hidden transition-all duration-200 ${
                               isFocused ? 'ring-2 ring-primary' : ''
                             } ${isWaiting ? 'ring-2 ring-yellow-500' : ''} ${
-                              !isExpanded && expandedAgentId ? 'invisible h-0' : ''
-                            } ${isExpanded ? 'absolute inset-0 z-10 !h-full' : ''}`}
+                              !isExpanded && expandedAgentId ? 'invisible' : ''
+                            } ${isExpanded ? 'absolute inset-0 z-10' : ''}`}
                             onClick={() => {
                               if (!isExpanded) {
                                 handleFocusAgent(workspaceId)
@@ -1024,8 +1174,8 @@ function App() {
                         <div
                           key={info.id}
                           className={`rounded-lg border overflow-hidden transition-all duration-200 ${
-                            !isExpanded && expandedAgentId ? 'invisible h-0' : ''
-                          } ${isExpanded ? 'absolute inset-0 z-10 !h-full' : ''}`}
+                            !isExpanded && expandedAgentId ? 'invisible' : ''
+                          } ${isExpanded ? 'absolute inset-0 z-10' : ''}`}
                         >
                           <div className="px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between">
                             <div className="flex items-center gap-2">
@@ -1082,7 +1232,7 @@ function App() {
 
                       return (
                         <div
-                          key={terminal.terminalId}
+                          key={`${terminal.terminalId}-${tab.id}`}
                           style={{ gridRow, gridColumn: gridCol }}
                           draggable={!expandedAgentId}
                           onDragStart={(e) => {

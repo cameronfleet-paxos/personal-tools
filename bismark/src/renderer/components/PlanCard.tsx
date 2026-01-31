@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, Maximize2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, GitPullRequest, Maximize2, GitCommit, ExternalLink } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -141,6 +141,16 @@ export function PlanCard({
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {/* Strategy badge */}
+          {plan.branchStrategy === 'feature_branch' ? (
+            <span className="flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-blue-500/20 text-blue-500" title="Feature Branch Strategy">
+              <GitBranch className="h-2.5 w-2.5" />
+            </span>
+          ) : plan.branchStrategy === 'raise_prs' ? (
+            <span className="flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded bg-purple-500/20 text-purple-500" title="Raise PRs Strategy">
+              <GitPullRequest className="h-2.5 w-2.5" />
+            </span>
+          ) : null}
           <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${statusColors[plan.status]}`}>
             {statusIcons[plan.status]}
             {statusLabels[plan.status]}

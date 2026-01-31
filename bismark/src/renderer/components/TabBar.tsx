@@ -10,6 +10,12 @@ interface TabBarProps {
   onTabRename: (tabId: string, name: string) => void
   onTabDelete: (tabId: string) => void
   onTabCreate: () => void
+  // Drag-and-drop support for moving agents between tabs
+  draggedWorkspaceId?: string | null
+  dropTargetTabId?: string | null
+  onTabDragOver?: (tabId: string) => void
+  onTabDragLeave?: () => void
+  onTabDrop?: (workspaceId: string, tabId: string) => void
 }
 
 export function TabBar({
@@ -19,6 +25,11 @@ export function TabBar({
   onTabRename,
   onTabDelete,
   onTabCreate,
+  draggedWorkspaceId,
+  dropTargetTabId,
+  onTabDragOver,
+  onTabDragLeave,
+  onTabDrop,
 }: TabBarProps) {
   const [editingTabId, setEditingTabId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
@@ -58,7 +69,12 @@ export function TabBar({
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId
         const isEditing = editingTabId === tab.id
-        const agentCount = tab.workspaceIds.length
+        const agentCount = tab.workspaceIds.filter(Boolean).length
+        // Check if this tab can accept a dropped agent
+        const canAcceptDrop = draggedWorkspaceId &&
+          !tab.workspaceIds.includes(draggedWorkspaceId) &&
+          (tab.isPlanTab || agentCount < 4)
+        const isDropTarget = dropTargetTabId === tab.id && canAcceptDrop
 
         return (
           <div
@@ -71,8 +87,22 @@ export function TabBar({
                 : isActive
                   ? 'bg-background border shadow-sm'
                   : 'hover:bg-muted/50'
-            }`}
+            } ${isDropTarget ? 'ring-2 ring-primary ring-offset-1' : ''}`}
             onClick={() => !isEditing && onTabSelect(tab.id)}
+            onDragOver={(e) => {
+              if (canAcceptDrop) {
+                e.preventDefault()
+                onTabDragOver?.(tab.id)
+              }
+            }}
+            onDragLeave={() => onTabDragLeave?.()}
+            onDrop={(e) => {
+              e.preventDefault()
+              const workspaceId = e.dataTransfer.getData('workspaceId')
+              if (workspaceId && onTabDrop && canAcceptDrop) {
+                onTabDrop(workspaceId, tab.id)
+              }
+            }}
           >
             {isEditing ? (
               <input

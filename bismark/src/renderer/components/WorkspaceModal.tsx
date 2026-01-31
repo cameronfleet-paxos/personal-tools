@@ -17,12 +17,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/renderer/components/ui/select'
-import { Switch } from '@/renderer/components/ui/switch'
 import { AgentIcon } from '@/renderer/components/AgentIcon'
 import type { Agent, ThemeName, Repository } from '@/shared/types'
 import type { AgentIconName } from '@/shared/constants'
 import { themes, agentIcons } from '@/shared/constants'
-import { GitBranch, Check, X } from 'lucide-react'
+import { GitBranch, X } from 'lucide-react'
 
 interface AgentModalProps {
   open: boolean
@@ -49,9 +48,6 @@ export function AgentModal({
   // Git repository detection state
   const [detectedRepo, setDetectedRepo] = useState<Repository | null>(null)
   const [isDetecting, setIsDetecting] = useState(false)
-  const [prFlowEnabled, setPrFlowEnabled] = useState(false)
-  const [prBaseBranch, setPrBaseBranch] = useState('')
-  const [greenPRCriteria, setGreenPRCriteria] = useState('')
 
   // Detect git repository when directory changes
   const detectRepository = useCallback(async (dir: string) => {
@@ -64,12 +60,6 @@ export function AgentModal({
     try {
       const repo = await window.electronAPI.detectGitRepository(dir.trim())
       setDetectedRepo(repo)
-      if (repo) {
-        // Initialize PR flow settings from repo config
-        setPrFlowEnabled(repo.prFlow?.enabled ?? false)
-        setPrBaseBranch(repo.prFlow?.baseBranch ?? repo.defaultBranch)
-        setGreenPRCriteria(repo.prFlow?.greenPRCriteria ?? '')
-      }
     } catch (err) {
       console.error('Failed to detect repository:', err)
       setDetectedRepo(null)
@@ -103,9 +93,6 @@ export function AgentModal({
     }
     setError(null)
     setDetectedRepo(null)
-    setPrFlowEnabled(false)
-    setPrBaseBranch('')
-    setGreenPRCriteria('')
   }, [agent, open])
 
   const handleSave = async () => {
@@ -116,21 +103,6 @@ export function AgentModal({
     if (!directory.trim()) {
       setError('Directory is required')
       return
-    }
-
-    // Save PR flow config to repository if detected
-    if (detectedRepo) {
-      try {
-        await window.electronAPI.updateRepository(detectedRepo.id, {
-          prFlow: {
-            enabled: prFlowEnabled,
-            baseBranch: prBaseBranch || detectedRepo.defaultBranch,
-            greenPRCriteria: greenPRCriteria || undefined,
-          },
-        })
-      } catch (err) {
-        console.error('Failed to update repository config:', err)
-      }
     }
 
     const newAgent: Agent = {
@@ -191,47 +163,6 @@ export function AgentModal({
               </div>
             )}
           </div>
-          {/* PR Flow Configuration (only shown if git repo detected) */}
-          {detectedRepo && (
-            <div className="grid gap-3 p-3 border rounded-md bg-muted/30">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="pr-flow" className="text-sm font-medium">PR Flow</Label>
-                  <p className="text-xs text-muted-foreground">Create PRs instead of direct commits</p>
-                </div>
-                <Switch
-                  id="pr-flow"
-                  checked={prFlowEnabled}
-                  onCheckedChange={setPrFlowEnabled}
-                />
-              </div>
-              {prFlowEnabled && (
-                <>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="base-branch" className="text-xs">Base Branch</Label>
-                    <Input
-                      id="base-branch"
-                      value={prBaseBranch}
-                      onChange={(e) => setPrBaseBranch(e.target.value)}
-                      placeholder={detectedRepo.defaultBranch}
-                      className="h-8 text-sm"
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="green-pr" className="text-xs">Green PR Criteria (optional)</Label>
-                    <Textarea
-                      id="green-pr"
-                      value={greenPRCriteria}
-                      onChange={(e) => setGreenPRCriteria(e.target.value)}
-                      placeholder="e.g., All CI checks pass, tests green..."
-                      rows={2}
-                      className="text-sm"
-                    />
-                  </div>
-                </>
-              )}
-            </div>
-          )}
           <div className="grid gap-2">
             <Label htmlFor="purpose">Purpose</Label>
             <Textarea

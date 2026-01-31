@@ -10,24 +10,34 @@ import { Button } from '@/renderer/components/ui/button'
 import { Input } from '@/renderer/components/ui/input'
 import { Label } from '@/renderer/components/ui/label'
 import { Textarea } from '@/renderer/components/ui/textarea'
+import { GitBranch, GitPullRequest } from 'lucide-react'
+import type { BranchStrategy } from '@/shared/types'
 
 interface PlanCreatorProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreatePlan: (title: string, description: string, maxParallelAgents?: number) => void
+  onCreatePlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }) => void
 }
 
 export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorProps) {
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [maxParallelAgents, setMaxParallelAgents] = useState(4)
+  const [branchStrategy, setBranchStrategy] = useState<BranchStrategy>('feature_branch')
+  const [baseBranch, setBaseBranch] = useState('main')
 
   const handleSubmit = () => {
     if (title.trim()) {
-      onCreatePlan(title.trim(), description.trim(), maxParallelAgents)
+      onCreatePlan(title.trim(), description.trim(), {
+        maxParallelAgents,
+        branchStrategy,
+        baseBranch: baseBranch.trim() || 'main',
+      })
       setTitle('')
       setDescription('')
       setMaxParallelAgents(4)
+      setBranchStrategy('feature_branch')
+      setBaseBranch('main')
       onOpenChange(false)
     }
   }
@@ -37,6 +47,8 @@ export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorPro
       setTitle('')
       setDescription('')
       setMaxParallelAgents(4)
+      setBranchStrategy('feature_branch')
+      setBaseBranch('main')
     }
     onOpenChange(newOpen)
   }
@@ -89,6 +101,55 @@ export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorPro
                 agents can run simultaneously
               </span>
             </div>
+          </div>
+          <div className="grid gap-2">
+            <Label>Branch Strategy</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setBranchStrategy('feature_branch')}
+                className={`flex items-center gap-2 p-3 border rounded-md text-left transition-colors ${
+                  branchStrategy === 'feature_branch'
+                    ? 'border-primary bg-primary/5'
+                    : 'hover:border-primary/50'
+                }`}
+              >
+                <GitBranch className={`h-4 w-4 ${branchStrategy === 'feature_branch' ? 'text-primary' : 'text-muted-foreground'}`} />
+                <div>
+                  <div className="text-sm font-medium">Feature Branch</div>
+                  <div className="text-xs text-muted-foreground">Push all changes to a shared branch</div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setBranchStrategy('raise_prs')}
+                className={`flex items-center gap-2 p-3 border rounded-md text-left transition-colors ${
+                  branchStrategy === 'raise_prs'
+                    ? 'border-primary bg-primary/5'
+                    : 'hover:border-primary/50'
+                }`}
+              >
+                <GitPullRequest className={`h-4 w-4 ${branchStrategy === 'raise_prs' ? 'text-primary' : 'text-muted-foreground'}`} />
+                <div>
+                  <div className="text-sm font-medium">Raise PRs</div>
+                  <div className="text-xs text-muted-foreground">Create a PR for each task</div>
+                </div>
+              </button>
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="baseBranch">Base Branch</Label>
+            <Input
+              id="baseBranch"
+              placeholder="main"
+              value={baseBranch}
+              onChange={(e) => setBaseBranch(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              {branchStrategy === 'feature_branch'
+                ? 'Feature branch will be created from this branch'
+                : 'PRs will target this branch (dependent tasks stack on their blocker\'s PR)'}
+            </p>
           </div>
         </div>
         <DialogFooter>

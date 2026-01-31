@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -69,8 +69,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('set-preferences', preferences),
 
   // Plan management (Team Mode)
-  createPlan: (title: string, description: string, maxParallelAgents?: number): Promise<Plan> =>
-    ipcRenderer.invoke('create-plan', title, description, maxParallelAgents),
+  createPlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }): Promise<Plan> =>
+    ipcRenderer.invoke('create-plan', title, description, options),
   getPlans: (): Promise<Plan[]> =>
     ipcRenderer.invoke('get-plans'),
   executePlan: (planId: string, referenceAgentId: string): Promise<Plan | null> =>
@@ -177,7 +177,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('detect-git-repository', directory),
   getRepositories: (): Promise<Repository[]> =>
     ipcRenderer.invoke('get-repositories'),
-  updateRepository: (id: string, updates: Partial<Pick<Repository, 'prFlow' | 'name'>>): Promise<Repository | undefined> =>
+  updateRepository: (id: string, updates: Partial<Pick<Repository, 'name'>>): Promise<Repository | undefined> =>
     ipcRenderer.invoke('update-repository', id, updates),
 
   // External URL handling

@@ -139,7 +139,7 @@ export async function getRepositoryByPath(
  */
 export async function updateRepository(
   id: string,
-  updates: Partial<Pick<Repository, 'prFlow' | 'name'>>
+  updates: Partial<Pick<Repository, 'name'>>
 ): Promise<Repository | undefined> {
   const repositories = await loadRepositories();
   const index = repositories.findIndex((r) => r.id === id);

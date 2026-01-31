@@ -30,11 +30,21 @@ export interface BeadTask {
  */
 export async function ensureBeadsRepo(planId: string): Promise<string> {
   const planDir = getPlanDir(planId)
-  if (!fs.existsSync(planDir)) {
-    fs.mkdirSync(planDir, { recursive: true })
+  const beadsDir = path.join(planDir, '.beads')
 
-    // Initialize git repo
-    await execAsync('git init', { cwd: planDir })
+  // Check for .beads directory specifically, not just plan directory
+  // (plan directory may be created by other code like savePlanActivities)
+  if (!fs.existsSync(beadsDir)) {
+    // Ensure plan directory exists
+    if (!fs.existsSync(planDir)) {
+      fs.mkdirSync(planDir, { recursive: true })
+    }
+
+    // Initialize git repo if not already
+    const gitDir = path.join(planDir, '.git')
+    if (!fs.existsSync(gitDir)) {
+      await execAsync('git init', { cwd: planDir })
+    }
 
     // Initialize beads with bismark prefix
     await execAsync('bd --sandbox init --prefix bismark', { cwd: planDir })

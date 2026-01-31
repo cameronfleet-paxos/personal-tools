@@ -880,6 +880,7 @@ export async function runMockFlow(options?: Partial<MockFlowOptions>): Promise<M
     planAgentWorkspaceId: null,
     maxParallelAgents: 2,
     worktrees: [],
+    branchStrategy: 'feature_branch',
   }
 
   // NEW: Create plan tab BEFORE saving the plan

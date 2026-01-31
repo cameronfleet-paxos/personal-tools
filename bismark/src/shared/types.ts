@@ -1,5 +1,37 @@
 import type { AgentIconName } from './constants'
 
+// Branch strategy for plan execution
+export type BranchStrategy = 'feature_branch' | 'raise_prs'
+
+// Commit record for git summary (feature_branch strategy)
+export interface PlanCommit {
+  sha: string
+  shortSha: string
+  message: string
+  taskId: string
+  timestamp: string
+  repositoryId: string
+  githubUrl?: string
+}
+
+// Pull request record for git summary (raise_prs strategy)
+export interface PlanPullRequest {
+  number: number
+  title: string
+  url: string
+  taskId: string
+  baseBranch: string
+  headBranch: string
+  status: 'open' | 'merged' | 'closed'
+  repositoryId: string
+}
+
+// Git summary for plan (commits or PRs depending on strategy)
+export interface PlanGitSummary {
+  commits?: PlanCommit[]      // For feature_branch strategy
+  pullRequests?: PlanPullRequest[]  // For raise_prs strategy
+}
+
 // Repository configuration (stored in ~/.bismark/repositories.json)
 export interface Repository {
   id: string              // Hash of rootPath
@@ -7,11 +39,6 @@ export interface Repository {
   name: string            // Directory basename
   defaultBranch: string   // Usually 'main' or 'master'
   remoteUrl?: string      // Origin remote URL
-  prFlow?: {
-    enabled: boolean
-    baseBranch: string
-    greenPRCriteria?: string  // Instructions for verifying PR is ready
-  }
 }
 
 // Agent definition (stored in ~/.bismark/config.json)
@@ -120,6 +147,11 @@ export interface PlanWorktree {
   agentId: string               // Task agent working in this worktree
   status: PlanWorktreeStatus    // ready_for_review = agent done, awaiting user review
   createdAt: string
+  // PR/commit tracking (populated based on plan's branchStrategy)
+  prNumber?: number             // PR number if created (raise_prs strategy)
+  prUrl?: string                // PR URL
+  prBaseBranch?: string         // Branch this PR targets
+  commits?: string[]            // Commit SHAs pushed (feature_branch strategy)
 }
 
 // Plan definition for team mode coordination
@@ -139,6 +171,12 @@ export interface Plan {
   // Worktree tracking for new plan execution model
   worktrees?: PlanWorktree[]
   maxParallelAgents?: number    // Default: 4
+
+  // Branch/PR strategy configuration
+  branchStrategy: BranchStrategy   // How task agents handle git operations
+  featureBranch?: string           // Shared branch name (feature_branch strategy)
+  baseBranch?: string              // Base branch for PRs or feature branch
+  gitSummary?: PlanGitSummary      // Commits/PRs created during execution
 }
 
 // Task assignment status
