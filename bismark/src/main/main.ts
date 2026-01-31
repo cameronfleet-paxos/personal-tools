@@ -69,6 +69,8 @@ import {
   getHeadlessAgentInfo,
   getHeadlessAgentInfoForPlan,
   stopHeadlessTaskAgent,
+  startDiscussion,
+  cancelDiscussion,
 } from './plan-manager'
 import {
   detectRepository,
@@ -288,6 +290,14 @@ function registerIpcHandlers() {
 
   ipcMain.handle('execute-plan', async (_event, planId: string, referenceAgentId: string) => {
     return executePlan(planId, referenceAgentId)
+  })
+
+  ipcMain.handle('start-discussion', async (_event, planId: string, referenceAgentId: string) => {
+    return startDiscussion(planId, referenceAgentId)
+  })
+
+  ipcMain.handle('cancel-discussion', async (_event, planId: string) => {
+    return cancelDiscussion(planId)
   })
 
   ipcMain.handle('cancel-plan', async (_event, planId: string) => {

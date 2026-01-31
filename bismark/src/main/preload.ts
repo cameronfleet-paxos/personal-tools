@@ -75,6 +75,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-plans'),
   executePlan: (planId: string, referenceAgentId: string): Promise<Plan | null> =>
     ipcRenderer.invoke('execute-plan', planId, referenceAgentId),
+  startDiscussion: (planId: string, referenceAgentId: string): Promise<Plan | null> =>
+    ipcRenderer.invoke('start-discussion', planId, referenceAgentId),
+  cancelDiscussion: (planId: string): Promise<Plan | null> =>
+    ipcRenderer.invoke('cancel-discussion', planId),
   cancelPlan: (planId: string): Promise<Plan | null> =>
     ipcRenderer.invoke('cancel-plan', planId),
   completePlan: (planId: string): Promise<Plan | null> =>

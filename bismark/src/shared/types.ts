@@ -130,8 +130,37 @@ export interface TerminalSession {
 }
 
 // Plan status for team mode
+// 'discussing' = brainstorming phase before task creation
 // 'ready_for_review' = all agents done, awaiting user review before cleanup
-export type PlanStatus = 'draft' | 'delegating' | 'in_progress' | 'ready_for_review' | 'completed' | 'failed'
+export type PlanStatus = 'draft' | 'discussing' | 'delegating' | 'in_progress' | 'ready_for_review' | 'completed' | 'failed'
+
+// Discussion category for structured brainstorming
+export type DiscussionCategory =
+  | 'requirements'
+  | 'architecture'
+  | 'testing'
+  | 'monitoring'
+  | 'edge_cases'
+
+// Discussion message in a plan brainstorming session
+export interface DiscussionMessage {
+  id: string
+  role: 'agent' | 'user'
+  content: string
+  timestamp: string
+  category?: DiscussionCategory  // For agent questions
+}
+
+// Discussion state for a plan
+export interface PlanDiscussion {
+  id: string
+  planId: string
+  status: 'active' | 'approved' | 'cancelled'
+  messages: DiscussionMessage[]
+  summary?: string  // Generated when approved
+  startedAt: string
+  approvedAt?: string
+}
 
 // Worktree status for plan execution
 export type PlanWorktreeStatus = 'active' | 'ready_for_review' | 'cleaned'
@@ -167,6 +196,10 @@ export interface Plan {
   orchestratorWorkspaceId: string | null // Tracks orchestrator workspace
   orchestratorTabId: string | null // Tracks orchestrator's dedicated tab
   planAgentWorkspaceId?: string | null // Tracks plan agent workspace (temporary)
+  discussionAgentWorkspaceId?: string | null // Tracks discussion agent workspace
+
+  // Discussion phase (brainstorming before task creation)
+  discussion?: PlanDiscussion
 
   // Worktree tracking for new plan execution model
   worktrees?: PlanWorktree[]

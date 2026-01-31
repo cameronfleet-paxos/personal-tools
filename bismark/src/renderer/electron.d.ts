@@ -52,6 +52,8 @@ export interface ElectronAPI {
   createPlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }) => Promise<Plan>
   getPlans: () => Promise<Plan[]>
   executePlan: (planId: string, referenceAgentId: string) => Promise<Plan | null>
+  startDiscussion: (planId: string, referenceAgentId: string) => Promise<Plan | null>
+  cancelDiscussion: (planId: string) => Promise<Plan | null>
   cancelPlan: (planId: string) => Promise<Plan | null>
   completePlan: (planId: string) => Promise<Plan | null>
   getTaskAssignments: (planId: string) => Promise<TaskAssignment[]>

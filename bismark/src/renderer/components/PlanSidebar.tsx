@@ -16,6 +16,8 @@ interface PlanSidebarProps {
   onCreatePlan: () => void
   onSelectPlan: (planId: string | null) => void
   onExecutePlan: (planId: string, referenceAgentId: string) => void
+  onStartDiscussion: (planId: string, referenceAgentId: string) => void
+  onCancelDiscussion: (planId: string) => Promise<void>
   onCancelPlan: (planId: string) => Promise<void>
   onCompletePlan: (planId: string) => void
 }
@@ -31,10 +33,19 @@ export function PlanSidebar({
   onCreatePlan,
   onSelectPlan,
   onExecutePlan,
+  onStartDiscussion,
+  onCancelDiscussion,
   onCancelPlan,
   onCompletePlan,
 }: PlanSidebarProps) {
   const [detailPlanId, setDetailPlanId] = useState<string | null>(null)
+
+  // Auto-expand detail view for plans in 'discussing' status
+  const discussingPlan = plans.find(p => p.status === 'discussing')
+  if (discussingPlan && !detailPlanId) {
+    // Use setTimeout to avoid React warning about updating during render
+    setTimeout(() => setDetailPlanId(discussingPlan.id), 0)
+  }
 
   if (!open) return null
 
@@ -59,13 +70,17 @@ export function PlanSidebar({
             await onCancelPlan(detailPlan.id)
             setDetailPlanId(null)
           }}
+          onCancelDiscussion={async () => {
+            await onCancelDiscussion(detailPlan.id)
+            setDetailPlanId(null)
+          }}
         />
       </aside>
     )
   }
 
   const activePlans = plans.filter(
-    (p) => p.status === 'delegating' || p.status === 'in_progress' || p.status === 'ready_for_review'
+    (p) => p.status === 'discussing' || p.status === 'delegating' || p.status === 'in_progress' || p.status === 'ready_for_review'
   )
   const draftPlans = plans.filter((p) => p.status === 'draft')
   const completedPlans = plans.filter(
@@ -113,6 +128,8 @@ export function PlanSidebar({
                     activities={planActivities.get(plan.id) || []}
                     isActive={activePlanId === plan.id}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
+                    onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
+                    onCancelDiscussion={() => onCancelDiscussion(plan.id)}
                     onCancel={() => onCancelPlan(plan.id)}
                     onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
@@ -136,6 +153,8 @@ export function PlanSidebar({
                     activities={planActivities.get(plan.id) || []}
                     isActive={activePlanId === plan.id}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
+                    onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
+                    onCancelDiscussion={() => onCancelDiscussion(plan.id)}
                     onCancel={() => onCancelPlan(plan.id)}
                     onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
@@ -159,6 +178,8 @@ export function PlanSidebar({
                     activities={planActivities.get(plan.id) || []}
                     isActive={activePlanId === plan.id}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
+                    onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
+                    onCancelDiscussion={() => onCancelDiscussion(plan.id)}
                     onCancel={() => onCancelPlan(plan.id)}
                     onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}

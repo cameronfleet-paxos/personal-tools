@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, GitPullRequest, Maximize2, GitCommit, ExternalLink } from 'lucide-react'
+import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, GitPullRequest, Maximize2, GitCommit, ExternalLink, MessageSquare } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -11,6 +11,8 @@ interface PlanCardProps {
   activities: PlanActivity[]
   isActive: boolean
   onExecute: (referenceAgentId: string) => void
+  onStartDiscussion: (referenceAgentId: string) => void
+  onCancelDiscussion: () => Promise<void>
   onCancel: () => Promise<void>
   onComplete: () => void
   onClick: () => void
@@ -19,6 +21,7 @@ interface PlanCardProps {
 
 const statusIcons: Record<Plan['status'], React.ReactNode> = {
   draft: <Clock className="h-3 w-3 text-muted-foreground" />,
+  discussing: <MessageSquare className="h-3 w-3 text-purple-500 animate-pulse" />,
   delegating: <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />,
   in_progress: <Loader2 className="h-3 w-3 text-yellow-500 animate-spin" />,
   ready_for_review: <CheckCircle2 className="h-3 w-3 text-purple-500" />,
@@ -28,6 +31,7 @@ const statusIcons: Record<Plan['status'], React.ReactNode> = {
 
 const statusLabels: Record<Plan['status'], string> = {
   draft: 'Draft',
+  discussing: 'Discussing',
   delegating: 'Delegating',
   in_progress: 'In Progress',
   ready_for_review: 'Ready for Review',
@@ -37,6 +41,7 @@ const statusLabels: Record<Plan['status'], string> = {
 
 const statusColors: Record<Plan['status'], string> = {
   draft: 'bg-muted text-muted-foreground',
+  discussing: 'bg-purple-500/20 text-purple-500',
   delegating: 'bg-blue-500/20 text-blue-500',
   in_progress: 'bg-yellow-500/20 text-yellow-500',
   ready_for_review: 'bg-purple-500/20 text-purple-500',
@@ -76,6 +81,8 @@ export function PlanCard({
   activities,
   isActive,
   onExecute,
+  onStartDiscussion,
+  onCancelDiscussion,
   onCancel,
   onComplete,
   onClick,
@@ -91,6 +98,11 @@ export function PlanCard({
     setIsCancelling(true)
     await onCancel()
     // Note: Component may unmount or plan status may change, but that's fine
+  }
+
+  const handleCancelDiscussion = async () => {
+    setIsCancelling(true)
+    await onCancelDiscussion()
   }
 
   // Auto-scroll to latest activity
@@ -193,19 +205,65 @@ export function PlanCard({
                     </option>
                   ))}
               </select>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1"
+                  disabled={!selectedReference}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (selectedReference) {
+                      onStartDiscussion(selectedReference)
+                    }
+                  }}
+                >
+                  <MessageSquare className="h-3 w-3 mr-1" />
+                  Discuss
+                </Button>
+                <Button
+                  size="sm"
+                  className="flex-1"
+                  disabled={!selectedReference}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (selectedReference) {
+                      onExecute(selectedReference)
+                    }
+                  }}
+                >
+                  <Play className="h-3 w-3 mr-1" />
+                  Execute
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {plan.status === 'discussing' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Discussion in progress. Use the terminal to brainstorm with the agent.
+              </p>
               <Button
                 size="sm"
-                className="w-full"
-                disabled={!selectedReference}
+                variant="outline"
+                disabled={isCancelling}
                 onClick={(e) => {
                   e.stopPropagation()
-                  if (selectedReference) {
-                    onExecute(selectedReference)
-                  }
+                  handleCancelDiscussion()
                 }}
               >
-                <Play className="h-3 w-3 mr-1" />
-                Execute
+                {isCancelling ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Cancelling...
+                  </>
+                ) : (
+                  <>
+                    <X className="h-3 w-3 mr-1" />
+                    Cancel Discussion
+                  </>
+                )}
               </Button>
             </div>
           )}

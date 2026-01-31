@@ -737,6 +737,14 @@ function App() {
     await window.electronAPI?.executePlan?.(planId, referenceAgentId)
   }
 
+  const handleStartDiscussion = async (planId: string, referenceAgentId: string) => {
+    await window.electronAPI?.startDiscussion?.(planId, referenceAgentId)
+  }
+
+  const handleCancelDiscussion = async (planId: string) => {
+    await window.electronAPI?.cancelDiscussion?.(planId)
+  }
+
   const handleCancelPlan = async (planId: string) => {
     await window.electronAPI?.cancelPlan?.(planId)
   }
@@ -1430,6 +1438,8 @@ function App() {
             onCreatePlan={() => setPlanCreatorOpen(true)}
             onSelectPlan={handleSelectPlan}
             onExecutePlan={handleExecutePlan}
+            onStartDiscussion={handleStartDiscussion}
+            onCancelDiscussion={handleCancelDiscussion}
             onCancelPlan={handleCancelPlan}
             onCompletePlan={handleCompletePlan}
           />

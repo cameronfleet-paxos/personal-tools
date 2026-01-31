@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit } from 'lucide-react'
+import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit, MessageSquare } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -12,10 +12,12 @@ interface PlanDetailViewProps {
   onBack: () => void
   onComplete: () => void
   onCancel: () => Promise<void>
+  onCancelDiscussion?: () => Promise<void>
 }
 
 const statusIcons: Record<Plan['status'], React.ReactNode> = {
   draft: <Clock className="h-3 w-3 text-muted-foreground" />,
+  discussing: <MessageSquare className="h-3 w-3 text-purple-500 animate-pulse" />,
   delegating: <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />,
   in_progress: <Loader2 className="h-3 w-3 text-yellow-500 animate-spin" />,
   ready_for_review: <CheckCircle2 className="h-3 w-3 text-purple-500" />,
@@ -25,6 +27,7 @@ const statusIcons: Record<Plan['status'], React.ReactNode> = {
 
 const statusLabels: Record<Plan['status'], string> = {
   draft: 'Draft',
+  discussing: 'Discussing',
   delegating: 'Delegating',
   in_progress: 'In Progress',
   ready_for_review: 'Ready for Review',
@@ -34,6 +37,7 @@ const statusLabels: Record<Plan['status'], string> = {
 
 const statusColors: Record<Plan['status'], string> = {
   draft: 'bg-muted text-muted-foreground',
+  discussing: 'bg-purple-500/20 text-purple-500',
   delegating: 'bg-blue-500/20 text-blue-500',
   in_progress: 'bg-yellow-500/20 text-yellow-500',
   ready_for_review: 'bg-purple-500/20 text-purple-500',
@@ -73,12 +77,19 @@ export function PlanDetailView({
   onBack,
   onComplete,
   onCancel,
+  onCancelDiscussion,
 }: PlanDetailViewProps) {
   const [isCancelling, setIsCancelling] = useState(false)
 
   const handleCancel = async () => {
     setIsCancelling(true)
     await onCancel()
+  }
+
+  const handleCancelDiscussion = async () => {
+    if (!onCancelDiscussion) return
+    setIsCancelling(true)
+    await onCancelDiscussion()
   }
 
   const getAgentById = (id: string) => agents.find((a) => a.id === id)
@@ -154,6 +165,32 @@ export function PlanDetailView({
         )}
 
         {/* Action buttons */}
+        {plan.status === 'discussing' && onCancelDiscussion && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Discussion in progress. Use the terminal to brainstorm with the agent.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isCancelling}
+              onClick={handleCancelDiscussion}
+            >
+              {isCancelling ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Cancelling...
+                </>
+              ) : (
+                <>
+                  <X className="h-3 w-3 mr-1" />
+                  Cancel Discussion
+                </>
+              )}
+            </Button>
+          </div>
+        )}
+
         {(plan.status === 'delegating' || plan.status === 'in_progress') && (
           <Button
             size="sm"
