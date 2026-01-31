@@ -54,6 +54,7 @@ export interface HeadlessAgentOptions {
   prompt: string
   worktreePath: string
   planDir: string
+  planId?: string // Plan ID for bd proxy commands
   taskId?: string
   image?: string
   claudeFlags?: string[]
@@ -131,6 +132,7 @@ export class HeadlessAgent extends EventEmitter {
         image: options.image || 'bismark-agent:latest',
         workingDir: options.worktreePath,
         planDir: options.planDir,
+        planId: options.planId,
         prompt: options.prompt,
         claudeFlags: options.claudeFlags,
         env: {

@@ -48,10 +48,10 @@ export function AgentCard({
   return (
     <div
       className={`
-        relative rounded-lg border p-4 cursor-pointer transition-all
+        relative rounded-lg p-4 cursor-pointer transition-all
         ${isActive ? 'ring-2 ring-primary' : 'hover:border-primary/50'}
         ${isWaiting ? 'animate-pulse ring-2 ring-yellow-500' : ''}
-        ${isFocused ? 'border-white/50' : ''}
+        ${isFocused ? 'border-2 border-white' : 'border border-muted-foreground/30'}
       `}
       onClick={onClick}
     >

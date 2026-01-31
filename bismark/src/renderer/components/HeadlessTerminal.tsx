@@ -13,7 +13,13 @@
  */
 
 import { useEffect, useRef, useState, useMemo } from 'react'
-import type { ThemeName, StreamEvent, HeadlessAgentStatus } from '@/shared/types'
+import type {
+  ThemeName,
+  StreamEvent,
+  StreamToolUseEvent,
+  StreamToolResultEvent,
+  HeadlessAgentStatus,
+} from '@/shared/types'
 import { themes } from '@/shared/constants'
 
 interface HeadlessTerminalProps {
@@ -25,6 +31,38 @@ interface HeadlessTerminalProps {
 
 interface CollapsedState {
   [toolId: string]: boolean
+}
+
+/**
+ * Generate an inline summary for a tool invocation
+ */
+function getToolSummary(toolName?: string, input?: Record<string, unknown>): string {
+  if (!toolName) return '→ Unknown tool'
+
+  switch (toolName) {
+    case 'Read':
+      return `→ Read ${input?.file_path || 'file'}`
+    case 'Edit':
+      return `→ Edit ${input?.file_path || 'file'}`
+    case 'Write':
+      return `→ Write ${input?.file_path || 'file'}`
+    case 'Bash': {
+      const cmd = input?.command as string
+      if (cmd) {
+        const truncated = cmd.length > 50 ? cmd.slice(0, 50) + '...' : cmd
+        return `→ Run: ${truncated}`
+      }
+      return '→ Run command'
+    }
+    case 'Grep':
+      return `→ Search: ${input?.pattern || 'pattern'}`
+    case 'Glob':
+      return `→ Find: ${input?.pattern || 'pattern'}`
+    case 'Task':
+      return `→ Task: ${input?.description || 'subtask'}`
+    default:
+      return `→ ${toolName}`
+  }
 }
 
 export function HeadlessTerminal({
@@ -149,94 +187,111 @@ export function HeadlessTerminal({
     return ''
   }
 
-  // Render a message group
+  // Render a message group with proper paragraph formatting
   const renderMessageGroup = (events: StreamEvent[], key: number) => {
-    const text = events.map(extractText).join('')
+    const text = events.map(extractText).filter(Boolean).join('')
     if (!text.trim()) return null
 
+    // Split into paragraphs on double newlines
+    const paragraphs = text.split(/\n\n+/).filter((p) => p.trim())
+
     return (
-      <div key={key} className="mb-4 whitespace-pre-wrap font-mono text-sm">
-        {text}
+      <div key={key} className="mb-4 space-y-3">
+        {paragraphs.map((para, i) => (
+          <p
+            key={i}
+            className="whitespace-pre-wrap font-mono text-sm leading-relaxed"
+          >
+            {para.trim()}
+          </p>
+        ))}
       </div>
     )
   }
 
-  // Render a tool use/result group
+  // Render a tool use/result group with inline summary
   const renderToolGroup = (
     events: StreamEvent[],
     toolId: string,
     key: number
   ) => {
-    const toolUse = events.find((e) => e.type === 'tool_use') as {
-      tool_name: string
-      input: Record<string, unknown>
-    } | undefined
-    const toolResult = events.find((e) => e.type === 'tool_result') as {
-      output: string
-      is_error?: boolean
-    } | undefined
+    const toolUse = events.find((e) => e.type === 'tool_use') as
+      | StreamToolUseEvent
+      | undefined
+    const toolResult = events.find((e) => e.type === 'tool_result') as
+      | StreamToolResultEvent
+      | undefined
 
     const isCollapsed = collapsed[toolId] ?? true
     const hasError = toolResult?.is_error
 
+    // Generate inline summary
+    const summary = getToolSummary(toolUse?.tool_name, toolUse?.input)
+
     return (
-      <div
-        key={key}
-        className={`mb-4 border-l-2 pl-3 ${
-          hasError ? 'border-red-500' : 'border-blue-500'
-        }`}
-      >
-        {/* Tool header */}
-        <button
-          onClick={() => toggleCollapse(toolId)}
-          className="flex items-center gap-2 text-sm font-mono hover:opacity-80 w-full text-left"
+      <div key={key} className="mb-4">
+        {/* Inline tool summary - always visible */}
+        <div
+          className={`text-sm font-mono mb-2 ${
+            hasError ? 'text-red-400' : 'text-blue-400'
+          }`}
         >
-          <span className="text-xs opacity-60">
-            {isCollapsed ? '▶' : '▼'}
-          </span>
-          <span className={hasError ? 'text-red-400' : 'text-blue-400'}>
-            {toolUse?.tool_name || 'Unknown tool'}
-          </span>
-          {toolResult && (
-            <span className="text-xs opacity-60">
-              {hasError ? '❌' : '✓'}
-            </span>
+          {summary}
+          {toolResult && !hasError && (
+            <span className="ml-2 text-green-400">✓</span>
           )}
+          {toolResult && hasError && <span className="ml-2 text-red-400">✗</span>}
           {!toolResult && (
-            <span className="text-xs opacity-60 animate-pulse">running...</span>
+            <span className="ml-2 text-yellow-400 animate-pulse">...</span>
           )}
-        </button>
+        </div>
 
-        {/* Tool details (collapsible) */}
-        {!isCollapsed && (
-          <div className="mt-2 ml-4 text-xs font-mono">
-            {/* Input */}
-            {toolUse?.input && (
-              <div className="mb-2">
-                <div className="opacity-60 mb-1">Input:</div>
-                <pre className="bg-black/20 p-2 rounded overflow-x-auto">
-                  {JSON.stringify(toolUse.input, null, 2)}
-                </pre>
-              </div>
-            )}
+        {/* Collapsible details */}
+        <div
+          className={`border-l-2 pl-3 ${
+            hasError ? 'border-red-500' : 'border-blue-500/30'
+          }`}
+        >
+          <button
+            onClick={() => toggleCollapse(toolId)}
+            className="flex items-center gap-2 text-xs font-mono hover:opacity-80 w-full text-left opacity-60"
+          >
+            <span>{isCollapsed ? '▶' : '▼'}</span>
+            <span>{toolUse?.tool_name || 'Unknown tool'}</span>
+            <span className="text-xs">details</span>
+          </button>
 
-            {/* Output */}
-            {toolResult?.output && (
-              <div>
-                <div className="opacity-60 mb-1">Output:</div>
-                <pre
-                  className={`p-2 rounded overflow-x-auto whitespace-pre-wrap ${
-                    hasError ? 'bg-red-900/20' : 'bg-black/20'
-                  }`}
-                >
-                  {toolResult.output.length > 2000
-                    ? toolResult.output.substring(0, 2000) + '\n... (truncated)'
-                    : toolResult.output}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
+          {/* Tool details (collapsible) */}
+          {!isCollapsed && (
+            <div className="mt-2 ml-4 text-xs font-mono">
+              {/* Input */}
+              {toolUse?.input && (
+                <div className="mb-2">
+                  <div className="opacity-60 mb-1">Input:</div>
+                  <pre className="bg-black/20 p-2 rounded overflow-x-auto">
+                    {JSON.stringify(toolUse.input, null, 2)}
+                  </pre>
+                </div>
+              )}
+
+              {/* Output */}
+              {toolResult?.output && (
+                <div>
+                  <div className="opacity-60 mb-1">Output:</div>
+                  <pre
+                    className={`p-2 rounded overflow-x-auto whitespace-pre-wrap ${
+                      hasError ? 'bg-red-900/20' : 'bg-black/20'
+                    }`}
+                  >
+                    {toolResult.output.length > 2000
+                      ? toolResult.output.substring(0, 2000) + '\n... (truncated)'
+                      : toolResult.output}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     )
   }

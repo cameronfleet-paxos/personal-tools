@@ -121,6 +121,21 @@ export function DevConsole({ open, onClose }: DevConsoleProps) {
     setEventLog([])
   }
 
+  // Close on Escape key
+  useEffect(() => {
+    if (!open) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [open, onClose])
+
   if (!open) return null
 
   return (
@@ -280,7 +295,7 @@ export function DevConsole({ open, onClose }: DevConsoleProps) {
 
       {/* Footer */}
       <div className="px-4 py-2 border-t text-xs text-muted-foreground">
-        Press <kbd className="px-1 py-0.5 rounded bg-muted">Cmd+Shift+D</kbd> to toggle this console.
+        Press <kbd className="px-1 py-0.5 rounded bg-muted">Esc</kbd> to close or <kbd className="px-1 py-0.5 rounded bg-muted">Cmd+Shift+D</kbd> to toggle.
         Set <code className="px-1 py-0.5 rounded bg-muted">BISMARK_MOCK_AGENTS=true</code> to use mock agents globally.
       </div>
     </div>

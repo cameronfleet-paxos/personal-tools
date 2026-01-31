@@ -37,6 +37,7 @@ export interface ContainerConfig {
   image: string // Docker image name (e.g., "bismark-agent:latest")
   workingDir: string // Path to mount as /workspace
   planDir?: string // Path to mount as /plan (for bd commands)
+  planId?: string // Plan ID for bd proxy commands
   proxyHost?: string // Override proxy URL (default: auto-detect)
   env?: Record<string, string> // Additional environment variables
   prompt: string // The prompt to send to Claude
@@ -94,6 +95,11 @@ function buildDockerArgs(config: ContainerConfig): string[] {
   // Environment variables
   const proxyUrl = config.proxyHost || getProxyUrl()
   args.push('-e', `TOOL_PROXY_URL=${proxyUrl}`)
+
+  // Pass plan ID for bd proxy commands
+  if (config.planId) {
+    args.push('-e', `BISMARK_PLAN_ID=${config.planId}`)
+  }
 
   // Pass Claude OAuth token or Anthropic API key to container
   // OAuth token is preferred for headless agents using Claude subscription

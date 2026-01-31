@@ -29,10 +29,10 @@ RUN npm install -g @anthropic-ai/claude-code
 COPY gh-proxy-wrapper.sh /usr/local/bin/gh
 RUN chmod +x /usr/local/bin/gh
 
-# Copy bd CLI (beads task management)
-# Note: bd binary needs to be built for Linux and placed in docker/bd
-COPY bd /usr/local/bin/bd
-RUN chmod +x /usr/local/bin/bd || true
+# Copy bd CLI wrapper that calls the tool proxy
+# This proxies bd commands to the host where the plan directory lives
+COPY bd-proxy-wrapper.sh /usr/local/bin/bd
+RUN chmod +x /usr/local/bin/bd
 
 # Create non-root user (Claude refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash agent && \

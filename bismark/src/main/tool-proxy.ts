@@ -12,6 +12,8 @@
  */
 
 import * as http from 'http'
+import * as path from 'path'
+import * as os from 'os'
 import { spawn } from 'child_process'
 import { EventEmitter } from 'events'
 
@@ -19,7 +21,7 @@ export interface ToolProxyConfig {
   port: number // Default: 9847
   tools: {
     gh: { enabled: boolean }
-    // Future: slack, jira, etc.
+    bd: { enabled: boolean }
   }
 }
 
@@ -27,6 +29,7 @@ const DEFAULT_CONFIG: ToolProxyConfig = {
   port: 9847,
   tools: {
     gh: { enabled: true },
+    bd: { enabled: true },
   },
 }
 
@@ -55,12 +58,14 @@ let currentConfig: ToolProxyConfig = DEFAULT_CONFIG
 async function executeCommand(
   command: string,
   args: string[],
-  stdin?: string
+  stdin?: string,
+  options?: { cwd?: string }
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
     const proc = spawn(command, args, {
       env: process.env, // Inherits tokens from host environment
       shell: false,
+      cwd: options?.cwd,
     })
 
     let stdout = ''
@@ -189,6 +194,68 @@ async function handleGhRequest(
 }
 
 /**
+ * Get the plan-specific directory path
+ * (Duplicated from bd-client.ts to avoid circular dependency)
+ */
+function getPlanDir(planId: string): string {
+  return path.join(os.homedir(), '.bismark', 'plans', planId)
+}
+
+/**
+ * Handle bd CLI proxy requests
+ */
+async function handleBdRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse
+): Promise<void> {
+  if (!currentConfig.tools.bd.enabled) {
+    sendJson(res, 403, { success: false, error: 'bd tool is disabled' })
+    return
+  }
+
+  try {
+    const body = (await parseBody(req)) as ProxyRequest & { planId?: string }
+
+    // Get plan ID from request body or header
+    const planId =
+      body.planId || (req.headers['x-bismark-plan-id'] as string | undefined)
+    if (!planId) {
+      sendJson(res, 400, {
+        success: false,
+        error: 'planId required (in body or X-Bismark-Plan-Id header)',
+      })
+      return
+    }
+
+    const planDir = getPlanDir(planId)
+
+    // Filter out --sandbox from args (we add it ourselves to ensure it's always present)
+    const filteredArgs = (body.args || []).filter((arg: string) => arg !== '--sandbox')
+
+    // Build bd command with --sandbox flag
+    const args = ['--sandbox', ...filteredArgs]
+
+    // Log the operation
+    proxyEvents.emit('bd', { planId, args })
+
+    // Execute in plan directory context
+    const result = await executeCommand('bd', args, body.stdin, { cwd: planDir })
+
+    sendJson(res, 200, {
+      success: result.exitCode === 0,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+    })
+  } catch (err) {
+    sendJson(res, 400, {
+      success: false,
+      error: err instanceof Error ? err.message : 'Unknown error',
+    })
+  }
+}
+
+/**
  * Handle health check requests
  */
 function handleHealthCheck(res: http.ServerResponse): void {
@@ -223,6 +290,8 @@ async function handleRequest(
   } else if (url.startsWith('/gh') && method === 'POST') {
     const subpath = url.substring(3) // Remove '/gh' prefix
     await handleGhRequest(req, res, subpath || '/')
+  } else if (url.startsWith('/bd') && method === 'POST') {
+    await handleBdRequest(req, res)
   } else {
     sendJson(res, 404, { success: false, error: 'Not found' })
   }

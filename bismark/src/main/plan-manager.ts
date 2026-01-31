@@ -1310,6 +1310,7 @@ async function startHeadlessTaskAgent(
       prompt: taskPrompt,
       worktreePath: worktree.path,
       planDir,
+      planId,
       taskId: task.id,
       image: DOCKER_IMAGE_NAME,
     })
@@ -1362,9 +1363,11 @@ function buildTaskPromptForHeadless(planId: string, task: BeadTask, repository?:
   const prInstructions = repository?.prFlow?.enabled
     ? `2. Create a PR: gh pr create --base ${repository.prFlow.baseBranch}
 ${repository.prFlow.greenPRCriteria ? `3. Verify PR is green: ${repository.prFlow.greenPRCriteria}` : ''}
-4. Close task: bd --sandbox close ${task.id} --message "PR: <url>"`
-    : `2. Commit your changes
-3. Close task: bd --sandbox close ${task.id} --message "Completed"`
+4. Close task with PR URL:
+   bd close ${task.id} --message "PR: <url>"`
+    : `2. Commit your changes with a clear message
+3. Close the task to signal completion:
+   bd close ${task.id} --message "Completed: <brief summary>"`
 
   return `[BISMARK TASK - HEADLESS MODE]
 Task ID: ${task.id}
@@ -1372,19 +1375,38 @@ Title: ${task.title}
 
 === ENVIRONMENT ===
 You are running in a Docker container with:
-- Working directory: /workspace (your worktree)
-- Plan directory: /plan (read-only, for bd commands)
-- Tool proxy: gh commands are proxied to the host
+- Working directory: /workspace (your git worktree for this task)
+- Plan directory: /plan (read-only reference)
+- Tool proxy: Commands are proxied to the host system
+
+=== TOOL PROXY ===
+The following commands are proxied through Bismark to the host:
+
+1. GitHub CLI (gh):
+   - gh pr create --base main --title "..." --body "..."
+   - gh pr view
+   - All standard gh commands work
+
+2. Beads Task Management (bd):
+   - bd close ${task.id} --message "..."  (REQUIRED when done)
+   - The --sandbox flag is added automatically
+   - Commands run in the correct plan directory on the host
+
+IMPORTANT: You MUST close your task using 'bd close' when finished.
+This signals to Bismark that your work is complete.
 
 === YOUR WORKING DIRECTORY ===
-You are working in a dedicated git worktree for this task.
-Base: ${repository?.prFlow?.baseBranch || repository?.defaultBranch || 'main'}
+You are in a dedicated git worktree: /workspace
+Base branch: ${repository?.prFlow?.baseBranch || repository?.defaultBranch || 'main'}
 
 === COMPLETION REQUIREMENTS ===
-1. Complete the work described in the task
+1. Complete the work described in the task title
 ${prInstructions}
 
-Note: You must complete your work and close the task. There is no interactive mode.`
+CRITICAL: There is no interactive mode. You must:
+- Complete all work
+- Close the task with 'bd close ${task.id} --message "..."'
+- The session ends automatically after task closure`
 }
 
 /**
@@ -1589,27 +1611,39 @@ async function updatePlanStatuses(): Promise<void> {
 
   for (const plan of plans) {
     if (plan.status === 'delegating' || plan.status === 'in_progress') {
-      if (plan.beadEpicId) {
-        // Check if all child tasks are complete (using plan-specific directory)
-        const childTasks = await bdList(plan.id, { parent: plan.beadEpicId })
-        const allClosed = childTasks.length > 0 && childTasks.every((t) => t.status === 'closed')
-        const hasOpenTasks = childTasks.some((t) => t.status === 'open')
+      // Get all tasks for this plan (not just children of an epic)
+      // This is more robust as it doesn't require tracking the epic ID
+      const allTasks = await bdList(plan.id, {})
 
-        if (allClosed) {
-          // All tasks closed - mark as ready_for_review (don't auto-cleanup)
-          // User must explicitly click "Mark Complete" to trigger cleanup
-          plan.status = 'ready_for_review'
-          plan.updatedAt = new Date().toISOString()
-          savePlan(plan)
-          emitPlanUpdate(plan)
-          addPlanActivity(plan.id, 'success', 'All tasks completed', 'Click "Mark Complete" to cleanup worktrees')
-        } else if (hasOpenTasks && plan.status === 'delegating') {
-          plan.status = 'in_progress'
-          plan.updatedAt = new Date().toISOString()
-          savePlan(plan)
-          emitPlanUpdate(plan)
-          addPlanActivity(plan.id, 'info', 'Tasks are being worked on', `${childTasks.filter(t => t.status === 'open').length} task(s) in progress`)
-        }
+      // Filter to just tasks (not epics) that have been sent to agents
+      // A task is "tracked" if it has the bismark-sent label or is closed
+      const trackedTasks = allTasks.filter(t =>
+        t.type === 'task' &&
+        (t.labels?.includes('bismark-sent') || t.status === 'closed')
+      )
+
+      if (trackedTasks.length === 0) {
+        // No tasks have been sent yet, stay in current status
+        continue
+      }
+
+      const allClosed = trackedTasks.every((t) => t.status === 'closed')
+      const hasOpenTasks = trackedTasks.some((t) => t.status === 'open')
+
+      if (allClosed) {
+        // All tracked tasks closed - mark as ready_for_review (don't auto-cleanup)
+        // User must explicitly click "Mark Complete" to trigger cleanup
+        plan.status = 'ready_for_review'
+        plan.updatedAt = new Date().toISOString()
+        savePlan(plan)
+        emitPlanUpdate(plan)
+        addPlanActivity(plan.id, 'success', 'All tasks completed', 'Click "Mark Complete" to cleanup worktrees')
+      } else if (hasOpenTasks && plan.status === 'delegating') {
+        plan.status = 'in_progress'
+        plan.updatedAt = new Date().toISOString()
+        savePlan(plan)
+        emitPlanUpdate(plan)
+        addPlanActivity(plan.id, 'info', 'Tasks are being worked on', `${trackedTasks.filter(t => t.status === 'open').length} task(s) in progress`)
       }
     }
   }

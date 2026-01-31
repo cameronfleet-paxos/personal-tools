@@ -898,7 +898,7 @@ function App() {
                   // Scrollable 2-column grid for plan tabs (unlimited agents)
                   // Use CSS grid with fixed row heights that match the regular 2x2 layout
                   <div
-                    className="h-full overflow-y-auto grid gap-2"
+                    className="h-full overflow-y-auto grid gap-2 p-1"
                     style={{
                       gridTemplateColumns: '1fr 1fr',
                       gridAutoRows: 'calc(50% - 4px)',
