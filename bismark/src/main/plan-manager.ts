@@ -50,6 +50,27 @@ const headlessAgents: Map<string, HeadlessAgent> = new Map()
 // Track headless agent info for UI
 const headlessAgentInfo: Map<string, HeadlessAgentInfo> = new Map()
 
+/**
+ * Register a headless agent info entry (for mock/test agents)
+ */
+export function registerHeadlessAgentInfo(info: HeadlessAgentInfo): void {
+  headlessAgentInfo.set(info.taskId!, info)
+}
+
+/**
+ * Emit headless agent update to renderer (exported for mock agents)
+ */
+export function emitHeadlessAgentUpdatePublic(info: HeadlessAgentInfo): void {
+  emitHeadlessAgentUpdate(info)
+}
+
+/**
+ * Emit headless agent event to renderer (exported for mock agents)
+ */
+export function emitHeadlessAgentEventPublic(planId: string, taskId: string, event: StreamEvent): void {
+  emitHeadlessAgentEvent(planId, taskId, event)
+}
+
 // Feature flag for headless mode (can be made configurable later)
 // Default to true to test Docker sandboxing
 let useHeadlessMode = true

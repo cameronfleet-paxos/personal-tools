@@ -196,10 +196,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // Dev test harness (development mode only)
-  devRunMockFlow: (): Promise<{ planId: string; planDir: string; tasks: Array<{ id: string; subject: string }> } | undefined> =>
-    ipcRenderer.invoke('dev-run-mock-flow'),
-  devStartMockAgent: (taskId: string, planId?: string, worktreePath?: string): Promise<void> =>
-    ipcRenderer.invoke('dev-start-mock-agent', taskId, planId, worktreePath),
+  devRunMockFlow: (options?: { eventIntervalMs?: number; startDelayMs?: number }): Promise<{ planId: string; planDir: string; tasks: Array<{ id: string; subject: string }> } | undefined> =>
+    ipcRenderer.invoke('dev-run-mock-flow', options),
+  devStartMockAgent: (taskId: string, planId?: string, worktreePath?: string, options?: { eventIntervalMs?: number }): Promise<void> =>
+    ipcRenderer.invoke('dev-start-mock-agent', taskId, planId, worktreePath, options),
   devStopMock: (): Promise<void> =>
     ipcRenderer.invoke('dev-stop-mock'),
+  devSetMockFlowOptions: (options: { eventIntervalMs?: number; startDelayMs?: number }): Promise<{ eventIntervalMs: number; startDelayMs: number }> =>
+    ipcRenderer.invoke('dev-set-mock-flow-options', options),
+  devGetMockFlowOptions: (): Promise<{ eventIntervalMs: number; startDelayMs: number }> =>
+    ipcRenderer.invoke('dev-get-mock-flow-options'),
 })

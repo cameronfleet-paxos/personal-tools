@@ -14,7 +14,7 @@ To build and install the app to `~/Applications`:
 
 ### Starting the dev server
 
-Development requires two processes running in parallel:
+**Basic development** (two processes):
 
 1. **Start Vite dev server** (serves the renderer/frontend):
    ```bash
@@ -27,6 +27,21 @@ Development requires two processes running in parallel:
    ```
 
 The Vite server must be running first on `localhost:5173` before starting Electron.
+
+**Development with CDP** (for automated testing):
+
+Use the unified command that starts all services:
+
+```bash
+npm run dev:cdp        # Start Vite, Electron+CDP, and CDP server
+npm run dev:cdp:clean  # Kill existing processes first, then start
+npm run dev:check      # Check if all services are running
+```
+
+Ports used:
+- **5173**: Vite dev server
+- **9222**: Electron CDP endpoint
+- **9333**: CDP HTTP server
 
 **Important:** When using Claude Code's Bash tool to start the Electron app, always use `dangerouslyDisableSandbox: true` as Electron requires macOS bootstrap permissions that are blocked in sandbox mode.
 
@@ -44,7 +59,7 @@ This compiles both the main process TypeScript and the Vite renderer.
 
 **When making UI changes, always self-test before asking the user for feedback.** Use the testing skills to verify your changes work correctly:
 
-1. **Start the test environment**: `/bismark:start-test`
+1. **Start the test environment**: `/bismark:start-test` (runs `npm run dev:cdp:clean`)
 2. **Take screenshots to verify UI state**: `/bismark:screenshot`
 3. **Run interactive tests**: `/bismark:test <scenario>`
 
@@ -55,13 +70,19 @@ Only ask the user/operator for input if:
 
 ### Running with CDP (Chrome DevTools Protocol)
 
-For automated testing, start Electron with remote debugging:
+The easiest way to start with CDP is the unified command:
 
 ```bash
-NODE_ENV=development npx electron --remote-debugging-port=9222 .
+npm run dev:cdp:clean  # Start all services with cleanup
+npm run dev:check      # Verify services are running
 ```
 
-This enables:
+This starts:
+- Vite dev server (port 5173)
+- Electron with CDP (port 9222)
+- CDP HTTP server (port 9333)
+
+CDP enables:
 - Taking screenshots: `Page.captureScreenshot`
 - Executing JS: `Runtime.evaluate`
 - Simulating user input via KeyboardEvent dispatch
@@ -94,20 +115,15 @@ These skills are the primary way to test changes:
 
 Located in `scripts/test/`:
 
-- `cdp-server.js` - **HTTP server for fast CDP interactions** ⚡ **USE THIS**
+- `dev-with-cdp.js` - **Unified startup script** - starts Vite, Electron+CDP, and CDP server
+- `cdp-server.js` - HTTP server for fast CDP interactions (started automatically by dev-with-cdp.js)
 - `cdp-helper.js` - Shared CDP connection module (used by cdp-server.js)
-- `start-with-cdp.sh` - Shell script to start with debugging
 
-### CDP Server (ALWAYS Use This)
+### CDP Server
 
 The CDP server maintains a persistent WebSocket connection, making interactions ~50ms instead of ~2s per action.
 
-**Start the server:**
-```bash
-npm run test:server
-# Or in background:
-npm run test:server &
-```
+**The CDP server is started automatically by `npm run dev:cdp:clean`.** You don't need to start it manually.
 
 **Use curl to interact:**
 ```bash

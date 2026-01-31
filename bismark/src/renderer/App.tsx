@@ -890,7 +890,7 @@ function App() {
                 key={tab.id}
                 className={`absolute inset-2 ${shouldShowTab ? '' : 'invisible pointer-events-none'}`}
               >
-                {tabWorkspaceIds.length === 0 ? (
+                {tabWorkspaceIds.length === 0 && getHeadlessAgentsForTab(tab).length === 0 ? (
                   <div className="h-full flex items-center justify-center text-muted-foreground">
                     Launch an agent to see the terminal
                   </div>

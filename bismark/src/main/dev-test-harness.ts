@@ -36,7 +36,11 @@ import type {
   StreamResultEvent,
   HeadlessAgentInfo,
   HeadlessAgentStatus,
+  Plan,
 } from '../shared/types'
+import { createTab, addWorkspaceToTab, getState, setActiveTab } from './state-manager'
+import { savePlan } from './config'
+import { registerHeadlessAgentInfo, emitHeadlessAgentUpdatePublic, emitHeadlessAgentEventPublic } from './plan-manager'
 
 const execAsync = promisify(exec)
 
@@ -309,6 +313,7 @@ export interface MockOrchestratorOptions {
  * MockOrchestrator simulates the orchestrator behavior:
  * - Monitors for task completion
  * - Marks next task as bismark-ready when blocker completes
+ * - Emits activity events to the renderer via IPC
  */
 export class MockOrchestrator extends EventEmitter {
   private planId: string
@@ -326,8 +331,26 @@ export class MockOrchestrator extends EventEmitter {
     this.onTaskReadyCallback = options.onTaskReady
   }
 
+  /**
+   * Emit an activity event to the renderer via IPC
+   */
+  private emitActivity(type: 'info' | 'success' | 'error', message: string): void {
+    console.log(`[MockOrchestrator] Activity (${type}): ${message}`)
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('plan-activity', {
+        id: `orch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        planId: this.planId,
+        timestamp: new Date().toISOString(),
+        type,
+        message,
+        source: 'orchestrator',
+      })
+    }
+  }
+
   async start(): Promise<void> {
     console.log('[MockOrchestrator] Starting orchestrator for plan:', this.planId)
+    this.emitActivity('info', 'Orchestrator started, polling for task completion...')
 
     // Start polling for task status changes
     this.pollInterval = setInterval(() => this.checkTaskStatus(), 2000)
@@ -335,8 +358,9 @@ export class MockOrchestrator extends EventEmitter {
 
   private async checkTaskStatus(): Promise<void> {
     try {
-      // List all tasks
-      const { stdout } = await execAsync(`bd --sandbox list --dir "${this.planDir}"`)
+      // List all tasks (including closed ones)
+      const dbPath = path.join(this.planDir, '.beads', 'beads.db')
+      const { stdout } = await execAsync(`bd --sandbox --db "${dbPath}" list --all`)
       const tasks = this.parseTasks(stdout)
 
       // Check for newly completed tasks
@@ -344,6 +368,7 @@ export class MockOrchestrator extends EventEmitter {
         if (task.status === 'completed' && !this.completedTasks.has(task.id)) {
           this.completedTasks.add(task.id)
           console.log('[MockOrchestrator] Task completed:', task.id)
+          this.emitActivity('success', `Task completed: ${task.id}`)
           this.emit('task-completed', task.id)
 
           // Mark tasks that were blocked by this one as ready
@@ -355,32 +380,42 @@ export class MockOrchestrator extends EventEmitter {
       const allDone = tasks.every(t => t.status === 'completed')
       if (allDone && tasks.length > 0) {
         console.log('[MockOrchestrator] All tasks completed!')
+        this.emitActivity('success', 'All tasks completed!')
         this.emit('plan-completed')
         this.stop()
       }
     } catch (error) {
       console.error('[MockOrchestrator] Error checking task status:', error)
+      this.emitActivity('error', `Error checking task status: ${error}`)
     }
   }
 
   private parseTasks(output: string): Array<{ id: string; status: string; blockedBy: string[] }> {
-    // Simple parser for bd list output
-    // Format varies, but typically: id, subject, status, etc.
+    // Parser for bd list --all output
+    // Format: [status_icon] [id] [priority] [type] - [subject]
+    // Examples:
+    //   ○ mock-plan-123-abc [● P2] [task] - Task 1: Update config
+    //   ✓ mock-plan-123-def [P2] [task] - Task 2: Add feature
     const lines = output.trim().split('\n')
     const tasks: Array<{ id: string; status: string; blockedBy: string[] }> = []
 
     for (const line of lines) {
-      // Skip header/empty lines
-      if (!line.trim() || line.includes('──')) continue
+      // Skip empty lines
+      if (!line.trim()) continue
 
-      // Try to parse task line (format: ID | Subject | Status | ...)
-      const parts = line.split('│').map(p => p.trim())
-      if (parts.length >= 3) {
-        const id = parts[0]
-        const status = parts[2]?.toLowerCase() || 'pending'
+      // Check if line starts with status icon
+      const isCompleted = line.startsWith('✓')
+      const isOpen = line.startsWith('○')
+
+      if (!isCompleted && !isOpen) continue
+
+      // Extract the task ID (second word after the status icon)
+      const parts = line.trim().split(/\s+/)
+      if (parts.length >= 2) {
+        const id = parts[1]
         tasks.push({
           id,
-          status: status.includes('done') || status.includes('closed') ? 'completed' : 'pending',
+          status: isCompleted ? 'completed' : 'pending',
           blockedBy: [], // Would need more parsing for real blocked-by info
         })
       }
@@ -391,13 +426,15 @@ export class MockOrchestrator extends EventEmitter {
 
   private async markDependentTasksReady(_completedTaskId: string, tasks: Array<{ id: string; status: string; blockedBy: string[] }>): Promise<void> {
     // Find tasks that can now be started
+    const dbPath = path.join(this.planDir, '.beads', 'beads.db')
     for (const task of tasks) {
       if (task.status !== 'completed') {
         // In a real implementation, would check blockedBy
         // For mock, just mark the next pending task
         try {
-          await execAsync(`bd --sandbox label "${task.id}" bismark-ready --dir "${this.planDir}"`)
+          await execAsync(`bd --sandbox --db "${dbPath}" label add "${task.id}" bismark-ready`)
           console.log('[MockOrchestrator] Marked task ready:', task.id)
+          this.emitActivity('info', `Marked task ready: ${task.id}`)
           if (this.onTaskReadyCallback) {
             this.onTaskReadyCallback(task.id)
           }
@@ -427,10 +464,54 @@ export interface MockPlan {
   tasks: Array<{ id: string; subject: string; blockedBy?: string[] }>
 }
 
+export interface MockFlowOptions {
+  /** Delay between events in mock agents (default: 1500ms) */
+  eventIntervalMs?: number
+  /** Delay before starting the first agent (default: 0ms) */
+  startDelayMs?: number
+  /** Number of tasks to create (default: 3) */
+  taskCount?: number
+  /** If true, tasks have no dependencies and can run in parallel (default: false) */
+  parallelTasks?: boolean
+}
+
+/**
+ * Helper to run bd commands with the correct --db path
+ */
+function bdCmd(planDir: string, subcommand: string): string {
+  const dbPath = path.join(planDir, '.beads', 'beads.db')
+  return `bd --sandbox --db "${dbPath}" ${subcommand}`
+}
+
+/**
+ * Get a task subject for the given index
+ */
+function getTaskSubject(index: number): string {
+  const subjects = [
+    'Update config files',
+    'Add new feature',
+    'Write tests',
+    'Refactor code',
+    'Update documentation',
+    'Add validation',
+    'Improve performance',
+    'Fix edge cases',
+  ]
+  return subjects[index % subjects.length]
+}
+
+export interface SetupMockPlanOptions {
+  taskCount?: number
+  parallelTasks?: boolean
+}
+
 /**
  * Creates a test plan with beads tasks for testing
  */
-export async function setupMockPlan(): Promise<MockPlan> {
+export async function setupMockPlan(options?: SetupMockPlanOptions): Promise<MockPlan> {
+  const taskCount = options?.taskCount ?? 3
+  const parallelTasks = options?.parallelTasks ?? false
+
   // Create a temp directory for the plan
   const planId = `mock-plan-${Date.now()}`
   const planDir = path.join(os.tmpdir(), 'bismark-mock-plans', planId)
@@ -438,40 +519,43 @@ export async function setupMockPlan(): Promise<MockPlan> {
   // Ensure directory exists
   await fs.promises.mkdir(planDir, { recursive: true })
 
-  console.log('[MockPlanSetup] Creating mock plan in:', planDir)
+  console.log('[MockPlanSetup] Creating mock plan in:', planDir, `(${taskCount} tasks, parallel: ${parallelTasks})`)
 
-  // Initialize beads repo
-  await execAsync(`bd --sandbox init --dir "${planDir}"`)
+  // Initialize beads repo (must run from within the directory)
+  await execAsync(`cd "${planDir}" && bd --sandbox init`)
 
-  // Create tasks with dependencies
-  const tasks = [
-    { id: '', subject: 'Task 1: Update config files', blockedBy: [] as string[] },
-    { id: '', subject: 'Task 2: Add new feature', blockedBy: [] as string[] },
-    { id: '', subject: 'Task 3: Write tests', blockedBy: [] as string[] },
-  ]
-
-  // Create task 1 (no blockers)
-  const { stdout: out1 } = await execAsync(
-    `bd --sandbox create "${tasks[0].subject}" --dir "${planDir}"`
+  // Generate task definitions dynamically
+  const tasks: Array<{ id: string; subject: string; blockedBy: string[] }> = Array.from(
+    { length: taskCount },
+    (_, i) => ({
+      id: '',
+      subject: `Task ${i + 1}: ${getTaskSubject(i)}`,
+      blockedBy: [] as string[],
+    })
   )
-  tasks[0].id = extractTaskId(out1)
 
-  // Create task 2 (blocked by task 1)
-  const { stdout: out2 } = await execAsync(
-    `bd --sandbox create "${tasks[1].subject}" --blocked-by "${tasks[0].id}" --dir "${planDir}"`
-  )
-  tasks[1].id = extractTaskId(out2)
-  tasks[1].blockedBy = [tasks[0].id]
+  // Create tasks with bd
+  for (let i = 0; i < tasks.length; i++) {
+    const deps = (!parallelTasks && i > 0) ? `--deps "blocks:${tasks[i - 1].id}"` : ''
+    const { stdout } = await execAsync(bdCmd(planDir, `create "${tasks[i].subject}" ${deps}`))
+    tasks[i].id = extractTaskId(stdout)
 
-  // Create task 3 (blocked by task 2)
-  const { stdout: out3 } = await execAsync(
-    `bd --sandbox create "${tasks[2].subject}" --blocked-by "${tasks[1].id}" --dir "${planDir}"`
-  )
-  tasks[2].id = extractTaskId(out3)
-  tasks[2].blockedBy = [tasks[1].id]
+    if (i > 0 && !parallelTasks) {
+      tasks[i].blockedBy = [tasks[i - 1].id]
+    }
+
+    console.log(`[MockPlanSetup] Created task ${i + 1}:`, tasks[i].id)
+  }
 
   // Mark first task as bismark-ready (simulates orchestrator marking it)
-  await execAsync(`bd --sandbox label "${tasks[0].id}" bismark-ready --dir "${planDir}"`)
+  // For parallel tasks, mark all as ready
+  if (parallelTasks) {
+    for (const task of tasks) {
+      await execAsync(bdCmd(planDir, `label add "${task.id}" bismark-ready`))
+    }
+  } else {
+    await execAsync(bdCmd(planDir, `label add "${tasks[0].id}" bismark-ready`))
+  }
 
   console.log('[MockPlanSetup] Created tasks:', tasks.map(t => t.id))
 
@@ -479,10 +563,15 @@ export async function setupMockPlan(): Promise<MockPlan> {
 }
 
 function extractTaskId(output: string): string {
-  // bd create output typically includes the task ID
-  // Try to extract it - format varies
-  const match = output.match(/([a-z0-9-]+)/) // Simple ID pattern
-  return match?.[1] || `task-${Date.now()}`
+  // bd create output format: "✓ Created issue: prefix-XXX"
+  // Extract the issue ID after "Created issue: "
+  const match = output.match(/Created issue:\s*(\S+)/)
+  if (match?.[1]) {
+    return match[1]
+  }
+  // Fallback: look for prefix-XXX pattern (e.g., mock-plan-abc123)
+  const fallbackMatch = output.match(/([a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)*)/)
+  return fallbackMatch?.[1] || `task-${Date.now()}`
 }
 
 // ============================================
@@ -492,6 +581,27 @@ function extractTaskId(output: string): string {
 let mainWindow: BrowserWindow | null = null
 const activeAgents = new Map<string, MockHeadlessAgent>()
 let activeOrchestrator: MockOrchestrator | null = null
+
+// Default mock flow options - can be modified via setMockFlowOptions
+let mockFlowOptions: MockFlowOptions = {
+  eventIntervalMs: 1500,
+  startDelayMs: 0,
+}
+
+/**
+ * Set the default options for mock flows
+ */
+export function setMockFlowOptions(options: Partial<MockFlowOptions>): void {
+  mockFlowOptions = { ...mockFlowOptions, ...options }
+  console.log('[DevHarness] Mock flow options updated:', mockFlowOptions)
+}
+
+/**
+ * Get current mock flow options
+ */
+export function getMockFlowOptions(): MockFlowOptions {
+  return { ...mockFlowOptions }
+}
 
 export function setDevHarnessWindow(window: BrowserWindow | null): void {
   mainWindow = window
@@ -510,33 +620,64 @@ export function shouldUseMockAgents(): boolean {
 export async function startMockAgent(
   taskId: string,
   planId: string = 'test-plan',
-  worktreePath: string = '/tmp/mock-worktree'
+  worktreePath: string = '/tmp/mock-worktree',
+  options?: { eventIntervalMs?: number }
 ): Promise<MockHeadlessAgent> {
-  console.log('[DevHarness] Starting mock agent:', taskId)
+  const eventIntervalMs = options?.eventIntervalMs ?? mockFlowOptions.eventIntervalMs ?? 1500
+  console.log('[DevHarness] Starting mock agent:', taskId, 'planId:', planId, 'eventIntervalMs:', eventIntervalMs)
 
   const agent = new MockHeadlessAgent({
     taskId,
     planId,
     worktreePath,
-    eventIntervalMs: 1500,
+    eventIntervalMs,
     onComplete: async () => {
       console.log('[DevHarness] Mock agent completed:', taskId)
       activeAgents.delete(taskId)
+      // Close the beads task so orchestrator can detect completion
+      try {
+        const dbPath = path.join(worktreePath, '.beads', 'beads.db')
+        await execAsync(`bd --sandbox --db "${dbPath}" close "${taskId}"`)
+        console.log('[DevHarness] Closed bd task:', taskId)
+      } catch (error) {
+        console.error('[DevHarness] Failed to close bd task:', taskId, error)
+      }
     },
   })
 
-  // Forward events to renderer
+  // NEW: Create HeadlessAgentInfo for the main registry
+  const agentInfo: HeadlessAgentInfo = {
+    id: `mock-agent-${taskId}`,
+    taskId,
+    planId,           // Links to the Bismark Plan
+    status: 'starting',
+    worktreePath,
+    events: [],
+    startedAt: new Date().toISOString(),
+  }
+
+  // NEW: Register in plan-manager's map so renderer can find it
+  registerHeadlessAgentInfo(agentInfo)
+  console.log('[DevHarness] Registered agent info:', agentInfo.id, 'planId:', planId)
+
+  // Forward events to renderer using proper IPC
   agent.on('status', (status: HeadlessAgentStatus) => {
-    mainWindow?.webContents.send('headless-agent-update', agent.getInfo())
+    agentInfo.status = status
+    // Use the exported emitter function for consistency
+    emitHeadlessAgentUpdatePublic(agentInfo)
   })
 
   agent.on('event', (event: StreamEvent) => {
-    mainWindow?.webContents.send('headless-agent-event', { planId, taskId, event })
+    agentInfo.events.push(event)
+    // Use the exported emitter functions for consistency
+    emitHeadlessAgentUpdatePublic(agentInfo)
+    emitHeadlessAgentEventPublic(planId, taskId, event)
   })
 
   // Notify renderer that agent started
   mainWindow?.webContents.send('headless-agent-started', { taskId, planId, worktreePath })
-  mainWindow?.webContents.send('headless-agent-update', agent.getInfo())
+  emitHeadlessAgentUpdatePublic(agentInfo)
+  console.log('[DevHarness] Emitted headless-agent-started and update for:', taskId)
 
   activeAgents.set(taskId, agent)
   await agent.start()
@@ -574,15 +715,68 @@ export function getMockAgentsForPlan(planId: string): HeadlessAgentInfo[] {
 
 /**
  * Run the full mock flow: plan → orchestrator → task agents
+ * @param options Optional overrides for event timing and task configuration
  */
-export async function runMockFlow(): Promise<MockPlan> {
-  console.log('[DevHarness] Running full mock flow')
+export async function runMockFlow(options?: Partial<MockFlowOptions>): Promise<MockPlan> {
+  const opts = { ...mockFlowOptions, ...options }
+  console.log('[DevHarness] Running full mock flow with options:', opts)
 
   // Stop any existing flow
   await stopMockFlow()
 
   // Set up mock plan with beads tasks
-  const plan = await setupMockPlan()
+  const plan = await setupMockPlan({
+    taskCount: opts.taskCount,
+    parallelTasks: opts.parallelTasks,
+  })
+
+  // NEW: Create a Bismark Plan object
+  const bismarkPlan: Plan = {
+    id: plan.planId,
+    title: 'Mock Test Plan',
+    description: 'Testing headless agent flow',
+    status: 'in_progress', // Valid PlanStatus value
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    referenceAgentId: null,
+    beadEpicId: null,
+    orchestratorWorkspaceId: null,
+    orchestratorTabId: null,
+    planAgentWorkspaceId: null,
+    maxParallelAgents: 2,
+    worktrees: [],
+  }
+
+  // NEW: Create plan tab BEFORE saving the plan
+  const planTab = createTab('Mock Plan', { isPlanTab: true })
+  bismarkPlan.orchestratorTabId = planTab.id
+  console.log('[DevHarness] Created plan tab:', planTab.id, 'isPlanTab:', planTab.isPlanTab)
+
+  // NEW: Save plan so renderer can find it
+  savePlan(bismarkPlan)
+  console.log('[DevHarness] Saved Bismark plan:', bismarkPlan.id)
+
+  // NEW: Switch to the plan tab
+  setActiveTab(planTab.id)
+
+  // FIXED ORDER: Emit plan-update FIRST so renderer has the plan in state
+  // before we start agents (otherwise getHeadlessAgentsForTab returns [])
+  mainWindow?.webContents.send('plan-update', bismarkPlan)
+  console.log('[DevHarness] Emitted plan-update for:', bismarkPlan.id)
+
+  // THEN emit state update so renderer knows about the new tab
+  const state = getState()
+  mainWindow?.webContents.send('state-update', state)
+  console.log('[DevHarness] Emitted state-update with tabs:', state.tabs.map(t => ({ id: t.id, name: t.name, isPlanTab: t.isPlanTab })))
+
+  // Small delay to let renderer process state updates before starting agents
+  await new Promise(resolve => setTimeout(resolve, 100))
+
+  // Apply additional start delay if specified
+  if (opts.startDelayMs && opts.startDelayMs > 0) {
+    console.log(`[DevHarness] Waiting ${opts.startDelayMs}ms before starting agents...`)
+    await new Promise(resolve => setTimeout(resolve, opts.startDelayMs))
+  }
 
   // Start mock orchestrator
   activeOrchestrator = new MockOrchestrator({
@@ -591,23 +785,32 @@ export async function runMockFlow(): Promise<MockPlan> {
     mainWindow,
     onTaskReady: async (taskId: string) => {
       // Start a mock agent for the ready task
-      await startMockAgent(taskId, plan.planId, plan.planDir)
+      await startMockAgent(taskId, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
     },
   })
 
   activeOrchestrator.on('plan-completed', () => {
     console.log('[DevHarness] Mock flow completed!')
-    mainWindow?.webContents.send('plan-update', {
-      id: plan.planId,
-      status: 'completed',
-    })
+    bismarkPlan.status = 'completed'
+    bismarkPlan.updatedAt = new Date().toISOString()
+    savePlan(bismarkPlan)
+    mainWindow?.webContents.send('plan-update', bismarkPlan)
   })
 
   await activeOrchestrator.start()
 
-  // Start the first agent (task 1 is already marked ready)
+  // Start agents for tasks that are marked ready
   if (plan.tasks.length > 0) {
-    await startMockAgent(plan.tasks[0].id, plan.planId, plan.planDir)
+    if (opts.parallelTasks) {
+      // For parallel tasks, start all agents at once
+      console.log('[DevHarness] Starting all agents in parallel mode')
+      for (const task of plan.tasks) {
+        await startMockAgent(task.id, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
+      }
+    } else {
+      // For sequential tasks, start only the first one
+      await startMockAgent(plan.tasks[0].id, plan.planId, plan.planDir, { eventIntervalMs: opts.eventIntervalMs })
+    }
   }
 
   return plan

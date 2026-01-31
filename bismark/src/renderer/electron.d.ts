@@ -103,9 +103,11 @@ export interface ElectronAPI {
   removeAllListeners: () => void
 
   // Dev test harness (development mode only)
-  devRunMockFlow?: () => Promise<{ planId: string; planDir: string; tasks: Array<{ id: string; subject: string }> } | undefined>
-  devStartMockAgent?: (taskId: string, planId?: string, worktreePath?: string) => Promise<void>
+  devRunMockFlow?: (options?: { eventIntervalMs?: number; startDelayMs?: number }) => Promise<{ planId: string; planDir: string; tasks: Array<{ id: string; subject: string }> } | undefined>
+  devStartMockAgent?: (taskId: string, planId?: string, worktreePath?: string, options?: { eventIntervalMs?: number }) => Promise<void>
   devStopMock?: () => Promise<void>
+  devSetMockFlowOptions?: (options: { eventIntervalMs?: number; startDelayMs?: number }) => Promise<{ eventIntervalMs: number; startDelayMs: number }>
+  devGetMockFlowOptions?: () => Promise<{ eventIntervalMs: number; startDelayMs: number }>
 }
 
 declare global {

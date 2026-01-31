@@ -79,6 +79,9 @@ import {
   getMockAgentInfo,
   getMockAgentsForPlan,
   cleanupDevHarness,
+  setMockFlowOptions,
+  getMockFlowOptions,
+  type MockFlowOptions,
 } from './dev-test-harness'
 import type { Workspace, AppPreferences, Repository } from '../shared/types'
 
@@ -347,12 +350,12 @@ function registerIpcHandlers() {
 
   // Dev test harness (development mode only)
   if (process.env.NODE_ENV === 'development') {
-    ipcMain.handle('dev-run-mock-flow', async () => {
-      return runMockFlow()
+    ipcMain.handle('dev-run-mock-flow', async (_event, options?: Partial<MockFlowOptions>) => {
+      return runMockFlow(options)
     })
 
-    ipcMain.handle('dev-start-mock-agent', async (_event, taskId: string, planId?: string, worktreePath?: string) => {
-      return startMockAgent(taskId, planId, worktreePath)
+    ipcMain.handle('dev-start-mock-agent', async (_event, taskId: string, planId?: string, worktreePath?: string, options?: { eventIntervalMs?: number }) => {
+      return startMockAgent(taskId, planId, worktreePath, options)
     })
 
     ipcMain.handle('dev-stop-mock', async () => {
@@ -365,6 +368,15 @@ function registerIpcHandlers() {
 
     ipcMain.handle('dev-get-mock-agents-for-plan', (_event, planId: string) => {
       return getMockAgentsForPlan(planId)
+    })
+
+    ipcMain.handle('dev-set-mock-flow-options', (_event, options: Partial<MockFlowOptions>) => {
+      setMockFlowOptions(options)
+      return getMockFlowOptions()
+    })
+
+    ipcMain.handle('dev-get-mock-flow-options', () => {
+      return getMockFlowOptions()
     })
   }
 }

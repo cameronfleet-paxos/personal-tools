@@ -14,6 +14,9 @@
     "start": "electron .",
     "test:start": "NODE_ENV=development electron --remote-debugging-port=9222 .",
     "test:server": "node scripts/test/cdp-server.js",
+    "dev:cdp": "node scripts/test/dev-with-cdp.js",
+    "dev:cdp:clean": "node scripts/test/dev-with-cdp.js --clean",
+    "dev:check": "node scripts/test/dev-with-cdp.js --check",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
