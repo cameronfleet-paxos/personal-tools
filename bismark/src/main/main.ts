@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'path'
+import { randomUUID } from 'crypto'
 import {
   ensureConfigDirExists,
   getWorkspaces,
@@ -20,6 +21,7 @@ import {
   setMainWindow,
   getWaitingQueue,
   removeFromWaitingQueue,
+  setInstanceId,
 } from './socket-server'
 import { configureClaudeHook, createHookScript } from './hook-manager'
 import { createTray, updateTray, destroyTray } from './tray'
@@ -79,6 +81,9 @@ import {
   cleanupDevHarness,
 } from './dev-test-harness'
 import type { Workspace, AppPreferences, Repository } from '../shared/types'
+
+// Generate unique instance ID for socket isolation
+const instanceId = randomUUID()
 
 let mainWindow: BrowserWindow | null = null
 
@@ -365,6 +370,9 @@ function registerIpcHandlers() {
 }
 
 app.whenReady().then(async () => {
+  // Set instance ID for socket isolation
+  setInstanceId(instanceId)
+
   // Initialize config directory structure
   ensureConfigDirExists()
 

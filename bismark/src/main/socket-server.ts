@@ -13,6 +13,15 @@ interface StopEvent {
 const servers: Map<string, net.Server> = new Map()
 let waitingQueue: string[] = []
 let mainWindow: BrowserWindow | null = null
+let instanceId: string = ''
+
+export function setInstanceId(id: string): void {
+  instanceId = id
+}
+
+export function getInstanceId(): string {
+  return instanceId
+}
 
 export function setMainWindow(window: BrowserWindow | null): void {
   mainWindow = window
@@ -80,7 +89,13 @@ function handleStopEvent(event: StopEvent): void {
 }
 
 export function createSocketServer(workspaceId: string): void {
-  const socketsDir = path.join(getConfigDir(), 'sockets')
+  const socketsDir = path.join(getConfigDir(), 'sockets', instanceId)
+
+  // Ensure instance socket directory exists
+  if (!fs.existsSync(socketsDir)) {
+    fs.mkdirSync(socketsDir, { recursive: true })
+  }
+
   const socketPath = path.join(socketsDir, `agent-${workspaceId}.sock`)
 
   // Remove existing socket file
@@ -161,6 +176,7 @@ export function closeSocketServer(workspaceId: string): void {
   const socketPath = path.join(
     getConfigDir(),
     'sockets',
+    instanceId,
     `agent-${workspaceId}.sock`
   )
   if (fs.existsSync(socketPath)) {
@@ -176,4 +192,12 @@ export function closeAllSocketServers(): void {
     closeSocketServer(workspaceId)
   }
   waitingQueue = []
+
+  // Remove instance-specific socket directory
+  if (instanceId) {
+    const instanceDir = path.join(getConfigDir(), 'sockets', instanceId)
+    if (fs.existsSync(instanceDir)) {
+      fs.rmSync(instanceDir, { recursive: true })
+    }
+  }
 }

@@ -6,6 +6,7 @@ import * as crypto from 'crypto'
 import { EventEmitter } from 'events'
 import { BrowserWindow } from 'electron'
 import { getWorkspaceById, saveWorkspace } from './config'
+import { getInstanceId } from './socket-server'
 
 /**
  * Check if a Claude session exists with content.
@@ -108,7 +109,8 @@ export function createTerminal(
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
-      AGENTOP_WORKSPACE_ID: workspaceId,
+      BISMARK_WORKSPACE_ID: workspaceId,
+      BISMARK_INSTANCE_ID: getInstanceId(),
       // Help Claude find its own executable for subagent spawning
       CLAUDE_CODE_ENTRY_POINT: process.env.CLAUDE_CODE_ENTRY_POINT || 'claude',
     },

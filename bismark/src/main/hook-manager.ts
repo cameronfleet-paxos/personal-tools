@@ -43,21 +43,22 @@ export function createHookScript(): void {
 # Bismark StopHook - signals when agent needs input
 # This script is called by Claude Code when the agent stops
 
-WORKSPACE_ID="$AGENTOP_WORKSPACE_ID"
-SOCKET_PATH="$HOME/.bismark/sockets/agent-\${WORKSPACE_ID}.sock"
+WORKSPACE_ID="$BISMARK_WORKSPACE_ID"
+INSTANCE_ID="$BISMARK_INSTANCE_ID"
+SOCKET_PATH="$HOME/.bismark/sockets/\${INSTANCE_ID}/agent-\${WORKSPACE_ID}.sock"
 DEBUG_LOG="$HOME/.bismark/hooks/debug.log"
 
 # Debug logging
-echo "$(date): Hook called for workspace '$WORKSPACE_ID'" >> "$DEBUG_LOG"
+echo "$(date): Hook called for workspace '$WORKSPACE_ID' instance '$INSTANCE_ID'" >> "$DEBUG_LOG"
 
-if [ -z "$WORKSPACE_ID" ]; then
-  echo "$(date): ERROR - WORKSPACE_ID is empty" >> "$DEBUG_LOG"
+if [ -z "$WORKSPACE_ID" ] || [ -z "$INSTANCE_ID" ]; then
+  echo "$(date): ERROR - WORKSPACE_ID or INSTANCE_ID is empty" >> "$DEBUG_LOG"
   exit 0
 fi
 
 if [ -S "$SOCKET_PATH" ]; then
   # Send JSON message with newline to signal EOF (macOS nc doesn't support -q flag)
-  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
+  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
   echo "$(date): Sent to socket $SOCKET_PATH (exit code: $?)" >> "$DEBUG_LOG"
 else
   echo "$(date): Socket not found at $SOCKET_PATH" >> "$DEBUG_LOG"
@@ -74,20 +75,21 @@ export function createNotificationHookScript(): void {
 # Bismark NotificationHook - signals when agent needs permission
 # This script is called by Claude Code for permission prompts
 
-WORKSPACE_ID="$AGENTOP_WORKSPACE_ID"
-SOCKET_PATH="$HOME/.bismark/sockets/agent-\${WORKSPACE_ID}.sock"
+WORKSPACE_ID="$BISMARK_WORKSPACE_ID"
+INSTANCE_ID="$BISMARK_INSTANCE_ID"
+SOCKET_PATH="$HOME/.bismark/sockets/\${INSTANCE_ID}/agent-\${WORKSPACE_ID}.sock"
 DEBUG_LOG="$HOME/.bismark/hooks/debug.log"
 
 # Debug logging
-echo "$(date): Notification hook called for workspace '$WORKSPACE_ID'" >> "$DEBUG_LOG"
+echo "$(date): Notification hook called for workspace '$WORKSPACE_ID' instance '$INSTANCE_ID'" >> "$DEBUG_LOG"
 
-if [ -z "$WORKSPACE_ID" ]; then
-  echo "$(date): ERROR - WORKSPACE_ID is empty" >> "$DEBUG_LOG"
+if [ -z "$WORKSPACE_ID" ] || [ -z "$INSTANCE_ID" ]; then
+  echo "$(date): ERROR - WORKSPACE_ID or INSTANCE_ID is empty" >> "$DEBUG_LOG"
   exit 0
 fi
 
 if [ -S "$SOCKET_PATH" ]; then
-  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
+  printf '{"event":"stop","reason":"input_required","workspaceId":"%s"}\\n' "$WORKSPACE_ID" | nc -U "$SOCKET_PATH" 2>/dev/null
   echo "$(date): Sent notification to socket $SOCKET_PATH (exit code: $?)" >> "$DEBUG_LOG"
 else
   echo "$(date): Socket not found at $SOCKET_PATH" >> "$DEBUG_LOG"

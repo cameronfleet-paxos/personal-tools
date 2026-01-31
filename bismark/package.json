@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts,.tsx",
     "start": "electron .",
+    "test:start": "NODE_ENV=development electron --remote-debugging-port=9222 .",
+    "test:server": "node scripts/test/cdp-server.js",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
   },
@@ -41,7 +43,8 @@
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "ws": "^8.19.0"
   },
   "build": {
     "appId": "com.bismark.app",
