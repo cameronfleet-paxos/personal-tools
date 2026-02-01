@@ -1,4 +1,4 @@
-# Bismark
+# Bismarck
 
 Electron app for managing Claude Code workspaces.
 
@@ -90,7 +90,7 @@ CDP enables:
 ### CDP Connection
 
 1. Get WebSocket URL: `curl http://localhost:9222/json`
-2. Find the "Bismark" page target
+2. Find the "Bismarck" page target
 3. Connect to `webSocketDebuggerUrl`
 
 ### Testing Skills (Use These!)

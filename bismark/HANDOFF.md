@@ -69,7 +69,7 @@ Also remove the existing repository-level "PR Flow" feature, consolidating git w
 
 ## Key Decisions Made
 - **Strategy is set at plan level, not repository level** - This allows different plans on the same repo to use different strategies
-- **feature_branch strategy**: All task agents push to a shared `bismark/{planId}/feature` branch, commits are recorded in gitSummary
+- **feature_branch strategy**: All task agents push to a shared `bismarck/{planId}/feature` branch, commits are recorded in gitSummary
 - **raise_prs strategy**: Each task agent creates its own PR, PR info is recorded in gitSummary. Dependent tasks can stack PRs using `stack-on:` label
 - **Git operations happen on task completion** - After markWorktreeReadyForReview, handleTaskCompletionStrategy is called
 - **Feature branch is lazily created** - The shared feature branch is created when the first task completes, not when the plan starts
