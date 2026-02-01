@@ -22,12 +22,12 @@ cd otto-schedule && pnpm install && pnpm electron:build
 cp -R dist/mac-arm64/Otto\ Schedule.app /Applications/
 ```
 
-### [bismark](./bismark)
+### [bismarck](./bismarck)
 
 Desktop application for monitoring and managing Claude Code agents. Receives real-time updates from Claude Code sessions via Unix socket hooks.
 
 ```bash
-cd bismark && npm install && ./scripts/deploy-local.sh
+cd bismarck && npm install && ./scripts/deploy-local.sh
 ```
 
 ### bootstrap-claude
