@@ -39,6 +39,10 @@ export interface Repository {
   name: string            // Directory basename
   defaultBranch: string   // Usually 'main' or 'master'
   remoteUrl?: string      // Origin remote URL
+  // New editable fields
+  purpose?: string              // Description of what repo is for
+  completionCriteria?: string   // What "done" looks like
+  protectedBranches?: string[]  // Branches that should not be modified
 }
 
 // Agent definition (stored in ~/.bismarck/config.json)
