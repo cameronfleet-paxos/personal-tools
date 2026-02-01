@@ -21,6 +21,7 @@ import {
   loadHeadlessAgentInfo,
   saveHeadlessAgentInfo,
   withPlanLock,
+  withGitPushLock,
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, closeTerminal, getTerminalEmitter } from './terminal'
@@ -43,6 +44,7 @@ import {
   remoteBranchExists,
   deleteRemoteBranch,
   deleteLocalBranch,
+  pushWithRetry,
 } from './git-utils'
 import {
   getRepositoryById,
@@ -315,6 +317,159 @@ export function createPlan(
  */
 export function getPlans(): Plan[] {
   return loadPlans()
+}
+
+/**
+ * Delete a plan and its associated data (plan directory)
+ */
+export async function deletePlanById(planId: string): Promise<void> {
+  const plan = getPlanById(planId)
+  if (!plan) {
+    logger.warn('plan', `Plan not found for deletion: ${planId}`)
+    return
+  }
+
+  logger.info('plan', `Deleting plan: ${planId}`, { title: plan.title })
+
+  // Clean up any active agents/terminals
+  if (plan.discussionAgentWorkspaceId) {
+    const terminalId = getTerminalForWorkspace(plan.discussionAgentWorkspaceId)
+    if (terminalId) closeTerminal(terminalId)
+    removeActiveWorkspace(plan.discussionAgentWorkspaceId)
+    deleteWorkspace(plan.discussionAgentWorkspaceId)
+  }
+
+  if (plan.orchestratorWorkspaceId) {
+    const terminalId = getTerminalForWorkspace(plan.orchestratorWorkspaceId)
+    if (terminalId) closeTerminal(terminalId)
+    removeActiveWorkspace(plan.orchestratorWorkspaceId)
+    deleteWorkspace(plan.orchestratorWorkspaceId)
+  }
+
+  if (plan.orchestratorTabId) {
+    deleteTab(plan.orchestratorTabId)
+  }
+
+  // Clear in-memory state
+  planActivities.delete(planId)
+  executingPlans.delete(planId)
+
+  // Remove from plans.json
+  deletePlan(planId)
+
+  // Delete plan directory at ~/.bismark/plans/<planId>/
+  const planDir = getPlanDir(planId)
+  try {
+    await fs.rm(planDir, { recursive: true, force: true })
+    logger.info('plan', `Deleted plan directory: ${planDir}`)
+  } catch (error) {
+    // Directory may not exist, that's okay
+    logger.debug('plan', `Could not delete plan directory (may not exist): ${planDir}`, { error })
+  }
+
+  // Emit deletion event
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('plan-deleted', planId)
+  }
+}
+
+/**
+ * Delete multiple plans
+ */
+export async function deletePlansById(planIds: string[]): Promise<{ deleted: string[]; errors: Array<{ planId: string; error: string }> }> {
+  const deleted: string[] = []
+  const errors: Array<{ planId: string; error: string }> = []
+
+  for (const planId of planIds) {
+    try {
+      await deletePlanById(planId)
+      deleted.push(planId)
+    } catch (error) {
+      errors.push({
+        planId,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+  }
+
+  return { deleted, errors }
+}
+
+/**
+ * Clone a plan - creates fresh copy with new ID
+ * Copies: title, description, branchStrategy, maxParallelAgents
+ * Optionally copies: discussion output (if includeDiscussion is true)
+ */
+export async function clonePlan(
+  planId: string,
+  options?: { includeDiscussion?: boolean }
+): Promise<Plan> {
+  const source = getPlanById(planId)
+  if (!source) {
+    throw new Error(`Plan not found: ${planId}`)
+  }
+
+  const now = new Date().toISOString()
+  const newPlanId = generatePlanId()
+
+  const newPlan: Plan = {
+    id: newPlanId,
+    title: `${source.title} (Copy)`,
+    description: source.description,
+    status: options?.includeDiscussion && source.discussionOutputPath ? 'discussed' : 'draft',
+    createdAt: now,
+    updatedAt: now,
+    referenceAgentId: null,
+    beadEpicId: null,
+    orchestratorWorkspaceId: null,
+    orchestratorTabId: null,
+    branchStrategy: source.branchStrategy,
+    maxParallelAgents: source.maxParallelAgents ?? DEFAULT_MAX_PARALLEL_AGENTS,
+    worktrees: [],
+    // Generate new feature branch name for feature_branch strategy
+    featureBranch: source.branchStrategy === 'feature_branch'
+      ? `bismark/${newPlanId.split('-')[1]}/feature`
+      : undefined,
+    gitSummary: {
+      commits: source.branchStrategy === 'feature_branch' ? [] : undefined,
+      pullRequests: source.branchStrategy === 'raise_prs' ? [] : undefined,
+    },
+  }
+
+  // Copy discussion if requested and available
+  if (options?.includeDiscussion && source.discussionOutputPath) {
+    const newPlanDir = getPlanDir(newPlanId)
+
+    // Ensure new plan directory exists
+    await fs.mkdir(newPlanDir, { recursive: true })
+
+    // Copy discussion output file
+    const newDiscussionPath = path.join(newPlanDir, 'discussion-output.md')
+    try {
+      await fs.copyFile(source.discussionOutputPath, newDiscussionPath)
+      newPlan.discussionOutputPath = newDiscussionPath
+      logger.info('plan', `Copied discussion output to: ${newDiscussionPath}`)
+    } catch (error) {
+      logger.warn('plan', `Failed to copy discussion output: ${error}`)
+      // Downgrade status to draft if we couldn't copy the discussion
+      newPlan.status = 'draft'
+    }
+
+    // Copy discussion object with new IDs
+    if (source.discussion) {
+      newPlan.discussion = {
+        ...source.discussion,
+        id: generateDiscussionId(),
+        planId: newPlanId,
+      }
+    }
+  }
+
+  savePlan(newPlan)
+  emitPlanUpdate(newPlan)
+  logger.info('plan', `Cloned plan ${planId} to ${newPlanId}`, { title: newPlan.title })
+
+  return newPlan
 }
 
 /**
@@ -1221,7 +1376,8 @@ async function syncTasksForPlan(planId: string): Promise<void> {
   const logCtx: LogContext = { planId }
 
   // If plan no longer exists or is no longer active, stop polling
-  if (!activePlan || (activePlan.status !== 'delegating' && activePlan.status !== 'in_progress')) {
+  // Include ready_for_review to detect new follow-up tasks
+  if (!activePlan || (activePlan.status !== 'delegating' && activePlan.status !== 'in_progress' && activePlan.status !== 'ready_for_review')) {
     logger.debug('plan', 'Plan no longer active, stopping polling', logCtx, { status: activePlan?.status })
     stopTaskPolling()
     return
@@ -1271,6 +1427,9 @@ async function syncTasksForPlan(planId: string): Promise<void> {
 
     // Update plan statuses based on task completion
     await updatePlanStatuses()
+
+    // Notify renderer about task changes so UI can refresh
+    emitBeadTasksUpdate(activePlan.id)
   } catch (error) {
     console.error('Error syncing tasks from bd:', error)
     addPlanActivity(
@@ -1802,6 +1961,9 @@ function cleanupPlanAgent(plan: Plan): void {
 
   addPlanActivity(plan.id, 'success', 'Plan agent completed task creation')
   emitStateUpdate()
+
+  // Notify renderer to refresh task list now that plan agent has created tasks
+  emitBeadTasksUpdate(plan.id)
 }
 
 /**
@@ -2678,78 +2840,87 @@ async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repositor
     savePlan(plan)
   }
 
-  try {
-    // Get commits made in this worktree
-    // Prefer repository's detected defaultBranch over plan's potentially incorrect default
-    const baseBranch = repository.defaultBranch || 'main'
-    const commits = await getCommitsBetween(worktree.path, `origin/${baseBranch}`, 'HEAD')
-
-    if (commits.length === 0) {
-      addPlanActivity(plan.id, 'info', `No commits to push for task ${worktree.taskId}`)
-      return
-    }
-
-    // Record commits in worktree tracking
-    worktree.commits = commits.map(c => c.sha)
-
-    // Fetch and rebase onto feature branch if it exists
+  // Use git push lock to serialize concurrent pushes to the same feature branch
+  await withGitPushLock(plan.id, async () => {
     try {
-      await fetchAndRebase(worktree.path, plan.featureBranch)
-    } catch {
-      // Feature branch might not exist yet, that's OK - we'll create it with the push
+      // Get commits made in this worktree
+      // Prefer repository's detected defaultBranch over plan's potentially incorrect default
+      const baseBranch = repository.defaultBranch || 'main'
+      const commits = await getCommitsBetween(worktree.path, `origin/${baseBranch}`, 'HEAD')
+
+      if (commits.length === 0) {
+        addPlanActivity(plan.id, 'info', `No commits to push for task ${worktree.taskId}`)
+        return
+      }
+
+      // Record commits in worktree tracking
+      worktree.commits = commits.map(c => c.sha)
+
+      // Fetch and rebase onto feature branch if it exists
+      try {
+        await fetchAndRebase(worktree.path, plan.featureBranch!)
+      } catch {
+        // Feature branch might not exist yet, that's OK - we'll create it with the push
+      }
+
+      // Push with retry logic for handling concurrent pushes
+      await pushWithRetry(
+        worktree.path,
+        'HEAD',
+        plan.featureBranch!,
+        'origin',
+        3,
+        { planId: plan.id, taskId: worktree.taskId }
+      )
+
+      // Record commits in git summary
+      const githubUrl = getGitHubUrlFromRemote(repository.remoteUrl)
+      const planCommits: PlanCommit[] = commits.map(c => ({
+        sha: c.sha,
+        shortSha: c.shortSha,
+        message: c.message,
+        taskId: worktree.taskId,
+        timestamp: c.timestamp,
+        repositoryId: repository.id,
+        githubUrl: githubUrl ? `${githubUrl}/commit/${c.sha}` : undefined,
+      }))
+
+      if (!plan.gitSummary) {
+        plan.gitSummary = { commits: [] }
+      }
+      if (!plan.gitSummary.commits) {
+        plan.gitSummary.commits = []
+      }
+      // Deduplicate by SHA - after rebase, worktrees may contain commits from other tasks
+      const existingShas = new Set(plan.gitSummary.commits.map(c => c.sha))
+      const newCommits = planCommits.filter(c => !existingShas.has(c.sha))
+      plan.gitSummary.commits.push(...newCommits)
+
+      savePlan(plan)
+      emitPlanUpdate(plan)
+
+      // Mark worktree as merged into feature branch
+      worktree.mergedAt = new Date().toISOString()
+      worktree.mergedIntoFeatureBranch = true
+      savePlan(plan)
+
+      addPlanActivity(
+        plan.id,
+        'success',
+        `Pushed ${newCommits.length} new commit(s) for task ${worktree.taskId}`,
+        `To feature branch: ${plan.featureBranch}`
+      )
+    } catch (error) {
+      addPlanActivity(
+        plan.id,
+        'error',
+        `Failed to push commits for task ${worktree.taskId}`,
+        error instanceof Error ? error.message : 'Unknown error'
+      )
+      // Re-throw so calling code knows the push failed
+      throw error
     }
-
-    // Push local branch to the shared feature branch on remote
-    // This merges all task work into a single feature branch
-    await pushBranchToRemoteBranch(worktree.path, 'HEAD', plan.featureBranch, 'origin')
-
-    // Record commits in git summary
-    const githubUrl = getGitHubUrlFromRemote(repository.remoteUrl)
-    const planCommits: PlanCommit[] = commits.map(c => ({
-      sha: c.sha,
-      shortSha: c.shortSha,
-      message: c.message,
-      taskId: worktree.taskId,
-      timestamp: c.timestamp,
-      repositoryId: repository.id,
-      githubUrl: githubUrl ? `${githubUrl}/commit/${c.sha}` : undefined,
-    }))
-
-    if (!plan.gitSummary) {
-      plan.gitSummary = { commits: [] }
-    }
-    if (!plan.gitSummary.commits) {
-      plan.gitSummary.commits = []
-    }
-    // Deduplicate by SHA - after rebase, worktrees may contain commits from other tasks
-    const existingShas = new Set(plan.gitSummary.commits.map(c => c.sha))
-    const newCommits = planCommits.filter(c => !existingShas.has(c.sha))
-    plan.gitSummary.commits.push(...newCommits)
-
-    savePlan(plan)
-    emitPlanUpdate(plan)
-
-    // Mark worktree as merged into feature branch
-    worktree.mergedAt = new Date().toISOString()
-    worktree.mergedIntoFeatureBranch = true
-    savePlan(plan)
-
-    addPlanActivity(
-      plan.id,
-      'success',
-      `Pushed ${newCommits.length} new commit(s) for task ${worktree.taskId}`,
-      `To feature branch: ${plan.featureBranch}`
-    )
-  } catch (error) {
-    addPlanActivity(
-      plan.id,
-      'error',
-      `Failed to push commits for task ${worktree.taskId}`,
-      error instanceof Error ? error.message : 'Unknown error'
-    )
-    // Re-throw so calling code knows the push failed
-    throw error
-  }
+  })
 }
 
 /**
@@ -2962,6 +3133,254 @@ export async function completePlan(planId: string): Promise<Plan | null> {
 }
 
 /**
+ * Build the prompt for the Follow-Up Agent
+ * This agent helps the user create follow-up tasks after reviewing completed work
+ */
+async function buildFollowUpAgentPrompt(plan: Plan, completedTasks: BeadTask[]): Promise<string> {
+  const planDir = getPlanDir(plan.id)
+
+  const completedTasksList = completedTasks.length > 0
+    ? completedTasks.map(t => `- ${t.id}: ${t.title}`).join('\n')
+    : '(No completed tasks yet)'
+
+  // Get available repositories from existing worktrees
+  const repositories = await getRepositoriesForPlan(plan.id)
+  const repoList = repositories.length > 0
+    ? repositories.map(r => `- ${r.name}`).join('\n')
+    : '(No repositories available)'
+
+  // Get worktree info from plan - find one that can be reused
+  // Prefer worktrees that are ready_for_review (task finished) so we can reference their pattern
+  const existingWorktrees = plan.worktrees || []
+  const worktreeInfo = existingWorktrees.length > 0
+    ? existingWorktrees.map(w => `- ${w.id} (repo: ${w.repositoryId}, task: ${w.taskId}, status: ${w.status})`).join('\n')
+    : '(No worktrees yet)'
+
+  // Find a default repo/worktree to suggest
+  const defaultRepo = repositories[0]?.name || '<repo-name>'
+  // Generate a unique worktree name for follow-up tasks
+  const defaultWorktree = `followup-${Date.now()}`
+
+  return `[BISMARK FOLLOW-UP AGENT]
+Plan: ${plan.title}
+${plan.description}
+
+=== YOUR ROLE ===
+You are a Follow-Up Agent helping the user create additional tasks after reviewing completed work.
+The plan was in "Ready for Review" status and the user has requested to add follow-up tasks.
+
+=== COMPLETED TASKS ===
+The following tasks have been completed:
+${completedTasksList}
+
+=== AVAILABLE REPOSITORIES ===
+${repoList}
+
+=== EXISTING WORKTREES ===
+${worktreeInfo}
+
+=== CREATING FOLLOW-UP TASKS ===
+Help the user identify what additional work is needed. When they decide on tasks:
+
+1. Create tasks using bd (beads CLI):
+   \`\`\`bash
+   bd --sandbox create "Task title" --description "Detailed task description"
+   \`\`\`
+
+2. Set dependencies on completed tasks if needed:
+   \`\`\`bash
+   bd --sandbox update <new-task-id> --blocked-by <completed-task-id>
+   \`\`\`
+
+3. **IMPORTANT**: Assign repository and worktree labels (required for task dispatch):
+   \`\`\`bash
+   bd --sandbox update <task-id> --add-labels "repo:${defaultRepo}" --add-labels "worktree:${defaultWorktree}"
+   \`\`\`
+
+4. Mark tasks as ready for Bismark:
+   \`\`\`bash
+   bd --sandbox update <task-id> --add-labels bismark-ready
+   \`\`\`
+
+You can combine steps 3 and 4:
+\`\`\`bash
+bd --sandbox update <task-id> --add-labels "repo:${defaultRepo}" --add-labels "worktree:${defaultWorktree}" --add-labels bismark-ready
+\`\`\`
+
+=== ASKING QUESTIONS ===
+When you need input from the user, use the AskUserQuestion tool.
+This provides a better UI experience than typing in the terminal.
+- Structure questions with 2-4 clear options when possible
+- Use multiSelect: true when multiple answers make sense
+
+=== WHEN COMPLETE ===
+When the user has finished creating follow-up tasks (or decides none are needed):
+1. Type /exit to signal that follow-up task creation is complete
+
+The plan will automatically transition back to "In Progress" if new open tasks exist,
+or stay in "Ready for Review" if no new tasks were created.
+
+=== BEGIN ===
+Start by asking the user what follow-up work they've identified after reviewing the completed tasks.`
+}
+
+/**
+ * Check for new tasks after Follow-Up Agent exits and resume plan if needed
+ */
+async function checkForNewTasksAndResume(planId: string): Promise<void> {
+  const plan = getPlanById(planId)
+  if (!plan || plan.status !== 'ready_for_review') return
+
+  const logCtx: LogContext = { planId }
+  logger.info('plan', 'Checking for new tasks after follow-up agent exit', logCtx)
+
+  try {
+    // Get all open tasks
+    const openTasks = await bdList(planId, { status: 'open' })
+
+    if (openTasks.length > 0) {
+      // New tasks exist - transition back to in_progress and restart polling
+      logger.planStateChange(plan.id, plan.status, 'in_progress', `${openTasks.length} new follow-up tasks`)
+      plan.status = 'in_progress'
+      plan.updatedAt = new Date().toISOString()
+      savePlan(plan)
+      emitPlanUpdate(plan)
+
+      addPlanActivity(planId, 'info', `Resuming plan with ${openTasks.length} follow-up task(s)`)
+
+      // Restart task polling
+      startTaskPolling(planId)
+
+      // Notify renderer about task changes
+      emitBeadTasksUpdate(planId)
+    } else {
+      // No new tasks - stay in ready_for_review
+      logger.info('plan', 'No new tasks created, staying in ready_for_review', logCtx)
+      addPlanActivity(planId, 'info', 'No follow-up tasks created')
+    }
+  } catch (error) {
+    logger.error('plan', 'Error checking for new tasks', logCtx, { error })
+    addPlanActivity(planId, 'error', 'Failed to check for new tasks', error instanceof Error ? error.message : 'Unknown error')
+  }
+}
+
+/**
+ * Request follow-ups for a plan in ready_for_review status
+ * Spawns a Follow-Up Agent terminal for creating additional tasks
+ */
+export async function requestFollowUps(planId: string): Promise<Plan | null> {
+  const plan = getPlanById(planId)
+  if (!plan) return null
+
+  const logCtx: LogContext = { planId }
+  logger.info('plan', 'Requesting follow-ups for plan', logCtx)
+
+  // Only callable from ready_for_review status
+  if (plan.status !== 'ready_for_review') {
+    logger.warn('plan', 'Cannot request follow-ups - plan not in ready_for_review status', logCtx, { status: plan.status })
+    addPlanActivity(planId, 'warning', 'Cannot request follow-ups', `Plan is in ${plan.status} status, not ready_for_review`)
+    return plan
+  }
+
+  // Get completed tasks for context
+  const completedTasks = await bdList(planId, { status: 'closed' })
+
+  // Get the plan directory
+  const planDir = getPlanDir(planId)
+
+  // Create follow-up agent workspace
+  const allAgents = getWorkspaces()
+  const followUpWorkspace: Workspace = {
+    id: `followup-${planId}-${Date.now()}`,
+    name: `Follow-Up (${plan.title})`,
+    directory: planDir,
+    purpose: 'Create follow-up tasks',
+    theme: 'orange',
+    icon: getRandomUniqueIcon(allAgents),
+    isPlanAgent: true,
+  }
+  saveWorkspace(followUpWorkspace)
+
+  // Find or create the plan's tab
+  let tabId = plan.orchestratorTabId
+  if (!tabId) {
+    const newTab = createTab(`📋 ${plan.title.substring(0, 15)}`, { isPlanTab: true, planId: plan.id })
+    tabId = newTab.id
+    plan.orchestratorTabId = tabId
+    savePlan(plan)
+  }
+
+  // Create terminal for follow-up agent
+  if (mainWindow) {
+    try {
+      const followUpPrompt = await buildFollowUpAgentPrompt(plan, completedTasks)
+      const claudeFlags = `--add-dir "${planDir}"`
+
+      logger.info('plan', 'Creating terminal for follow-up agent', logCtx, { workspaceId: followUpWorkspace.id })
+      const terminalId = await queueTerminalCreation(followUpWorkspace.id, mainWindow, {
+        initialPrompt: followUpPrompt,
+        claudeFlags,
+      })
+      logger.info('plan', 'Created follow-up agent terminal', logCtx, { terminalId })
+
+      addActiveWorkspace(followUpWorkspace.id)
+      addWorkspaceToTab(followUpWorkspace.id, tabId)
+      setActiveTab(tabId)
+
+      // Notify renderer about the new terminal
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('terminal-created', {
+          terminalId,
+          workspaceId: followUpWorkspace.id,
+        })
+        // Maximize the follow-up agent
+        mainWindow.webContents.send('maximize-workspace', followUpWorkspace.id)
+      }
+
+      // Set up listener for follow-up agent exit
+      const followUpEmitter = getTerminalEmitter(terminalId)
+      if (followUpEmitter) {
+        const exitHandler = async (data: string) => {
+          // Claude shows "Goodbye!" when /exit is used
+          if (data.includes('Goodbye') || data.includes('Session ended')) {
+            followUpEmitter.removeListener('data', exitHandler)
+
+            // Cleanup follow-up agent workspace
+            const followUpTerminalId = getTerminalForWorkspace(followUpWorkspace.id)
+            if (followUpTerminalId) {
+              closeTerminal(followUpTerminalId)
+            }
+            removeActiveWorkspace(followUpWorkspace.id)
+            removeWorkspaceFromTab(followUpWorkspace.id)
+            deleteWorkspace(followUpWorkspace.id)
+
+            // Check for new tasks and resume plan if needed
+            await checkForNewTasksAndResume(planId)
+
+            emitStateUpdate()
+          }
+        }
+        followUpEmitter.on('data', exitHandler)
+      }
+
+      addPlanActivity(planId, 'info', 'Follow-up agent started')
+      emitStateUpdate()
+    } catch (error) {
+      logger.error('plan', 'Failed to create follow-up agent terminal', logCtx, { error })
+      addPlanActivity(planId, 'error', 'Failed to start follow-up agent', error instanceof Error ? error.message : 'Unknown error')
+      // Cleanup the workspace
+      deleteWorkspace(followUpWorkspace.id)
+    }
+  } else {
+    logger.error('plan', 'Cannot create follow-up terminal - mainWindow is null', logCtx)
+    addPlanActivity(planId, 'error', 'Cannot start follow-up agent - window not available')
+    deleteWorkspace(followUpWorkspace.id)
+  }
+
+  return plan
+}
+
+/**
  * Get available repositories for a plan based on reference agents
  */
 async function getRepositoriesForPlan(planId: string): Promise<Repository[]> {
@@ -3046,6 +3465,24 @@ async function updatePlanStatuses(): Promise<void> {
         emitPlanUpdate(plan)
         addPlanActivity(plan.id, 'info', 'Tasks are being worked on', `${openTasks.length} task(s) remaining`)
       }
+    } else if (plan.status === 'ready_for_review') {
+      // Check if new follow-up tasks have been created
+      const logCtx: LogContext = { planId: plan.id }
+      const allTasks = await bdList(plan.id, { status: 'all' })
+      const openTasks = allTasks.filter(t => t.type === 'task' && t.status === 'open')
+
+      if (openTasks.length > 0) {
+        // New tasks exist - transition back to in_progress
+        logger.planStateChange(plan.id, plan.status, 'in_progress', `${openTasks.length} new follow-up tasks`)
+        plan.status = 'in_progress'
+        plan.updatedAt = new Date().toISOString()
+        savePlan(plan)
+        emitPlanUpdate(plan)
+        addPlanActivity(plan.id, 'info', `Resuming with ${openTasks.length} follow-up task(s)`)
+
+        // Notify renderer about task changes
+        emitBeadTasksUpdate(plan.id)
+      }
     }
   }
 }
@@ -3074,6 +3511,16 @@ function emitTaskAssignmentUpdate(assignment: TaskAssignment): void {
 function emitPlanActivity(activity: PlanActivity): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('plan-activity', activity)
+  }
+}
+
+/**
+ * Emit bead tasks updated event to renderer
+ * This notifies the UI to re-fetch the task list for a plan
+ */
+function emitBeadTasksUpdate(planId: string): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('bead-tasks-updated', planId)
   }
 }
 

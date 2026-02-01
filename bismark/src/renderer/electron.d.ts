@@ -57,6 +57,7 @@ export interface ElectronAPI {
   cancelPlan: (planId: string) => Promise<Plan | null>
   restartPlan: (planId: string) => Promise<Plan | null>
   completePlan: (planId: string) => Promise<Plan | null>
+  requestFollowUps: (planId: string) => Promise<Plan | null>
   getTaskAssignments: (planId: string) => Promise<TaskAssignment[]>
   getPlanActivities: (planId: string) => Promise<PlanActivity[]>
   getBeadTasks: (planId: string) => Promise<BeadTask[]>
@@ -104,6 +105,9 @@ export interface ElectronAPI {
   onHeadlessAgentStarted: (callback: (data: { taskId: string; planId: string; worktreePath: string }) => void) => void
   onHeadlessAgentUpdate: (callback: (info: HeadlessAgentInfo) => void) => void
   onHeadlessAgentEvent: (callback: (data: { planId: string; taskId: string; event: StreamEvent }) => void) => void
+
+  // Bead task events
+  onBeadTasksUpdated: (callback: (planId: string) => void) => void
 
   // Terminal queue status
   onTerminalQueueStatus: (callback: (status: { queued: number; active: number; pending: string[] }) => void) => void

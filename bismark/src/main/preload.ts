@@ -85,6 +85,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('restart-plan', planId),
   completePlan: (planId: string): Promise<Plan | null> =>
     ipcRenderer.invoke('complete-plan', planId),
+  requestFollowUps: (planId: string): Promise<Plan | null> =>
+    ipcRenderer.invoke('request-follow-ups', planId),
   getTaskAssignments: (planId: string): Promise<TaskAssignment[]> =>
     ipcRenderer.invoke('get-task-assignments', planId),
   getPlanActivities: (planId: string): Promise<PlanActivity[]> =>
@@ -185,6 +187,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('headless-agent-event', (_event, data) => callback(data))
   },
 
+  // Bead task events
+  onBeadTasksUpdated: (callback: (planId: string) => void): void => {
+    ipcRenderer.on('bead-tasks-updated', (_event, planId) => callback(planId))
+  },
+
   // Terminal queue status
   onTerminalQueueStatus: (callback: (status: { queued: number; active: number; pending: string[] }) => void): void => {
     ipcRenderer.on('terminal-queue-status', (_event, status) => callback(status))
@@ -233,6 +240,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('headless-agent-update')
     ipcRenderer.removeAllListeners('headless-agent-event')
     ipcRenderer.removeAllListeners('terminal-queue-status')
+    ipcRenderer.removeAllListeners('bead-tasks-updated')
   },
 
   // Dev test harness (development mode only)

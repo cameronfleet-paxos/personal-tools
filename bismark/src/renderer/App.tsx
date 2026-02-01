@@ -86,6 +86,17 @@ function App() {
   // Collapsed plan groups in sidebar
   const [collapsedPlanGroups, setCollapsedPlanGroups] = useState<Set<string>>(new Set())
 
+  // Plan ID to auto-expand in sidebar (cleared after consumption)
+  const [expandPlanId, setExpandPlanId] = useState<string | null>(null)
+
+  // Clear expandPlanId after it's been consumed by the sidebar
+  useEffect(() => {
+    if (expandPlanId) {
+      const timer = setTimeout(() => setExpandPlanId(null), 100)
+      return () => clearTimeout(timer)
+    }
+  }, [expandPlanId])
+
   // Terminal queue status for boot progress indicator
   const [terminalQueueStatus, setTerminalQueueStatus] = useState<{ queued: number; active: number }>({ queued: 0, active: 0 })
 
@@ -815,6 +826,16 @@ function App() {
     console.log('[App] executePlan available:', !!window.electronAPI?.executePlan)
     const result = await window.electronAPI?.executePlan?.(planId, referenceAgentId)
     console.log('[App] executePlan result:', result)
+
+    // Navigate to the plan's tab
+    if (result?.orchestratorTabId) {
+      setActiveTabId(result.orchestratorTabId)
+      await window.electronAPI?.setActiveTab?.(result.orchestratorTabId)
+    }
+
+    // Expand the plan in sidebar
+    setExpandPlanId(planId)
+
     return result
   }
 
@@ -836,6 +857,10 @@ function App() {
 
   const handleCompletePlan = async (planId: string) => {
     await window.electronAPI?.completePlan?.(planId)
+  }
+
+  const handleRequestFollowUps = async (planId: string) => {
+    await window.electronAPI?.requestFollowUps?.(planId)
   }
 
   const handleSelectPlan = async (planId: string | null) => {
@@ -1553,6 +1578,7 @@ function App() {
             planActivities={planActivities}
             agents={agents}
             activePlanId={activePlanId}
+            expandPlanId={expandPlanId}
             onCreatePlan={() => setPlanCreatorOpen(true)}
             onSelectPlan={handleSelectPlan}
             onExecutePlan={handleExecutePlan}
@@ -1561,6 +1587,7 @@ function App() {
             onCancelPlan={handleCancelPlan}
             onRestartPlan={handleRestartPlan}
             onCompletePlan={handleCompletePlan}
+            onRequestFollowUps={handleRequestFollowUps}
           />
         )}
       </div>

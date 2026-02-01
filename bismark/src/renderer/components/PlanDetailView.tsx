@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit, MessageSquare, Play, FileText, Network } from 'lucide-react'
+import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit, MessageSquare, Play, FileText, Network, Plus } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import { DependencyProgressBar } from '@/renderer/components/DependencyProgressBar'
@@ -13,10 +13,11 @@ interface PlanDetailViewProps {
   taskAssignments: TaskAssignment[]
   agents: Agent[]
   onBack: () => void
-  onComplete: () => void
+  onComplete: () => Promise<void>
   onCancel: () => Promise<void>
   onCancelDiscussion?: () => Promise<void>
   onExecute?: (referenceAgentId: string) => void
+  onRequestFollowUps?: () => Promise<void>
 }
 
 const statusIcons: Record<Plan['status'], React.ReactNode> = {
@@ -153,9 +154,12 @@ export function PlanDetailView({
   onCancel,
   onCancelDiscussion,
   onExecute,
+  onRequestFollowUps,
 }: PlanDetailViewProps) {
   const [isCancelling, setIsCancelling] = useState(false)
+  const [isCompleting, setIsCompleting] = useState(false)
   const [isExecuting, setIsExecuting] = useState(false)
+  const [isRequestingFollowUps, setIsRequestingFollowUps] = useState(false)
   const [selectedReference, setSelectedReference] = useState<string>(plan.referenceAgentId || '')
   const [beadTasks, setBeadTasks] = useState<BeadTask[]>([])
   const [localAssignments, setLocalAssignments] = useState<TaskAssignment[]>([])
@@ -184,6 +188,30 @@ export function PlanDetailView({
     }
   }, [plan.id, plan.status])
 
+  // Listen for bead tasks updated event from main process
+  useEffect(() => {
+    const handleBeadTasksUpdated = async (planId: string) => {
+      if (planId === plan.id) {
+        console.log('[PlanDetailView] Received bead-tasks-updated event, refreshing tasks')
+        try {
+          const [tasks, assignments] = await Promise.all([
+            window.electronAPI.getBeadTasks(plan.id),
+            window.electronAPI.getTaskAssignments(plan.id)
+          ])
+          console.log('[PlanDetailView] Refreshed bead tasks:', tasks.length)
+          setBeadTasks(tasks)
+          setLocalAssignments(assignments || [])
+        } catch (err) {
+          console.error('Failed to refresh plan data:', err)
+        }
+      }
+    }
+
+    window.electronAPI?.onBeadTasksUpdated?.(handleBeadTasksUpdated)
+
+    // Cleanup handled by preload removeAllListeners
+  }, [plan.id])
+
   // Build dependency graph from bead tasks and local assignments
   const graph: DependencyGraph = useMemo(() => {
     if (beadTasks.length === 0) {
@@ -202,9 +230,21 @@ export function PlanDetailView({
   // Calculate stats from graph
   const graphStats: GraphStats = useMemo(() => calculateGraphStats(graph), [graph])
 
+  // Sync local assignments when prop changes (e.g., from task-assignment-update events)
+  useEffect(() => {
+    if (taskAssignments && taskAssignments.length > 0) {
+      setLocalAssignments(taskAssignments)
+    }
+  }, [taskAssignments])
+
   const handleCancel = async () => {
     setIsCancelling(true)
     await onCancel()
+  }
+
+  const handleComplete = async () => {
+    setIsCompleting(true)
+    await onComplete()
   }
 
   const handleCancelDiscussion = async () => {
@@ -378,11 +418,47 @@ export function PlanDetailView({
         )}
 
         {plan.status === 'ready_for_review' && (
-          <div className="flex gap-2">
-            <Button size="sm" onClick={onComplete}>
-              <Check className="h-3 w-3 mr-1" />
-              Mark Complete
+          <div className="flex gap-2 flex-wrap">
+            <Button size="sm" disabled={isCompleting} onClick={handleComplete}>
+              {isCompleting ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Completing...
+                </>
+              ) : (
+                <>
+                  <Check className="h-3 w-3 mr-1" />
+                  Mark Complete
+                </>
+              )}
             </Button>
+            {onRequestFollowUps && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isRequestingFollowUps}
+                onClick={async () => {
+                  setIsRequestingFollowUps(true)
+                  try {
+                    await onRequestFollowUps()
+                  } finally {
+                    setIsRequestingFollowUps(false)
+                  }
+                }}
+              >
+                {isRequestingFollowUps ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-3 w-3 mr-1" />
+                    Follow Up Required
+                  </>
+                )}
+              </Button>
+            )}
             <Button
               size="sm"
               variant="destructive"

@@ -13,6 +13,7 @@ interface PlanSidebarProps {
   planActivities: Map<string, PlanActivity[]>
   agents: Agent[]
   activePlanId: string | null
+  expandPlanId?: string | null  // Plan ID to auto-expand from parent
   onCreatePlan: () => void
   onSelectPlan: (planId: string | null) => void
   onExecutePlan: (planId: string, referenceAgentId: string) => void
@@ -20,7 +21,8 @@ interface PlanSidebarProps {
   onCancelDiscussion: (planId: string) => Promise<void>
   onCancelPlan: (planId: string) => Promise<void>
   onRestartPlan: (planId: string) => Promise<void>
-  onCompletePlan: (planId: string) => void
+  onCompletePlan: (planId: string) => Promise<void>
+  onRequestFollowUps: (planId: string) => Promise<void>
 }
 
 export function PlanSidebar({
@@ -31,6 +33,7 @@ export function PlanSidebar({
   planActivities,
   agents,
   activePlanId,
+  expandPlanId,
   onCreatePlan,
   onSelectPlan,
   onExecutePlan,
@@ -39,6 +42,7 @@ export function PlanSidebar({
   onCancelPlan,
   onRestartPlan,
   onCompletePlan,
+  onRequestFollowUps,
 }: PlanSidebarProps) {
   const [detailPlanId, setDetailPlanId] = useState<string | null>(null)
 
@@ -53,6 +57,13 @@ export function PlanSidebar({
       userDismissedRef.current = false
     }
   }, [open])
+
+  // Respond to expandPlanId prop from parent (e.g., after executing a plan)
+  useEffect(() => {
+    if (expandPlanId) {
+      setDetailPlanId(expandPlanId)
+    }
+  }, [expandPlanId])
 
   // Auto-expand detail view for plans in 'discussing' status
   useEffect(() => {
@@ -89,8 +100,8 @@ export function PlanSidebar({
             userDismissedRef.current = true
             setDetailPlanId(null)
           }}
-          onComplete={() => {
-            onCompletePlan(detailPlan.id)
+          onComplete={async () => {
+            await onCompletePlan(detailPlan.id)
             setDetailPlanId(null)
           }}
           onCancel={async () => {
@@ -103,6 +114,9 @@ export function PlanSidebar({
           }}
           onExecute={(referenceAgentId) => {
             onExecutePlan(detailPlan.id, referenceAgentId)
+          }}
+          onRequestFollowUps={async () => {
+            await onRequestFollowUps(detailPlan.id)
           }}
         />
       </aside>
@@ -161,7 +175,7 @@ export function PlanSidebar({
                     onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
                     onCancelDiscussion={() => onCancelDiscussion(plan.id)}
                     onCancel={() => onCancelPlan(plan.id)}
-                    onComplete={() => onCompletePlan(plan.id)}
+                    onComplete={async () => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
                     onExpand={() => setDetailPlanId(plan.id)}
                   />
@@ -186,7 +200,7 @@ export function PlanSidebar({
                     onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
                     onCancelDiscussion={() => onCancelDiscussion(plan.id)}
                     onCancel={() => onCancelPlan(plan.id)}
-                    onComplete={() => onCompletePlan(plan.id)}
+                    onComplete={async () => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
                     onExpand={() => setDetailPlanId(plan.id)}
                   />
@@ -212,7 +226,7 @@ export function PlanSidebar({
                     onCancelDiscussion={() => onCancelDiscussion(plan.id)}
                     onCancel={() => onCancelPlan(plan.id)}
                     onRestart={plan.status === 'failed' ? () => onRestartPlan(plan.id) : undefined}
-                    onComplete={() => onCompletePlan(plan.id)}
+                    onComplete={async () => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
                     onExpand={() => setDetailPlanId(plan.id)}
                   />

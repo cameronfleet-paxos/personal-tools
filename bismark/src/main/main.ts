@@ -79,6 +79,7 @@ import {
   stopHeadlessTaskAgent,
   startDiscussion,
   cancelDiscussion,
+  requestFollowUps,
 } from './plan-manager'
 import {
   detectRepository,
@@ -350,6 +351,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('complete-plan', async (_event, planId: string) => {
     return completePlan(planId)
+  })
+
+  ipcMain.handle('request-follow-ups', async (_event, planId: string) => {
+    return requestFollowUps(planId)
   })
 
   ipcMain.handle('get-task-assignments', (_event, planId: string) => {
