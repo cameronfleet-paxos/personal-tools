@@ -817,24 +817,38 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
  * Cancel a plan
  */
 export async function cancelPlan(planId: string): Promise<Plan | null> {
+  const logCtx: LogContext = { planId }
+  logger.info('plan', 'Cancelling plan', logCtx, { previousStatus: getPlanById(planId)?.status })
+
   const plan = getPlanById(planId)
-  if (!plan) return null
+  if (!plan) {
+    logger.warn('plan', 'Cannot cancel plan - not found', logCtx)
+    return null
+  }
 
   // 1. Kill all agents immediately (closes terminals and stops containers)
+  logger.info('plan', 'Killing all plan agents', logCtx)
+  const killStartTime = Date.now()
   await killAllPlanAgents(plan)
+  logger.info('plan', 'Finished killing all plan agents', logCtx, { durationMs: Date.now() - killStartTime })
 
   // 2. Cleanup worktrees (slow - git operations)
+  logger.info('plan', 'Cleaning up worktrees', logCtx)
+  const cleanupStartTime = Date.now()
   await cleanupAllWorktreesOnly(planId)
+  logger.info('plan', 'Finished cleaning up worktrees', logCtx, { durationMs: Date.now() - cleanupStartTime })
 
   // 3. Update plan state
   plan.status = 'failed'
   plan.updatedAt = new Date().toISOString()
   savePlan(plan)
+  logger.info('plan', 'Plan status set to failed, emitting update', logCtx)
   emitPlanUpdate(plan)
   addPlanActivity(planId, 'error', 'Plan cancelled', 'Execution was stopped by user')
 
   // Remove from executing set
   executingPlans.delete(planId)
+  logger.info('plan', 'Plan cancellation complete', logCtx)
 
   return plan
 }
@@ -945,13 +959,21 @@ async function deleteRemoteBranchesForPlan(plan: Plan): Promise<void> {
  * This is fast because it just closes terminals/containers
  */
 async function killAllPlanAgents(plan: Plan): Promise<void> {
+  const logCtx: LogContext = { planId: plan.id }
+
   // Stop all headless agents for this plan first
+  const headlessAgentCount = Array.from(headlessAgentInfo.values()).filter((info) => info.planId === plan.id).length
+  logger.info('plan', 'Stopping headless agents', logCtx, { count: headlessAgentCount })
   await stopAllHeadlessAgents(plan.id)
+  logger.info('plan', 'Headless agents stopped', logCtx)
 
   // Kill task agents (interactive mode)
   if (plan.worktrees) {
+    const worktreesWithAgents = plan.worktrees.filter((w) => w.agentId)
+    logger.debug('plan', 'Killing interactive task agents', logCtx, { count: worktreesWithAgents.length })
     for (const worktree of plan.worktrees) {
       if (worktree.agentId) {
+        logger.debug('plan', 'Killing task agent', logCtx, { agentId: worktree.agentId, taskId: worktree.taskId })
         const terminalId = getTerminalForWorkspace(worktree.agentId)
         if (terminalId) closeTerminal(terminalId)
         removeActiveWorkspace(worktree.agentId)
@@ -963,6 +985,7 @@ async function killAllPlanAgents(plan: Plan): Promise<void> {
 
   // Kill plan agent
   if (plan.planAgentWorkspaceId) {
+    logger.debug('plan', 'Killing plan agent', logCtx, { workspaceId: plan.planAgentWorkspaceId })
     const terminalId = getTerminalForWorkspace(plan.planAgentWorkspaceId)
     if (terminalId) closeTerminal(terminalId)
     removeActiveWorkspace(plan.planAgentWorkspaceId)
@@ -973,6 +996,7 @@ async function killAllPlanAgents(plan: Plan): Promise<void> {
 
   // Kill orchestrator
   if (plan.orchestratorWorkspaceId) {
+    logger.debug('plan', 'Killing orchestrator', logCtx, { workspaceId: plan.orchestratorWorkspaceId })
     const terminalId = getTerminalForWorkspace(plan.orchestratorWorkspaceId)
     if (terminalId) closeTerminal(terminalId)
     removeActiveWorkspace(plan.orchestratorWorkspaceId)
@@ -982,10 +1006,13 @@ async function killAllPlanAgents(plan: Plan): Promise<void> {
 
   // Delete orchestrator tab
   if (plan.orchestratorTabId) {
+    logger.debug('plan', 'Deleting orchestrator tab', logCtx, { tabId: plan.orchestratorTabId })
     deleteTab(plan.orchestratorTabId)
     plan.orchestratorTabId = null
     emitStateUpdate()
   }
+
+  logger.info('plan', 'All plan agents killed', logCtx)
 }
 
 /**
@@ -994,34 +1021,72 @@ async function killAllPlanAgents(plan: Plan): Promise<void> {
  */
 async function cleanupAllWorktreesOnly(planId: string): Promise<void> {
   const plan = getPlanById(planId)
-  if (!plan || !plan.worktrees) return
+  if (!plan) return
 
-  for (const worktree of plan.worktrees) {
-    if (worktree.status === 'cleaned') continue
+  // Clean up tracked worktrees (existing logic)
+  if (plan.worktrees) {
+    for (const worktree of plan.worktrees) {
+      if (worktree.status === 'cleaned') continue
 
-    const repository = await getRepositoryById(worktree.repositoryId)
-    if (repository) {
-      try {
-        await removeWorktree(repository.rootPath, worktree.path, true)
-      } catch {
-        // Ignore errors, continue cleanup
-      }
-      // Delete the local branch after removing worktree
-      if (worktree.branch) {
+      const repository = await getRepositoryById(worktree.repositoryId)
+      if (repository) {
         try {
-          await deleteLocalBranch(repository.rootPath, worktree.branch)
+          await removeWorktree(repository.rootPath, worktree.path, true)
         } catch {
-          // Branch may not exist or already deleted
+          // Ignore errors, continue cleanup
+        }
+        // Delete the local branch after removing worktree
+        if (worktree.branch) {
+          try {
+            await deleteLocalBranch(repository.rootPath, worktree.branch)
+          } catch {
+            // Branch may not exist or already deleted
+          }
         }
       }
+      worktree.status = 'cleaned'
     }
-    worktree.status = 'cleaned'
   }
 
   savePlan(plan)
 
-  // Prune stale worktree refs
+  // Also clean up the entire worktrees directory for this plan
+  // This catches any directories not tracked in plan state
+  const planWorktreesDir = getPlanWorktreesPath(planId)
   const repositories = await getAllRepositories()
+  try {
+    const stat = await fs.stat(planWorktreesDir)
+    if (stat.isDirectory()) {
+      // Get all repo subdirs
+      const repoDirs = await fs.readdir(planWorktreesDir)
+      for (const repoName of repoDirs) {
+        const repoWorktreesPath = path.join(planWorktreesDir, repoName)
+        let worktreeDirs: string[] = []
+        try {
+          worktreeDirs = await fs.readdir(repoWorktreesPath)
+        } catch {
+          // Directory may not exist or not be readable
+          continue
+        }
+
+        // Find the actual repository to run git commands
+        const repo = repositories.find(r => r.name === repoName)
+        if (repo) {
+          for (const wtDir of worktreeDirs) {
+            const wtPath = path.join(repoWorktreesPath, wtDir)
+            try {
+              await removeWorktree(repo.rootPath, wtPath, true)
+            } catch { /* ignore */ }
+          }
+        }
+      }
+
+      // Finally, remove the entire worktrees directory
+      await fs.rm(planWorktreesDir, { recursive: true, force: true })
+    }
+  } catch { /* directory doesn't exist, ignore */ }
+
+  // Prune stale worktree refs across all repos
   for (const repo of repositories) {
     try {
       await pruneWorktrees(repo.rootPath)
@@ -1547,8 +1612,11 @@ Max parallel agents: ${maxParallel}
 === RULES ===
 1. DO NOT pick up or work on tasks yourself
 2. Assign tasks to repositories based on where the work should happen
-3. Choose descriptive worktree names (e.g., "fix-login-bug", "add-user-export")
-4. You can create multiple worktrees for the same repo for parallel work
+3. Worktree names MUST include the task number for uniqueness
+   - Format: "<descriptive-name>-<task-number>" (e.g., "fix-login-1", "fix-login-2")
+   - Extract task number from task ID: "bismark-xyz.5" → use "5"
+   - This ensures each task gets its own worktree directory
+4. You can assign multiple tasks to the same repo for parallel work
 5. Mark tasks as ready ONLY when their dependencies are complete
 
 === COMMANDS ===
@@ -1562,7 +1630,10 @@ List all tasks (including closed):
   bd --sandbox list --all --json
 
 Assign a task to a repository with worktree name:
-  bd --sandbox update <task-id> --add-label "repo:<repo-name>" --add-label "worktree:<descriptive-name>"
+  bd --sandbox update <task-id> --add-label "repo:<repo-name>" --add-label "worktree:<descriptive-name>-<task-number>"
+
+Example for task bismark-abc.3:
+  bd --sandbox update bismark-abc.3 --add-label "repo:pax" --add-label "worktree:remove-ca-3"
 
 Mark task ready for pickup:
   bd --sandbox update <task-id> --add-label bismark-ready
@@ -1977,27 +2048,62 @@ async function startHeadlessTaskAgent(
  * Stop a headless task agent
  */
 export async function stopHeadlessTaskAgent(taskId: string): Promise<void> {
+  const info = headlessAgentInfo.get(taskId)
+  const logCtx: LogContext = { planId: info?.planId, taskId }
+
+  logger.info('agent', 'Stopping headless task agent', logCtx, {
+    hasAgent: headlessAgents.has(taskId),
+    hasInfo: !!info,
+    currentStatus: info?.status,
+  })
+
   const agent = headlessAgents.get(taskId)
   if (agent) {
-    await agent.stop()
+    const stopStartTime = Date.now()
+    logger.debug('agent', 'Calling agent.stop()', logCtx)
+    try {
+      await agent.stop()
+      logger.info('agent', 'Agent stop() completed', logCtx, { durationMs: Date.now() - stopStartTime })
+    } catch (error) {
+      logger.error('agent', 'Agent stop() threw error', logCtx, { error: String(error), durationMs: Date.now() - stopStartTime })
+    }
     headlessAgents.delete(taskId)
+    logger.debug('agent', 'Removed from headlessAgents map', logCtx)
+  } else {
+    logger.debug('agent', 'No agent instance found in map', logCtx)
   }
+
   headlessAgentInfo.delete(taskId)
+  logger.debug('agent', 'Removed from headlessAgentInfo map', logCtx)
 }
 
 /**
  * Stop all headless agents for a plan
  */
 async function stopAllHeadlessAgents(planId: string): Promise<void> {
-  const promises: Promise<void>[] = []
+  const logCtx: LogContext = { planId }
 
+  // Collect all task IDs for this plan
+  const taskIds: string[] = []
   for (const [taskId, info] of headlessAgentInfo) {
     if (info.planId === planId) {
-      promises.push(stopHeadlessTaskAgent(taskId))
+      taskIds.push(taskId)
     }
   }
 
+  logger.info('agent', 'Stopping all headless agents for plan', logCtx, {
+    taskIds,
+    totalHeadlessAgents: headlessAgents.size,
+    totalHeadlessAgentInfo: headlessAgentInfo.size,
+  })
+
+  const promises: Promise<void>[] = []
+  for (const taskId of taskIds) {
+    promises.push(stopHeadlessTaskAgent(taskId))
+  }
+
   await Promise.all(promises)
+  logger.info('agent', 'All headless agents stopped for plan', logCtx, { stoppedCount: taskIds.length })
 }
 
 /**
@@ -2258,8 +2364,9 @@ async function getBaseBranchForTask(
   task: BeadTask,
   repository: Repository
 ): Promise<string> {
-  // Default to plan's baseBranch or repository's defaultBranch
-  const defaultBase = plan.baseBranch || repository.defaultBranch
+  // Prefer repository's detected defaultBranch over plan's potentially incorrect default
+  // Plan's baseBranch may be 'main' by default, but repo may use 'master'
+  const defaultBase = repository.defaultBranch || plan.baseBranch || 'main'
 
   if (plan.branchStrategy === 'feature_branch') {
     // Check if this task has blockers (depends on other tasks)
