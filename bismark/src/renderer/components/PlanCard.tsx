@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, GitPullRequest, Maximize2, GitCommit, ExternalLink, MessageSquare, RotateCcw, Copy } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
-import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
 
 interface PlanCardProps {
@@ -134,11 +133,6 @@ export function PlanCard({
     }
   }, [activities, activityLogExpanded])
 
-  const planTasks = taskAssignments.filter((t) => {
-    // In a real implementation, we'd filter by plan ID
-    // For now, show all tasks when viewing an active plan
-    return isActive
-  })
 
   const getAgentById = (id: string) => agents.find((a) => a.id === id)
   const referenceAgent = plan.referenceAgentId ? getAgentById(plan.referenceAgentId) : null
@@ -508,18 +502,6 @@ export function PlanCard({
             </div>
           )}
 
-          {planTasks.length > 0 && (
-            <div className="space-y-2">
-              <h5 className="text-xs font-medium text-muted-foreground">Tasks</h5>
-              {planTasks.map((task) => (
-                <TaskCard
-                  key={task.beadId}
-                  assignment={task}
-                  agent={getAgentById(task.agentId)}
-                />
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>

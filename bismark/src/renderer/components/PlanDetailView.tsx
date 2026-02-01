@@ -157,27 +157,33 @@ export function PlanDetailView({
   const [isCancelling, setIsCancelling] = useState(false)
   const [selectedReference, setSelectedReference] = useState<string>(plan.referenceAgentId || '')
   const [beadTasks, setBeadTasks] = useState<BeadTask[]>([])
+  const [localAssignments, setLocalAssignments] = useState<TaskAssignment[]>([])
   const [graphModalOpen, setGraphModalOpen] = useState(false)
 
-  // Fetch bead tasks on mount/plan change
+  // Fetch bead tasks and assignments on mount/plan change
   useEffect(() => {
-    const fetchTasks = async () => {
+    const fetchData = async () => {
       try {
-        const tasks = await window.electronAPI.getBeadTasks(plan.id)
+        const [tasks, assignments] = await Promise.all([
+          window.electronAPI.getBeadTasks(plan.id),
+          window.electronAPI.getTaskAssignments(plan.id)
+        ])
         console.log('[PlanDetailView] Fetched bead tasks:', tasks.length, tasks.map(t => ({ id: t.id, blockedBy: t.blockedBy })))
+        console.log('[PlanDetailView] Fetched assignments:', assignments?.length ?? 0)
         setBeadTasks(tasks)
+        setLocalAssignments(assignments || [])
       } catch (err) {
-        console.error('Failed to fetch bead tasks:', err)
+        console.error('Failed to fetch plan data:', err)
       }
     }
 
     // Only fetch if plan is in a state that has tasks
     if (['delegating', 'in_progress', 'ready_for_review', 'completed', 'failed'].includes(plan.status)) {
-      fetchTasks()
+      fetchData()
     }
   }, [plan.id, plan.status])
 
-  // Build dependency graph from bead tasks and assignments
+  // Build dependency graph from bead tasks and local assignments
   const graph: DependencyGraph = useMemo(() => {
     if (beadTasks.length === 0) {
       return {
@@ -189,8 +195,8 @@ export function PlanDetailView({
         maxDepth: 0,
       }
     }
-    return buildDependencyGraph(beadTasks, taskAssignments)
-  }, [beadTasks, taskAssignments])
+    return buildDependencyGraph(beadTasks, localAssignments)
+  }, [beadTasks, localAssignments])
 
   // Calculate stats from graph
   const graphStats: GraphStats = useMemo(() => calculateGraphStats(graph), [graph])
