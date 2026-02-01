@@ -19,7 +19,7 @@ import {
   saveHeadlessAgentInfo,
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
-import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
+import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, closeTerminal, getTerminalEmitter } from './terminal'
 import { queueTerminalCreation } from './terminal-queue'
 import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState, setFocusedWorkspace } from './state-manager'
 import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus, BranchStrategy, PlanCommit, PlanPullRequest, PlanDiscussion } from '../shared/types'
@@ -1046,27 +1046,7 @@ async function syncTasksForPlan(planId: string): Promise<void> {
             `Task ${closedTask.id} completed`,
             agent ? `Completed by ${agent.name}` : undefined
           )
-
-          // Auto-exit the task agent since its bd task is now closed
-          // This triggers the exit handler which calls markWorktreeReadyForReview()
-          console.log(`[PlanManager] Task ${closedTask.id} closed, looking for task agent`)
-          console.log(`[PlanManager] Assignment beadId: ${assignment.beadId}`)
-          const allWorkspaces = getWorkspaces()
-          console.log(`[PlanManager] All workspaces with taskId:`, allWorkspaces.filter(a => a.taskId).map(a => ({ id: a.id, taskId: a.taskId })))
-
-          const taskAgent = allWorkspaces.find(a => a.taskId === assignment.beadId)
-          if (taskAgent) {
-            const terminalId = getTerminalForWorkspace(taskAgent.id)
-            console.log(`[PlanManager] Found task agent ${taskAgent.id}, terminal=${terminalId}`)
-            if (terminalId) {
-              sendExitToTerminal(terminalId)
-              addPlanActivity(activePlan.id, 'info', `Sending exit to task agent for ${closedTask.id}`)
-            } else {
-              addPlanActivity(activePlan.id, 'warning', `No terminal found for task agent ${taskAgent.id}`)
-            }
-          } else {
-            addPlanActivity(activePlan.id, 'warning', `No task agent found for closed task ${closedTask.id}`)
-          }
+          // Task agents are kept alive - user can review their work and close them manually
         }
       }
     }
@@ -1505,7 +1485,7 @@ You are the Plan Agent. Your job is to:
 1. Understand the problem/feature described above
 2. Break it down into discrete tasks
 3. Create those tasks in bd with proper dependencies
-4. EXIT when done (type /exit)
+4. Confirm the plan is ready for review
 
 NOTE: The Orchestrator will handle task assignment and marking tasks as ready.
 
@@ -1530,9 +1510,11 @@ Add dependency (task B depends on task A completing first):
 2. Create an epic for the plan
 3. Create tasks with clear descriptions
 4. Set up dependencies between tasks
-5. Type /exit to complete your job
+5. Summarize your plan and ask if the user wants any changes
 
-Begin planning now.`
+Once you've created all tasks and dependencies, let the user know:
+"Plan complete! Need to add tasks, change dependencies, or modify anything? Just ask."
+`
 }
 
 /**
@@ -1645,7 +1627,7 @@ async function createTaskAgentWithWorktree(
   // Create the worktree
   try {
     // Use plan's baseBranch for feature_branch strategy, or calculate for raise_prs
-    const baseBranch = getBaseBranchForTask(plan, task, repository)
+    const baseBranch = await getBaseBranchForTask(plan, task, repository)
     await createWorktree(repository.rootPath, worktreePath, branchName, baseBranch)
     addPlanActivity(planId, 'info', `Created worktree: ${worktreeName}`, `Branch: ${branchName}, Base: ${baseBranch}`)
   } catch (error) {
@@ -2051,11 +2033,38 @@ function markWorktreeReadyForReview(planId: string, taskId: string): void {
 }
 
 /**
+ * Ensure the feature branch exists on remote.
+ * If it doesn't exist, create it based on the default base branch.
+ */
+async function ensureFeatureBranchExists(
+  repository: Repository,
+  featureBranch: string,
+  defaultBase: string
+): Promise<void> {
+  const exists = await remoteBranchExists(repository.rootPath, featureBranch)
+  if (exists) {
+    return
+  }
+
+  // Create the feature branch on remote by pushing the base branch to it
+  console.log(`[PlanManager] Creating feature branch ${featureBranch} from ${defaultBase}`)
+  await pushBranchToRemoteBranch(
+    repository.rootPath,
+    `origin/${defaultBase}`,
+    featureBranch
+  )
+}
+
+/**
  * Determine the base branch for a task based on the plan's branch strategy
  * - feature_branch: dependent tasks base on the feature branch (to get blocker commits)
  * - raise_prs: use the blocker's branch for dependent tasks, or plan's baseBranch for first tasks
  */
-function getBaseBranchForTask(plan: Plan, task: BeadTask, repository: Repository): string {
+async function getBaseBranchForTask(
+  plan: Plan,
+  task: BeadTask,
+  repository: Repository
+): Promise<string> {
   // Default to plan's baseBranch or repository's defaultBranch
   const defaultBase = plan.baseBranch || repository.defaultBranch
 
@@ -2064,8 +2073,8 @@ function getBaseBranchForTask(plan: Plan, task: BeadTask, repository: Repository
     const hasBlockers = task.blockedBy && task.blockedBy.length > 0
 
     if (hasBlockers && plan.featureBranch) {
-      // Dependent tasks base on the feature branch to get commits from blockers
-      // The feature branch should have been updated when blocker tasks completed
+      // Ensure feature branch exists on remote (creates it from defaultBase if not)
+      await ensureFeatureBranchExists(repository, plan.featureBranch, defaultBase)
       return plan.featureBranch
     }
 
