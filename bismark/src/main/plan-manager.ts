@@ -1,11 +1,14 @@
 import { BrowserWindow } from 'electron'
 import * as fs from 'fs/promises'
+import * as path from 'path'
+import { logger, createScopedLogger, LogContext } from './logger'
 import {
   loadPlans,
   savePlan,
   getPlanById,
   loadTaskAssignments,
   saveTaskAssignment,
+  saveTaskAssignments,
   saveWorkspace,
   deleteWorkspace,
   getRandomUniqueIcon,
@@ -35,7 +38,10 @@ import {
   createBranch,
   getHeadCommit,
   fetchBranch,
+  generateUniqueBranchName,
   remoteBranchExists,
+  deleteRemoteBranch,
+  deleteLocalBranch,
 } from './git-utils'
 import {
   getRepositoryById,
@@ -647,16 +653,20 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
   const plan = getPlanById(planId)
   if (!plan) return null
 
+  const logCtx: LogContext = { planId }
+  logger.info('plan', 'Starting plan execution', logCtx, { referenceAgentId, title: plan.title })
+
   // Guard against duplicate execution (can happen due to React StrictMode double-invocation)
   // Use in-memory set because status check alone isn't fast enough - the second call
   // arrives before the first call has persisted the status change
   if (executingPlans.has(planId) || plan.status === 'delegating' || plan.status === 'in_progress') {
-    console.log(`[PlanManager] Plan ${planId} already executing, skipping duplicate call`)
+    logger.debug('plan', 'Skipping duplicate execution call', logCtx)
     return plan
   }
 
   // Mark as executing immediately to block any concurrent calls
   executingPlans.add(planId)
+  logger.time(`plan-execute-${planId}`)
 
   // Clear any previous activities for this plan
   clearPlanActivities(planId)
@@ -668,10 +678,14 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
   const referenceWorkspace = allAgents.find(a => a.id === referenceAgentId)
 
   if (!referenceWorkspace) {
+    logger.error('plan', 'Reference agent not found', logCtx, { referenceAgentId })
     addPlanActivity(planId, 'error', `Reference agent not found: ${referenceAgentId}`)
     return null
   }
 
+  logger.info('plan', `Using reference workspace: ${referenceName}`, logCtx, {
+    directory: referenceWorkspace.directory,
+  })
   addPlanActivity(planId, 'info', `Plan execution started with reference: ${referenceName}`)
 
   // Ensure beads repo exists for this plan (creates ~/.bismark/plans/{plan_id}/)
@@ -826,6 +840,107 @@ export async function cancelPlan(planId: string): Promise<Plan | null> {
 }
 
 /**
+ * Restart a failed plan, preserving any completed discussion
+ * This cleans up all execution state and returns the plan to draft or discussed status
+ */
+export async function restartPlan(planId: string): Promise<Plan | null> {
+  const plan = getPlanById(planId)
+  if (!plan) return null
+
+  if (plan.status !== 'failed') {
+    console.log(`[PlanManager] Cannot restart plan ${planId} - status is ${plan.status}`)
+    return plan
+  }
+
+  // 1. Kill any remaining agents and close tabs (in case cancelPlan didn't fully cleanup)
+  await killAllPlanAgents(plan)
+
+  // 2. Cleanup any remaining worktrees
+  await cleanupAllWorktreesOnly(planId)
+
+  // 3. Delete remote branches (task branches and feature branch)
+  await deleteRemoteBranchesForPlan(plan)
+
+  // Target status: 'discussed' if had approved discussion, else 'draft'
+  const hadApprovedDiscussion = plan.discussion?.status === 'approved'
+  const targetStatus: PlanStatus = hadApprovedDiscussion ? 'discussed' : 'draft'
+
+  // Clear execution state (keep discussion intact)
+  plan.worktrees = []
+  plan.gitSummary = {
+    commits: plan.branchStrategy === 'feature_branch' ? [] : undefined,
+    pullRequests: plan.branchStrategy === 'raise_prs' ? [] : undefined,
+  }
+  plan.beadEpicId = null
+  plan.referenceAgentId = null
+  plan.orchestratorWorkspaceId = null
+  plan.orchestratorTabId = null
+  plan.planAgentWorkspaceId = null
+  // Reset feature branch so a new one is created on next execution
+  plan.featureBranch = undefined
+
+  plan.status = targetStatus
+  plan.updatedAt = new Date().toISOString()
+
+  // Clear activity log and task assignments
+  clearPlanActivities(planId)
+  saveTaskAssignments(planId, [])
+
+  // Clear beads directory (tasks), keep discussion-output.md
+  const planDir = getPlanDir(planId)
+  const beadsDir = path.join(planDir, '.beads')
+  try {
+    await fs.rm(beadsDir, { recursive: true, force: true })
+  } catch { /* ignore */ }
+
+  savePlan(plan)
+  emitPlanUpdate(plan)
+  addPlanActivity(planId, 'info', 'Plan restarted',
+    hadApprovedDiscussion ? 'Discussion preserved' : 'Returned to draft')
+
+  return plan
+}
+
+/**
+ * Delete remote branches created during plan execution
+ */
+async function deleteRemoteBranchesForPlan(plan: Plan): Promise<void> {
+  const branchesToDelete: { repoPath: string; branch: string }[] = []
+
+  // Collect task branches from worktrees
+  if (plan.worktrees) {
+    for (const worktree of plan.worktrees) {
+      if (worktree.branch && worktree.repositoryId) {
+        const repo = await getRepositoryById(worktree.repositoryId)
+        if (repo) {
+          branchesToDelete.push({ repoPath: repo.rootPath, branch: worktree.branch })
+        }
+      }
+    }
+  }
+
+  // Add feature branch if it exists
+  if (plan.featureBranch) {
+    // Find any repository to delete the feature branch from
+    const repos = await getAllRepositories()
+    if (repos.length > 0) {
+      branchesToDelete.push({ repoPath: repos[0].rootPath, branch: plan.featureBranch })
+    }
+  }
+
+  // Delete each branch, ignoring errors (branch may not exist on remote)
+  for (const { repoPath, branch } of branchesToDelete) {
+    try {
+      await deleteRemoteBranch(repoPath, branch)
+      console.log(`[PlanManager] Deleted remote branch: ${branch}`)
+    } catch (error) {
+      // Branch may not exist on remote, or already deleted
+      console.log(`[PlanManager] Could not delete remote branch ${branch}: ${error}`)
+    }
+  }
+}
+
+/**
  * Kill all agents for a plan without cleaning up worktrees
  * This is fast because it just closes terminals/containers
  */
@@ -890,6 +1005,14 @@ async function cleanupAllWorktreesOnly(planId: string): Promise<void> {
         await removeWorktree(repository.rootPath, worktree.path, true)
       } catch {
         // Ignore errors, continue cleanup
+      }
+      // Delete the local branch after removing worktree
+      if (worktree.branch) {
+        try {
+          await deleteLocalBranch(repository.rootPath, worktree.branch)
+        } catch {
+          // Branch may not exist or already deleted
+        }
       }
     }
     worktree.status = 'cleaned'
@@ -1009,16 +1132,25 @@ export function stopTaskPolling(): void {
 async function syncTasksForPlan(planId: string): Promise<void> {
   // Get the plan from in-memory cache (via getPlanById which loads from disk only if not cached)
   const activePlan = getPlanById(planId)
+  const logCtx: LogContext = { planId }
 
   // If plan no longer exists or is no longer active, stop polling
   if (!activePlan || (activePlan.status !== 'delegating' && activePlan.status !== 'in_progress')) {
+    logger.debug('plan', 'Plan no longer active, stopping polling', logCtx, { status: activePlan?.status })
     stopTaskPolling()
     return
   }
 
+  logger.debug('plan', 'Syncing tasks from bd', logCtx)
+
   try {
     // Get tasks marked as ready for Bismark (from the active plan's directory)
     const readyTasks = await bdList(activePlan.id, { labels: ['bismark-ready'], status: 'open' })
+    if (readyTasks.length > 0) {
+      logger.info('plan', `Found ${readyTasks.length} ready tasks`, logCtx, {
+        taskIds: readyTasks.map(t => t.id),
+      })
+    }
 
     for (const task of readyTasks) {
       await processReadyTask(activePlan.id, task)
@@ -1072,15 +1204,23 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
   const plan = getPlanById(planId)
   if (!plan) return
 
+  const logCtx: LogContext = { planId, taskId: task.id }
+  logger.info('task', `Processing ready task: ${task.title}`, logCtx)
+
   // Check if we already have an assignment for this task
   const existingAssignments = loadTaskAssignments(planId)
   const existing = existingAssignments.find((a) => a.beadId === task.id)
   if (existing) {
+    logger.debug('task', 'Task already assigned, skipping', logCtx)
     return // Already processing or processed
   }
 
   // Check if we can spawn more agents
   if (!canSpawnMoreAgents(planId)) {
+    logger.debug('task', 'At max parallel agents, queuing task', logCtx, {
+      maxParallel: plan.maxParallelAgents,
+      activeCount: getActiveTaskAgentCount(planId),
+    })
     // Queue for later - will be picked up on next poll when an agent finishes
     return
   }
@@ -1114,15 +1254,26 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
   }
 
   // Log task discovery
+  logger.info('task', `Task found: ${task.title}`, logCtx, {
+    repo: repoName,
+    worktree: worktreeName,
+    blockedBy: task.blockedBy,
+  })
   addPlanActivity(planId, 'info', `Processing task: ${task.id}`, `Repo: ${repoName}, Worktree: ${worktreeName}`)
 
   // For feature_branch strategy with dependent tasks, ensure we have the latest feature branch
   const hasBlockers = task.blockedBy && task.blockedBy.length > 0
   if (plan.branchStrategy === 'feature_branch' && hasBlockers && plan.featureBranch) {
+    logger.debug('task', 'Checking for merge agent (dependent task)', logCtx, {
+      featureBranch: plan.featureBranch,
+      blockedBy: task.blockedBy,
+    })
+
     // Check if we need to spawn a merge agent for parallel blocker tasks
     const mergeAgentSpawned = await maybeSpawnMergeAgent(plan, task)
     if (mergeAgentSpawned) {
       // Merge agent was spawned - this task will be retried after merge completes
+      logger.info('task', 'Merge agent spawned, deferring task', logCtx)
       addPlanActivity(planId, 'info', `Merge agent spawned for task ${task.id}`, 'Waiting for parallel task commits to be merged')
       return
     }
@@ -1131,10 +1282,15 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
     try {
       const featureBranchExists = await remoteBranchExists(repository.rootPath, plan.featureBranch)
       if (featureBranchExists) {
-        await fetchBranch(repository.rootPath, plan.featureBranch)
+        logger.debug('task', 'Fetching feature branch for dependent task', logCtx, { branch: plan.featureBranch })
+        await fetchBranch(repository.rootPath, plan.featureBranch, 'origin', logCtx)
         addPlanActivity(planId, 'info', `Fetched feature branch for dependent task`, plan.featureBranch)
       }
     } catch (error) {
+      logger.warn('task', 'Failed to fetch feature branch', logCtx, {
+        branch: plan.featureBranch,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      })
       addPlanActivity(
         planId,
         'warning',
@@ -1157,17 +1313,25 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
   emitTaskAssignmentUpdate(assignment)
 
   // Create worktree and task agent
+  logger.time(`worktree-setup-${task.id}`)
   const result = await createTaskAgentWithWorktree(planId, task, repository, worktreeName)
   if (!result) {
+    logger.error('task', 'Failed to create task agent with worktree', logCtx)
     addPlanActivity(planId, 'error', `Failed to create task agent for ${task.id}`)
     return
   }
 
   const { agent, worktree } = result
+  logger.timeEnd(`worktree-setup-${task.id}`, 'task', 'Worktree and agent created', logCtx)
+  logger.info('task', 'Task agent created', { ...logCtx, agentId: agent.id }, {
+    worktreePath: worktree.path,
+    branch: worktree.branch,
+  })
   assignment.agentId = agent.id
 
   // Branch based on execution mode
   if (useHeadlessMode) {
+    logger.info('task', 'Starting headless agent', logCtx)
     // Headless mode: start agent in Docker container
     try {
       // Check for OAuth token before starting headless agent
@@ -1616,10 +1780,18 @@ async function createTaskAgentWithWorktree(
   const plan = getPlanById(planId)
   if (!plan) return null
 
+  const logCtx: LogContext = { planId, taskId: task.id, repo: repository.name }
+  logger.info('worktree', `Creating worktree for task`, logCtx, { worktreeName })
+
   // Include task ID suffix to guarantee uniqueness across parallel task creation
   // Task IDs are like "bismark-6c8.1", extract the suffix after the dot
   const taskSuffix = task.id.includes('.') ? task.id.split('.').pop() : task.id.split('-').pop()
-  const branchName = `bismark/${planId.split('-')[1]}/${worktreeName}-${taskSuffix}`
+  const baseBranchName = `bismark/${planId.split('-')[1]}/${worktreeName}-${taskSuffix}`
+
+  // Generate a unique branch name in case a branch with this name already exists
+  // (can happen if a plan is restarted and old branches weren't cleaned up)
+  const branchName = await generateUniqueBranchName(repository.rootPath, baseBranchName)
+  logger.debug('worktree', `Generated branch name: ${branchName}`, logCtx)
 
   // Determine worktree path
   const worktreePath = getWorktreePath(planId, repository.name, worktreeName)
@@ -1693,7 +1865,14 @@ async function startHeadlessTaskAgent(
   repository: Repository
 ): Promise<void> {
   const planDir = getPlanDir(planId)
+  const logCtx: LogContext = { planId, taskId: task.id, worktreePath: worktree.path }
+  logger.info('agent', 'Starting headless task agent', logCtx, {
+    branch: worktree.branch,
+    repo: repository.name,
+    image: DOCKER_IMAGE_NAME,
+  })
   const taskPrompt = buildTaskPromptForHeadless(planId, task, repository, worktree.path)
+  logger.debug('agent', 'Built task prompt', logCtx, { promptLength: taskPrompt.length })
 
   // Create headless agent info for tracking
   const agentInfo: HeadlessAgentInfo = {
@@ -1956,6 +2135,9 @@ async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
   const worktree = plan.worktrees.find(w => w.taskId === taskId)
   if (!worktree) return
 
+  const logCtx: LogContext = { planId, taskId, worktreePath: worktree.path }
+  logger.info('task', 'Cleaning up task agent', logCtx)
+
   // Stop headless agent if running
   await stopHeadlessTaskAgent(taskId)
 
@@ -1963,6 +2145,7 @@ async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
 
   // Close terminal if open (for interactive mode)
   if (agent) {
+    logger.debug('task', 'Closing agent terminal', logCtx, { agentId: agent.id })
     const terminalId = getTerminalForWorkspace(agent.id)
     if (terminalId) {
       closeTerminal(terminalId)
@@ -1976,9 +2159,13 @@ async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
   const repository = await getRepositoryById(worktree.repositoryId)
   if (repository) {
     try {
-      await removeWorktree(repository.rootPath, worktree.path, true)
+      logger.info('worktree', 'Removing worktree', logCtx)
+      await removeWorktree(repository.rootPath, worktree.path, true, logCtx)
       addPlanActivity(planId, 'info', `Removed worktree: ${worktree.path.split('/').pop()}`)
     } catch (error) {
+      logger.error('worktree', 'Failed to remove worktree', logCtx, {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      })
       addPlanActivity(
         planId,
         'warning',
@@ -1991,6 +2178,7 @@ async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
   // Update worktree status
   worktree.status = 'cleaned'
   savePlan(plan)
+  logger.info('task', 'Task agent cleanup complete', logCtx)
 }
 
 /**
@@ -2003,10 +2191,14 @@ function markWorktreeReadyForReview(planId: string, taskId: string): void {
   const worktree = plan.worktrees.find(w => w.taskId === taskId)
   if (!worktree || worktree.status !== 'active') return
 
+  const logCtx: LogContext = { planId, taskId, worktreePath: worktree.path, branch: worktree.branch }
+  logger.info('task', 'Marking worktree ready for review', logCtx)
+
   // Cleanup the agent window (but NOT the git worktree - that stays for review)
   if (worktree.agentId) {
     const agent = getWorkspaces().find(a => a.id === worktree.agentId)
     if (agent) {
+      logger.debug('task', 'Cleaning up agent workspace', logCtx, { agentId: agent.id })
       const terminalId = getTerminalForWorkspace(agent.id)
       if (terminalId) {
         closeTerminal(terminalId)
@@ -2023,6 +2215,7 @@ function markWorktreeReadyForReview(planId: string, taskId: string): void {
   emitPlanUpdate(plan)
   emitStateUpdate()
 
+  logger.info('task', 'Task completed and ready for review', logCtx)
   addPlanActivity(planId, 'success', `Task ${taskId} ready for review`, `Worktree: ${worktree.branch}`)
 
   // Handle branch strategy on task completion
@@ -2103,9 +2296,16 @@ async function getBaseBranchForTask(
  * 3. At least one blocker's commits haven't been merged yet
  */
 async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promise<boolean> {
+  const logCtx: LogContext = { planId: plan.id, taskId: dependentTask.id }
+
   if (plan.branchStrategy !== 'feature_branch') return false
   if (!plan.featureBranch) return false
   if (!dependentTask.blockedBy || dependentTask.blockedBy.length <= 1) return false
+
+  logger.debug('plan', 'Checking if merge agent needed', logCtx, {
+    featureBranch: plan.featureBranch,
+    blockedBy: dependentTask.blockedBy,
+  })
 
   // Find worktrees for blocker tasks that are ready_for_review
   const blockerWorktrees = (plan.worktrees || []).filter(w =>
@@ -2115,6 +2315,10 @@ async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promis
 
   // If not all blockers are done yet, wait
   if (blockerWorktrees.length !== dependentTask.blockedBy.length) {
+    logger.debug('plan', 'Not all blockers complete, waiting', logCtx, {
+      readyBlockers: blockerWorktrees.length,
+      totalBlockers: dependentTask.blockedBy.length,
+    })
     return false
   }
 
@@ -2123,15 +2327,20 @@ async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promis
 
   // If all already merged, no merge agent needed
   if (unmergedWorktrees.length === 0) {
+    logger.debug('plan', 'All blockers already merged', logCtx)
     return false
   }
 
   // If only one unmerged, the normal push should handle it
   if (unmergedWorktrees.length === 1) {
+    logger.debug('plan', 'Only one unmerged blocker, no merge agent needed', logCtx)
     return false
   }
 
   // Multiple unmerged parallel worktrees - spawn a merge agent
+  logger.info('plan', 'Spawning merge for parallel tasks', logCtx, {
+    unmergedTasks: unmergedWorktrees.map(w => w.taskId),
+  })
   addPlanActivity(
     plan.id,
     'info',
@@ -2143,6 +2352,7 @@ async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promis
   // This is simpler than spawning a merge agent and handles most cases
   const repository = await getRepositoryById(blockerWorktrees[0].repositoryId)
   if (!repository) {
+    logger.error('plan', 'Repository not found for merge operation', logCtx)
     addPlanActivity(plan.id, 'error', 'Repository not found for merge operation')
     return false
   }
@@ -2501,6 +2711,8 @@ async function updatePlanStatuses(): Promise<void> {
 
   for (const plan of plans) {
     if (plan.status === 'delegating' || plan.status === 'in_progress') {
+      const logCtx: LogContext = { planId: plan.id }
+
       // Get all tasks for this plan (not just children of an epic)
       // Use status: 'all' to include closed tasks for completion checks
       const allTasks = await bdList(plan.id, { status: 'all' })
@@ -2518,9 +2730,17 @@ async function updatePlanStatuses(): Promise<void> {
       const closedTasks = allTaskItems.filter(t => t.status === 'closed')
       const allClosed = openTasks.length === 0 && closedTasks.length > 0
 
+      logger.debug('plan', 'Checking plan status', logCtx, {
+        totalTasks: allTaskItems.length,
+        openTasks: openTasks.length,
+        closedTasks: closedTasks.length,
+        currentStatus: plan.status,
+      })
+
       if (allClosed) {
         // All tasks closed - mark as ready_for_review (don't auto-cleanup)
         // User must explicitly click "Mark Complete" to trigger cleanup
+        logger.planStateChange(plan.id, plan.status, 'ready_for_review', 'All tasks completed')
         plan.status = 'ready_for_review'
         plan.updatedAt = new Date().toISOString()
         savePlan(plan)
@@ -2528,6 +2748,7 @@ async function updatePlanStatuses(): Promise<void> {
         addPlanActivity(plan.id, 'success', 'All tasks completed', 'Click "Mark Complete" to cleanup worktrees')
       } else if (openTasks.length > 0 && plan.status === 'delegating') {
         // Has open tasks, move to in_progress
+        logger.planStateChange(plan.id, plan.status, 'in_progress', `${openTasks.length} open tasks`)
         plan.status = 'in_progress'
         plan.updatedAt = new Date().toISOString()
         savePlan(plan)

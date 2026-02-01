@@ -63,6 +63,7 @@ import {
   getPlans,
   executePlan,
   cancelPlan,
+  restartPlan,
   getTaskAssignments,
   getPlanActivities,
   setPlanManagerWindow,
@@ -337,6 +338,10 @@ function registerIpcHandlers() {
 
   ipcMain.handle('cancel-plan', async (_event, planId: string) => {
     return cancelPlan(planId)
+  })
+
+  ipcMain.handle('restart-plan', async (_event, planId: string) => {
+    return restartPlan(planId)
   })
 
   ipcMain.handle('complete-plan', async (_event, planId: string) => {

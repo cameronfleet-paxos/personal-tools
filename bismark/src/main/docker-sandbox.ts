@@ -15,23 +15,9 @@ import { spawn, ChildProcess } from 'child_process'
 import { Readable, PassThrough } from 'stream'
 import { EventEmitter } from 'events'
 import * as path from 'path'
-import * as fs from 'fs'
 import { getProxyUrl } from './tool-proxy'
 import { getClaudeOAuthToken } from './config'
-
-// Debug log file for Docker operations
-const DEBUG_LOG_PATH = '/tmp/claude/bismark-docker-debug.log'
-
-function debugLog(message: string): void {
-  const timestamp = new Date().toISOString()
-  const line = `[${timestamp}] ${message}\n`
-  try {
-    fs.appendFileSync(DEBUG_LOG_PATH, line)
-  } catch {
-    // Ignore write errors
-  }
-  console.log(message)
-}
+import { logger, LogContext } from './logger'
 
 export interface ContainerConfig {
   image: string // Docker image name (e.g., "bismark-agent:latest")
@@ -159,14 +145,17 @@ export async function spawnContainerAgent(
 ): Promise<ContainerResult> {
   const args = buildDockerArgs(config)
   const trackingId = `container-${Date.now()}`
+  const logContext: LogContext = {
+    planId: config.planId,
+    worktreePath: config.workingDir,
+  }
 
-  debugLog(`[DockerSandbox] Spawning container with config: ${JSON.stringify({
+  logger.info('docker', `Spawning container`, logContext, {
     image: config.image,
     useEntrypoint: config.useEntrypoint,
     workingDir: config.workingDir,
-    env: config.env,
-  })}`)
-  debugLog(`[DockerSandbox] Docker command: docker ${args.join(' ')}`)
+  })
+  logger.debug('docker', `Docker command: docker ${args.join(' ')}`, logContext)
 
   const dockerProcess = spawn('docker', args, {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -213,7 +202,7 @@ export async function spawnContainerAgent(
 
   // Stop function
   const stop = async (): Promise<void> => {
-    console.log(`[DockerSandbox] Stopping container ${trackingId}`)
+    logger.info('docker', `Stopping container ${trackingId}`, logContext)
 
     // First try graceful termination
     dockerProcess.kill('SIGTERM')
@@ -223,6 +212,7 @@ export async function spawnContainerAgent(
 
     // Force kill if still running
     if (!dockerProcess.killed) {
+      logger.debug('docker', 'Force killing container', logContext)
       dockerProcess.kill('SIGKILL')
     }
 
@@ -230,6 +220,7 @@ export async function spawnContainerAgent(
   }
 
   containerEvents.emit('started', { trackingId, config })
+  logger.info('docker', `Container started: ${trackingId}`, logContext)
 
   return {
     containerId: containerId || trackingId,
@@ -323,9 +314,7 @@ export async function buildAgentImage(
  * Stop all running containers (for cleanup)
  */
 export async function stopAllContainers(): Promise<void> {
-  console.log(
-    `[DockerSandbox] Stopping ${runningContainers.size} running containers`
-  )
+  logger.info('docker', `Stopping ${runningContainers.size} running containers`)
 
   const stopPromises: Promise<void>[] = []
 
@@ -338,11 +327,11 @@ export async function stopAllContainers(): Promise<void> {
           if (!container.process.killed) {
             container.process.kill('SIGKILL')
           }
+          logger.debug('docker', `Stopped container ${trackingId}`)
         } catch (err) {
-          console.error(
-            `[DockerSandbox] Error stopping container ${trackingId}:`,
-            err
-          )
+          logger.error('docker', `Error stopping container ${trackingId}`, undefined, {
+            error: err instanceof Error ? err.message : 'Unknown error',
+          })
         }
       })()
     )
@@ -394,12 +383,12 @@ export async function initializeDockerEnvironment(): Promise<{
   imageBuilt: boolean
   message: string
 }> {
-  console.log('[DockerSandbox] Initializing Docker environment...')
+  logger.info('docker', 'Initializing Docker environment')
 
   // Check if Docker is available
   const dockerAvailable = await checkDockerAvailable()
   if (!dockerAvailable) {
-    console.log('[DockerSandbox] Docker not available')
+    logger.warn('docker', 'Docker not available')
     return {
       success: false,
       dockerAvailable: false,
@@ -408,12 +397,12 @@ export async function initializeDockerEnvironment(): Promise<{
     }
   }
 
-  console.log('[DockerSandbox] Docker is available')
+  logger.info('docker', 'Docker is available')
 
   // Check if image exists
   const imageExists = await checkImageExists(DEFAULT_IMAGE)
   if (imageExists) {
-    console.log('[DockerSandbox] Docker image already exists')
+    logger.info('docker', 'Docker image already exists', undefined, { image: DEFAULT_IMAGE })
     return {
       success: true,
       dockerAvailable: true,
@@ -423,7 +412,7 @@ export async function initializeDockerEnvironment(): Promise<{
   }
 
   // Build the image
-  console.log('[DockerSandbox] Building Docker image...')
+  logger.info('docker', 'Building Docker image', undefined, { image: DEFAULT_IMAGE })
   const dockerfilePath = getDockerfilePath()
 
   // Check if Dockerfile exists
@@ -431,7 +420,7 @@ export async function initializeDockerEnvironment(): Promise<{
   try {
     await fs.access(dockerfilePath)
   } catch {
-    console.log('[DockerSandbox] Dockerfile not found at:', dockerfilePath)
+    logger.error('docker', 'Dockerfile not found', undefined, { path: dockerfilePath })
     return {
       success: false,
       dockerAvailable: true,
@@ -443,7 +432,7 @@ export async function initializeDockerEnvironment(): Promise<{
   const buildResult = await buildAgentImage(dockerfilePath, DEFAULT_IMAGE)
 
   if (buildResult.success) {
-    console.log('[DockerSandbox] Docker image built successfully')
+    logger.info('docker', 'Docker image built successfully', undefined, { image: DEFAULT_IMAGE })
     return {
       success: true,
       dockerAvailable: true,
@@ -451,7 +440,9 @@ export async function initializeDockerEnvironment(): Promise<{
       message: 'Docker image built successfully',
     }
   } else {
-    console.error('[DockerSandbox] Failed to build Docker image:', buildResult.output)
+    logger.error('docker', 'Failed to build Docker image', undefined, {
+      output: buildResult.output.substring(0, 500),
+    })
     return {
       success: false,
       dockerAvailable: true,

@@ -55,6 +55,7 @@ export interface ElectronAPI {
   startDiscussion: (planId: string, referenceAgentId: string) => Promise<Plan | null>
   cancelDiscussion: (planId: string) => Promise<Plan | null>
   cancelPlan: (planId: string) => Promise<Plan | null>
+  restartPlan: (planId: string) => Promise<Plan | null>
   completePlan: (planId: string) => Promise<Plan | null>
   getTaskAssignments: (planId: string) => Promise<TaskAssignment[]>
   getPlanActivities: (planId: string) => Promise<PlanActivity[]>

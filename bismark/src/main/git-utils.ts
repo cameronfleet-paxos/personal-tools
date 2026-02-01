@@ -6,21 +6,37 @@ import { exec as execCallback } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import { logger, LogContext } from './logger';
 
 const exec = promisify(execCallback);
 
 /**
  * Execute a git command in the specified directory
+ * @param command - The git command to execute
+ * @param cwd - The working directory
+ * @param logContext - Optional logging context for correlation
  */
 async function gitExec(
   command: string,
-  cwd: string
+  cwd: string,
+  logContext?: LogContext
 ): Promise<{ stdout: string; stderr: string }> {
+  const startTime = Date.now();
   try {
-    return await exec(command, { cwd });
+    const result = await exec(command, { cwd });
+    const duration = Date.now() - startTime;
+    logger.debug('git', `Executed (${duration}ms): ${command}`, { ...logContext, repo: cwd }, {
+      stdout: result.stdout.substring(0, 200),
+    });
+    return result;
   } catch (error) {
-    // Re-throw with more context
+    const duration = Date.now() - startTime;
     const err = error as Error & { stdout?: string; stderr?: string };
+    logger.error('git', `Command failed (${duration}ms): ${command}`, { ...logContext, repo: cwd }, {
+      stderr: err.stderr,
+      message: err.message,
+    });
+    // Re-throw with more context
     throw new Error(
       `Git command failed: ${command}\n${err.stderr || err.message}`
     );
@@ -196,21 +212,28 @@ export async function getRemoteUrl(directory: string): Promise<string | null> {
 
 /**
  * Create a new git worktree
+ * @param logContext - Optional logging context for correlation
  */
 export async function createWorktree(
   repoPath: string,
   worktreePath: string,
   branchName: string,
-  baseBranch: string
+  baseBranch: string,
+  logContext?: LogContext
 ): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, worktreePath, branch: branchName };
+  logger.info('worktree', `Creating worktree`, ctx, { baseBranch });
+  logger.time(`worktree-create-${worktreePath}`);
+
   // Ensure the parent directory exists
   const parentDir = path.dirname(worktreePath);
   await fs.mkdir(parentDir, { recursive: true });
 
   // First, fetch to make sure we have latest remote refs
   try {
-    await gitExec('git fetch origin', repoPath);
+    await gitExec('git fetch origin', repoPath, ctx);
   } catch {
+    logger.debug('worktree', 'Fetch failed (network may be unavailable)', ctx);
     // Ignore fetch errors (might not have network)
   }
 
@@ -219,37 +242,51 @@ export async function createWorktree(
   try {
     await gitExec(
       `git worktree add -b "${branchName}" "${worktreePath}" "origin/${baseBranch}"`,
-      repoPath
+      repoPath,
+      ctx
     );
+    logger.timeEnd(`worktree-create-${worktreePath}`, 'worktree', 'Created worktree from origin', ctx);
   } catch {
     // Fallback to local branch if remote doesn't exist
+    logger.debug('worktree', 'Falling back to local branch (remote not found)', ctx);
     await gitExec(
       `git worktree add -b "${branchName}" "${worktreePath}" "${baseBranch}"`,
-      repoPath
+      repoPath,
+      ctx
     );
+    logger.timeEnd(`worktree-create-${worktreePath}`, 'worktree', 'Created worktree from local branch', ctx);
   }
 }
 
 /**
  * Remove a git worktree
+ * @param logContext - Optional logging context for correlation
  */
 export async function removeWorktree(
   repoPath: string,
   worktreePath: string,
-  force = false
+  force = false,
+  logContext?: LogContext
 ): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, worktreePath };
+  logger.info('worktree', `Removing worktree`, ctx, { force });
+
   const forceFlag = force ? ' --force' : '';
   try {
     await gitExec(
       `git worktree remove "${worktreePath}"${forceFlag}`,
-      repoPath
+      repoPath,
+      ctx
     );
+    logger.info('worktree', 'Removed worktree successfully', ctx);
   } catch (error) {
     // If the worktree directory doesn't exist, just prune
     const err = error as Error;
     if (err.message.includes('is not a working tree')) {
-      await pruneWorktrees(repoPath);
+      logger.debug('worktree', 'Worktree not found, pruning stale refs', ctx);
+      await pruneWorktrees(repoPath, ctx);
     } else {
+      logger.error('worktree', 'Failed to remove worktree', ctx, { error: err.message });
       throw error;
     }
   }
@@ -257,9 +294,11 @@ export async function removeWorktree(
 
 /**
  * Prune stale worktree references
+ * @param logContext - Optional logging context for correlation
  */
-export async function pruneWorktrees(repoPath: string): Promise<void> {
-  await gitExec('git worktree prune', repoPath);
+export async function pruneWorktrees(repoPath: string, logContext?: LogContext): Promise<void> {
+  logger.debug('worktree', 'Pruning stale worktree references', { ...logContext, repo: repoPath });
+  await gitExec('git worktree prune', repoPath, logContext);
 }
 
 /**
@@ -339,18 +378,25 @@ export async function generateUniqueBranchName(
 
 /**
  * Push a branch to remote
+ * @param logContext - Optional logging context for correlation
  */
 export async function pushBranch(
   repoPath: string,
   branchName: string,
   remote = 'origin',
-  setUpstream = true
+  setUpstream = true,
+  logContext?: LogContext
 ): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, branch: branchName };
+  logger.info('git', `Pushing branch to ${remote}`, ctx, { setUpstream });
+
   const upstreamFlag = setUpstream ? '-u ' : '';
   await gitExec(
     `git push ${upstreamFlag}${remote} "${branchName}"`,
-    repoPath
+    repoPath,
+    ctx
   );
+  logger.info('git', 'Branch pushed successfully', ctx);
 }
 
 /**
@@ -358,20 +404,27 @@ export async function pushBranch(
  * e.g., push HEAD to origin/feature-branch
  *
  * @param forceWithLease - Use --force-with-lease for safer force pushes (useful after rebasing)
+ * @param logContext - Optional logging context for correlation
  */
 export async function pushBranchToRemoteBranch(
   repoPath: string,
   localRef: string,
   remoteBranch: string,
   remote = 'origin',
-  forceWithLease = false
+  forceWithLease = false,
+  logContext?: LogContext
 ): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, branch: remoteBranch };
+  logger.info('git', `Pushing ${localRef} to ${remote}/${remoteBranch}`, ctx, { forceWithLease });
+
   // git push origin HEAD:refs/heads/feature-branch
   const forceFlag = forceWithLease ? '--force-with-lease ' : '';
   await gitExec(
     `git push ${forceFlag}${remote} "${localRef}:refs/heads/${remoteBranch}"`,
-    repoPath
+    repoPath,
+    ctx
   );
+  logger.info('git', 'Push to remote branch completed', ctx);
 }
 
 /**
@@ -408,17 +461,25 @@ export async function getCommitsBetween(
 
 /**
  * Fetch from remote and rebase current branch onto target branch
+ * @param logContext - Optional logging context for correlation
  */
 export async function fetchAndRebase(
   repoPath: string,
   targetBranch: string,
-  remote = 'origin'
+  remote = 'origin',
+  logContext?: LogContext
 ): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath };
+  logger.info('git', `Fetching and rebasing onto ${remote}/${targetBranch}`, ctx);
+  logger.time(`rebase-${repoPath}`);
+
   // Fetch latest from remote
-  await gitExec(`git fetch ${remote}`, repoPath);
+  await gitExec(`git fetch ${remote}`, repoPath, ctx);
 
   // Rebase onto the target branch
-  await gitExec(`git rebase "${remote}/${targetBranch}"`, repoPath);
+  await gitExec(`git rebase "${remote}/${targetBranch}"`, repoPath, ctx);
+
+  logger.timeEnd(`rebase-${repoPath}`, 'git', 'Fetch and rebase completed', ctx);
 }
 
 /**
@@ -457,16 +518,22 @@ export async function getHeadCommit(repoPath: string): Promise<string | null> {
 
 /**
  * Create and checkout a new branch from a base branch
+ * @param logContext - Optional logging context for correlation
  */
 export async function createBranch(
   repoPath: string,
   branchName: string,
-  baseBranch: string
+  baseBranch: string,
+  logContext?: LogContext
 ): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, branch: branchName };
+  logger.info('git', `Creating branch from ${baseBranch}`, ctx);
+
   // Fetch latest first
   try {
-    await gitExec('git fetch origin', repoPath);
+    await gitExec('git fetch origin', repoPath, ctx);
   } catch {
+    logger.debug('git', 'Fetch failed (network may be unavailable)', ctx);
     // Ignore fetch errors (might not have network)
   }
 
@@ -474,13 +541,18 @@ export async function createBranch(
   try {
     await gitExec(
       `git checkout -b "${branchName}" "origin/${baseBranch}"`,
-      repoPath
+      repoPath,
+      ctx
     );
+    logger.info('git', 'Branch created from origin', ctx);
   } catch {
+    logger.debug('git', 'Falling back to local base branch', ctx);
     await gitExec(
       `git checkout -b "${branchName}" "${baseBranch}"`,
-      repoPath
+      repoPath,
+      ctx
     );
+    logger.info('git', 'Branch created from local', ctx);
   }
 }
 
@@ -507,13 +579,17 @@ export async function pullBranch(
 /**
  * Fetch a specific branch from remote
  * Ensures the local remote-tracking branch is up to date
+ * @param logContext - Optional logging context for correlation
  */
 export async function fetchBranch(
   repoPath: string,
   branchName: string,
-  remote = 'origin'
+  remote = 'origin',
+  logContext?: LogContext
 ): Promise<void> {
-  await gitExec(`git fetch ${remote} "${branchName}"`, repoPath);
+  const ctx = { ...logContext, repo: repoPath, branch: branchName };
+  logger.debug('git', `Fetching branch from ${remote}`, ctx);
+  await gitExec(`git fetch ${remote} "${branchName}"`, repoPath, ctx);
 }
 
 /**
@@ -530,4 +606,34 @@ export async function remoteBranchExists(
   } catch {
     return false;
   }
+}
+
+/**
+ * Delete a remote branch
+ * @param logContext - Optional logging context for correlation
+ */
+export async function deleteRemoteBranch(
+  repoPath: string,
+  branchName: string,
+  remote: string = 'origin',
+  logContext?: LogContext
+): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, branch: branchName };
+  logger.info('git', `Deleting remote branch from ${remote}`, ctx);
+  await gitExec(`git push ${remote} --delete "${branchName}"`, repoPath, ctx);
+  logger.info('git', 'Remote branch deleted', ctx);
+}
+
+/**
+ * Delete a local branch (force delete)
+ * @param logContext - Optional logging context for correlation
+ */
+export async function deleteLocalBranch(
+  repoPath: string,
+  branchName: string,
+  logContext?: LogContext
+): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, branch: branchName };
+  logger.debug('git', 'Deleting local branch', ctx);
+  await gitExec(`git branch -D "${branchName}"`, repoPath, ctx);
 }

@@ -13,26 +13,12 @@
  */
 
 import { EventEmitter } from 'events'
-import * as fs from 'fs'
 import {
   spawnContainerAgent,
   ContainerConfig,
   ContainerResult,
 } from './docker-sandbox'
-
-// Debug log file
-const DEBUG_LOG_PATH = '/tmp/claude/bismark-docker-debug.log'
-
-function debugLog(message: string): void {
-  const timestamp = new Date().toISOString()
-  const line = `[${timestamp}] ${message}\n`
-  try {
-    fs.appendFileSync(DEBUG_LOG_PATH, line)
-  } catch {
-    // Ignore write errors
-  }
-  console.log(message)
-}
+import { logger, LogContext } from './logger'
 import {
   StreamEventParser,
   StreamEvent,
@@ -152,13 +138,15 @@ export class HeadlessAgent extends EventEmitter {
 
       // Pipe container stdout to parser
       this.container.stdout.on('data', (data) => {
-        debugLog(`[HeadlessAgent] stdout data received (${data.length} bytes): ${data.toString().substring(0, 200)}`)
+        logger.debug('agent', `stdout received (${data.length} bytes)`, this.getLogContext(), {
+          preview: data.toString().substring(0, 200),
+        })
         this.parser?.write(data)
       })
 
       // Log stderr (for debugging)
       this.container.stderr.on('data', (data) => {
-        debugLog(`[HeadlessAgent] stderr: ${data.toString()}`)
+        logger.debug('agent', `stderr: ${data.toString().substring(0, 500)}`, this.getLogContext())
       })
 
       // Handle container exit
@@ -251,10 +239,23 @@ export class HeadlessAgent extends EventEmitter {
     })
   }
 
+  /**
+   * Get log context for this agent
+   */
+  private getLogContext(): LogContext {
+    return {
+      planId: this.options?.planId,
+      taskId: this.options?.taskId,
+      worktreePath: this.options?.worktreePath,
+    }
+  }
+
   private handleContainerExit(exitCode: number): void {
     const duration = Date.now() - this.startTime
 
-    debugLog(`[HeadlessAgent] Container exited with code ${exitCode} after ${duration}ms, received ${this.events.length} events`)
+    logger.info('agent', `Container exited with code ${exitCode} after ${duration}ms`, this.getLogContext(), {
+      eventCount: this.events.length,
+    })
 
     // Find the result event if we received one
     const resultEvent = this.events.find(

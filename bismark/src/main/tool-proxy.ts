@@ -17,6 +17,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { spawn } from 'child_process'
 import { EventEmitter } from 'events'
+import { logger } from './logger'
 
 export interface ToolProxyConfig {
   port: number // Default: 9847
@@ -171,6 +172,7 @@ async function handleGhRequest(
   subpath: string
 ): Promise<void> {
   if (!currentConfig.tools.gh.enabled) {
+    logger.warn('proxy', 'gh tool is disabled, rejecting request')
     sendJson(res, 403, { success: false, error: 'gh tool is disabled' })
     return
   }
@@ -182,10 +184,17 @@ async function handleGhRequest(
     // The subpath is only used for logging/routing, not command building
     const args = body.args || []
 
+    logger.debug('proxy', `gh request: ${args.join(' ')}`, undefined, { subpath })
+
     // Log the operation
     proxyEvents.emit('gh', { subpath, args })
 
     const result = await executeCommand('gh', args, body.stdin)
+
+    logger.proxyRequest('gh', args, result.exitCode === 0, undefined, {
+      exitCode: result.exitCode,
+      stderrPreview: result.stderr?.substring(0, 100),
+    })
 
     sendJson(res, 200, {
       success: result.exitCode === 0,
@@ -194,9 +203,11 @@ async function handleGhRequest(
       exitCode: result.exitCode,
     })
   } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error'
+    logger.error('proxy', `gh request failed: ${errorMsg}`)
     sendJson(res, 400, {
       success: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: errorMsg,
     })
   }
 }
@@ -217,6 +228,7 @@ async function handleBdRequest(
   res: http.ServerResponse
 ): Promise<void> {
   if (!currentConfig.tools.bd.enabled) {
+    logger.warn('proxy', 'bd tool is disabled, rejecting request')
     sendJson(res, 403, { success: false, error: 'bd tool is disabled' })
     return
   }
@@ -228,6 +240,7 @@ async function handleBdRequest(
     const planId =
       body.planId || (req.headers['x-bismark-plan-id'] as string | undefined)
     if (!planId) {
+      logger.warn('proxy', 'bd request missing planId')
       sendJson(res, 400, {
         success: false,
         error: 'planId required (in body or X-Bismark-Plan-Id header)',
@@ -243,11 +256,17 @@ async function handleBdRequest(
     // Build bd command with --sandbox flag
     const args = ['--sandbox', ...filteredArgs]
 
+    logger.debug('proxy', `bd request: ${args.join(' ')}`, { planId })
+
     // Log the operation
     proxyEvents.emit('bd', { planId, args })
 
     // Execute in plan directory context
     const result = await executeCommand('bd', args, body.stdin, { cwd: planDir })
+
+    logger.proxyRequest('bd', args, result.exitCode === 0, { planId }, {
+      exitCode: result.exitCode,
+    })
 
     sendJson(res, 200, {
       success: result.exitCode === 0,
@@ -256,9 +275,11 @@ async function handleBdRequest(
       exitCode: result.exitCode,
     })
   } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error'
+    logger.error('proxy', `bd request failed: ${errorMsg}`)
     sendJson(res, 400, {
       success: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: errorMsg,
     })
   }
 }
@@ -272,6 +293,7 @@ async function handleGitRequest(
   res: http.ServerResponse
 ): Promise<void> {
   if (!currentConfig.tools.git.enabled) {
+    logger.warn('proxy', 'git tool is disabled, rejecting request')
     sendJson(res, 403, { success: false, error: 'git tool is disabled' })
     return
   }
@@ -283,6 +305,7 @@ async function handleGitRequest(
     // Container sends /workspace but we need the actual host path
     const cwd = body.cwd
     if (!cwd) {
+      logger.warn('proxy', 'git request missing cwd')
       sendJson(res, 400, {
         success: false,
         error: 'cwd required - specify the host path to run git commands in',
@@ -295,6 +318,7 @@ async function handleGitRequest(
     try {
       await fs.access(cwd)
     } catch {
+      logger.warn('proxy', `git request invalid cwd: ${cwd}`)
       sendJson(res, 400, {
         success: false,
         error: `Directory not found on host: ${cwd}`,
@@ -304,11 +328,17 @@ async function handleGitRequest(
 
     const args = body.args || []
 
+    logger.debug('proxy', `git request: ${args.join(' ')}`, { worktreePath: cwd })
+
     // Log the operation
     proxyEvents.emit('git', { cwd, args })
 
     // Execute git command on host
     const result = await executeCommand('git', args, body.stdin, { cwd })
+
+    logger.proxyRequest('git', args, result.exitCode === 0, { worktreePath: cwd }, {
+      exitCode: result.exitCode,
+    })
 
     sendJson(res, 200, {
       success: result.exitCode === 0,
@@ -317,9 +347,11 @@ async function handleGitRequest(
       exitCode: result.exitCode,
     })
   } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : 'Unknown error'
+    logger.error('proxy', `git request failed: ${errorMsg}`)
     sendJson(res, 400, {
       success: false,
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: errorMsg,
     })
   }
 }
@@ -373,7 +405,7 @@ async function handleRequest(
  */
 export async function startToolProxy(config: Partial<ToolProxyConfig> = {}): Promise<void> {
   if (server) {
-    console.log('[ToolProxy] Server already running')
+    logger.debug('proxy', 'Server already running')
     return
   }
 
@@ -384,18 +416,22 @@ export async function startToolProxy(config: Partial<ToolProxyConfig> = {}): Pro
   return new Promise((resolve, reject) => {
     server = http.createServer((req, res) => {
       handleRequest(req, res).catch((err) => {
-        console.error('[ToolProxy] Request error:', err)
+        logger.error('proxy', 'Request error', undefined, {
+          error: err instanceof Error ? err.message : 'Unknown error',
+        })
         sendJson(res, 500, { success: false, error: 'Internal server error' })
       })
     })
 
     server.on('error', (err) => {
-      console.error('[ToolProxy] Server error:', err)
+      logger.error('proxy', 'Server error', undefined, {
+        error: err instanceof Error ? err.message : 'Unknown error',
+      })
       reject(err)
     })
 
     server.listen(currentConfig.port, '0.0.0.0', () => {
-      console.log(`[ToolProxy] Server listening on port ${currentConfig.port}`)
+      logger.info('proxy', `Server listening on port ${currentConfig.port}`)
       proxyEvents.emit('started', { port: currentConfig.port })
       resolve()
     })
@@ -413,7 +449,7 @@ export function stopToolProxy(): Promise<void> {
     }
 
     server.close(() => {
-      console.log('[ToolProxy] Server stopped')
+      logger.info('proxy', 'Server stopped')
       server = null
       proxyEvents.emit('stopped')
       resolve()

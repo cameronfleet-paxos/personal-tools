@@ -329,6 +329,19 @@ function App() {
         }
         return [...prev, plan]
       })
+
+      // Clear headless agents when plan is restarted (returns to draft/discussed)
+      if (plan.status === 'draft' || plan.status === 'discussed') {
+        setHeadlessAgents((prev) => {
+          const newMap = new Map(prev)
+          for (const [taskId, info] of newMap) {
+            if (info.planId === plan.id) {
+              newMap.delete(taskId)
+            }
+          }
+          return newMap
+        })
+      }
     })
 
     window.electronAPI?.onTaskAssignmentUpdate?.((assignment: TaskAssignment) => {
@@ -761,6 +774,10 @@ function App() {
 
   const handleCancelPlan = async (planId: string) => {
     await window.electronAPI?.cancelPlan?.(planId)
+  }
+
+  const handleRestartPlan = async (planId: string) => {
+    await window.electronAPI?.restartPlan?.(planId)
   }
 
   const handleCompletePlan = async (planId: string) => {
@@ -1466,6 +1483,7 @@ function App() {
             onStartDiscussion={handleStartDiscussion}
             onCancelDiscussion={handleCancelDiscussion}
             onCancelPlan={handleCancelPlan}
+            onRestartPlan={handleRestartPlan}
             onCompletePlan={handleCompletePlan}
           />
         )}

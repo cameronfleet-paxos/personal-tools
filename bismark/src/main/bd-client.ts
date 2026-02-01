@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { logger } from './logger'
 
 const execAsync = promisify(exec)
 
@@ -36,6 +37,8 @@ export async function ensureBeadsRepo(planId: string): Promise<string> {
   // Check for .beads directory specifically, not just plan directory
   // (plan directory may be created by other code like savePlanActivities)
   if (!fs.existsSync(beadsDir)) {
+    logger.info('bd', 'Initializing beads repository', { planId })
+
     // Ensure plan directory exists
     if (!fs.existsSync(planDir)) {
       fs.mkdirSync(planDir, { recursive: true })
@@ -45,10 +48,12 @@ export async function ensureBeadsRepo(planId: string): Promise<string> {
     const gitDir = path.join(planDir, '.git')
     if (!fs.existsSync(gitDir)) {
       await execAsync('git init', { cwd: planDir })
+      logger.debug('bd', 'Initialized git repo for plan', { planId })
     }
 
     // Initialize beads with bismark prefix
-    await execAsync('bd --sandbox init --prefix bismark', { cwd: planDir })
+    const { stdout, stderr } = await execAsync('bd --sandbox init --prefix bismark', { cwd: planDir })
+    logger.info('bd', 'Beads repository initialized', { planId }, { stdout: stdout.substring(0, 100) })
 
     // Create .claude directory and settings.json to pre-allow bd commands
     const claudeDir = path.join(planDir, '.claude')
@@ -98,11 +103,14 @@ export async function bdCreate(planId: string, opts: {
 
   cmd += ` "${opts.title.replace(/"/g, '\\"')}"`
 
-  const { stdout } = await execAsync(cmd, { cwd: planDir })
+  logger.debug('bd', `Executing: ${cmd}`, { planId })
+  const { stdout, stderr } = await execAsync(cmd, { cwd: planDir })
 
   // Parse task ID from output (typically format: "Created task: <id>")
   const match = stdout.match(/([a-zA-Z0-9-]+)\s*$/m)
   const taskId = match ? match[1].trim() : stdout.trim()
+
+  logger.info('bd', `Created ${opts.type || 'task'}: ${taskId}`, { planId, taskId }, { title: opts.title })
 
   // Apply assignee and labels if provided
   if (opts.assignee || (opts.labels && opts.labels.length > 0)) {
@@ -143,18 +151,24 @@ export async function bdList(planId: string, opts?: {
     }
   }
 
+  logger.debug('bd', `Executing: ${cmd}`, { planId })
+
   try {
-    const { stdout } = await execAsync(cmd, { cwd: planDir })
+    const { stdout, stderr } = await execAsync(cmd, { cwd: planDir })
 
     if (!stdout.trim()) {
+      logger.debug('bd', 'List returned empty', { planId })
       return []
     }
 
     // Parse JSON output from bd and map fields to our interface
     const rawTasks = JSON.parse(stdout)
     if (!Array.isArray(rawTasks)) {
+      logger.warn('bd', 'List returned non-array', { planId }, { stdout: stdout.substring(0, 100) })
       return []
     }
+
+    logger.debug('bd', `List returned ${rawTasks.length} tasks`, { planId }, { labels: opts?.labels, status: opts?.status })
 
     // Map bd's field names to our interface
     return rawTasks.map((task: Record<string, unknown>) => {
@@ -184,7 +198,7 @@ export async function bdList(planId: string, opts?: {
     })
   } catch (error) {
     // If bd list fails (e.g., no tasks), return empty array
-    console.error('bdList error:', error)
+    logger.error('bd', 'List failed', { planId }, { error: error instanceof Error ? error.message : 'Unknown error' })
     return []
   }
 }
@@ -222,7 +236,9 @@ export async function bdUpdate(planId: string, id: string, opts: {
     cmd += ` --title "${opts.title.replace(/"/g, '\\"')}"`
   }
 
-  await execAsync(cmd, { cwd: planDir })
+  logger.debug('bd', `Executing: ${cmd}`, { planId, taskId: id })
+  const { stdout, stderr } = await execAsync(cmd, { cwd: planDir })
+  logger.info('bd', `Updated task ${id}`, { planId, taskId: id }, { addLabels: opts.addLabels, removeLabels: opts.removeLabels })
 }
 
 /**
@@ -230,7 +246,9 @@ export async function bdUpdate(planId: string, id: string, opts: {
  */
 export async function bdClose(planId: string, id: string): Promise<void> {
   const planDir = await ensureBeadsRepo(planId)
+  logger.debug('bd', `Closing task ${id}`, { planId, taskId: id })
   await execAsync(`bd --sandbox close ${id}`, { cwd: planDir })
+  logger.info('bd', `Closed task ${id}`, { planId, taskId: id })
 }
 
 /**
@@ -252,7 +270,9 @@ export async function bdGet(planId: string, id: string): Promise<BeadTask | null
  */
 export async function bdAddDependency(planId: string, taskId: string, blockedBy: string): Promise<void> {
   const planDir = await ensureBeadsRepo(planId)
+  logger.debug('bd', `Adding dependency: ${taskId} blocked by ${blockedBy}`, { planId, taskId })
   await execAsync(`bd --sandbox dep ${blockedBy} --blocks ${taskId}`, { cwd: planDir })
+  logger.info('bd', `Added dependency: ${taskId} <- ${blockedBy}`, { planId, taskId })
 }
 
 /**
@@ -262,9 +282,11 @@ export async function bdGetDependents(planId: string, taskId: string): Promise<s
   const planDir = await ensureBeadsRepo(planId)
 
   try {
+    logger.debug('bd', `Getting dependents for task ${taskId}`, { planId, taskId })
     const { stdout } = await execAsync(`bd --sandbox dep list ${taskId} --direction=up --json`, { cwd: planDir })
 
     if (!stdout.trim()) {
+      logger.debug('bd', `No dependents found for ${taskId}`, { planId, taskId })
       return []
     }
 
@@ -272,13 +294,16 @@ export async function bdGetDependents(planId: string, taskId: string): Promise<s
     const result = JSON.parse(stdout)
     if (Array.isArray(result)) {
       // If it's an array of objects with id field, extract IDs
-      return result.map((item: { id?: string } | string) =>
+      const dependents = result.map((item: { id?: string } | string) =>
         typeof item === 'string' ? item : item.id || ''
       ).filter(Boolean)
+      logger.debug('bd', `Found ${dependents.length} dependents for ${taskId}`, { planId, taskId }, { dependents })
+      return dependents
     }
     return []
-  } catch {
+  } catch (error) {
     // If command fails (no dependencies), return empty array
+    logger.debug('bd', `No dependents for ${taskId} (command failed)`, { planId, taskId })
     return []
   }
 }

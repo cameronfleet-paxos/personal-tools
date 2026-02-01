@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, GitPullRequest, Maximize2, GitCommit, ExternalLink, MessageSquare } from 'lucide-react'
+import { ChevronDown, ChevronRight, Play, X, Clock, CheckCircle2, AlertCircle, Loader2, Activity, Check, GitBranch, GitPullRequest, Maximize2, GitCommit, ExternalLink, MessageSquare, RotateCcw, Copy } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -14,6 +14,7 @@ interface PlanCardProps {
   onStartDiscussion: (referenceAgentId: string) => void
   onCancelDiscussion: () => Promise<void>
   onCancel: () => Promise<void>
+  onRestart?: () => Promise<void>
   onComplete: () => void
   onClick: () => void
   onExpand?: () => void
@@ -87,6 +88,7 @@ export function PlanCard({
   onStartDiscussion,
   onCancelDiscussion,
   onCancel,
+  onRestart,
   onComplete,
   onClick,
   onExpand,
@@ -95,6 +97,8 @@ export function PlanCard({
   const [selectedReference, setSelectedReference] = useState<string>('')
   const [activityLogExpanded, setActivityLogExpanded] = useState(true)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [isRestarting, setIsRestarting] = useState(false)
+  const [copiedActivity, setCopiedActivity] = useState(false)
   const activityLogRef = useRef<HTMLDivElement>(null)
 
   const handleCancel = async () => {
@@ -106,6 +110,21 @@ export function PlanCard({
   const handleCancelDiscussion = async () => {
     setIsCancelling(true)
     await onCancelDiscussion()
+  }
+
+  const handleCopyActivityLog = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    const logText = activities
+      .map((a) => {
+        const time = formatActivityTime(a.timestamp)
+        const typeSymbol = a.type === 'success' ? '✓' : a.type === 'warning' ? '⚠' : a.type === 'error' ? '✕' : '○'
+        const details = a.details ? `\n    ${a.details}` : ''
+        return `${time} ${typeSymbol} ${a.message}${details}`
+      })
+      .join('\n')
+    await navigator.clipboard.writeText(logText)
+    setCopiedActivity(true)
+    setTimeout(() => setCopiedActivity(false), 2000)
   }
 
   // Auto-scroll to latest activity
@@ -395,11 +414,26 @@ export function PlanCard({
                     <span className="text-muted-foreground">({activities.length})</span>
                   )}
                 </div>
-                {activityLogExpanded ? (
-                  <ChevronDown className="h-3 w-3" />
-                ) : (
-                  <ChevronRight className="h-3 w-3" />
-                )}
+                <div className="flex items-center gap-1">
+                  {activities.length > 0 && (
+                    <button
+                      onClick={handleCopyActivityLog}
+                      className="p-0.5 hover:bg-background rounded"
+                      title="Copy activity log"
+                    >
+                      {copiedActivity ? (
+                        <Check className="h-3 w-3 text-green-500" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </button>
+                  )}
+                  {activityLogExpanded ? (
+                    <ChevronDown className="h-3 w-3" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" />
+                  )}
+                </div>
               </button>
               {activityLogExpanded && (
                 <div
@@ -438,6 +472,39 @@ export function PlanCard({
                   )}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Restart Failed Plan */}
+          {plan.status === 'failed' && onRestart && (
+            <div className="space-y-2">
+              {plan.discussion?.status === 'approved' && (
+                <p className="text-xs text-muted-foreground">
+                  Discussion preserved - ready to re-execute
+                </p>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isRestarting}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setIsRestarting(true)
+                  onRestart()
+                }}
+              >
+                {isRestarting ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Restarting...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-3 w-3 mr-1" />
+                    Restart
+                  </>
+                )}
+              </Button>
             </div>
           )}
 

@@ -19,6 +19,7 @@ interface PlanSidebarProps {
   onStartDiscussion: (planId: string, referenceAgentId: string) => void
   onCancelDiscussion: (planId: string) => Promise<void>
   onCancelPlan: (planId: string) => Promise<void>
+  onRestartPlan: (planId: string) => Promise<void>
   onCompletePlan: (planId: string) => void
 }
 
@@ -36,6 +37,7 @@ export function PlanSidebar({
   onStartDiscussion,
   onCancelDiscussion,
   onCancelPlan,
+  onRestartPlan,
   onCompletePlan,
 }: PlanSidebarProps) {
   const [detailPlanId, setDetailPlanId] = useState<string | null>(null)
@@ -209,6 +211,7 @@ export function PlanSidebar({
                     onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
                     onCancelDiscussion={() => onCancelDiscussion(plan.id)}
                     onCancel={() => onCancelPlan(plan.id)}
+                    onRestart={plan.status === 'failed' ? () => onRestartPlan(plan.id) : undefined}
                     onComplete={() => onCompletePlan(plan.id)}
                     onClick={() => onSelectPlan(activePlanId === plan.id ? null : plan.id)}
                     onExpand={() => setDetailPlanId(plan.id)}
