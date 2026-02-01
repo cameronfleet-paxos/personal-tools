@@ -2807,6 +2807,82 @@ async function recordPullRequest(plan: Plan, worktree: PlanWorktree, repository:
 }
 
 /**
+ * Refresh the git summary by querying actual commits on the feature branch.
+ * This corrects any duplicate commit entries caused by rebases during execution.
+ * Called when transitioning to ready_for_review or when completing a plan.
+ */
+async function refreshGitSummary(plan: Plan): Promise<void> {
+  // Only applicable for feature_branch strategy
+  if (plan.branchStrategy !== 'feature_branch' || !plan.featureBranch) return
+
+  const repos = await getAllRepositories()
+  if (repos.length === 0) return
+
+  const repo = repos[0]
+  const baseBranch = repo.defaultBranch || plan.baseBranch || 'main'
+
+  // Check if feature branch exists on remote
+  const exists = await remoteBranchExists(repo.rootPath, plan.featureBranch)
+  if (!exists) {
+    logger.debug('git', 'Feature branch does not exist on remote, skipping git summary refresh', { planId: plan.id })
+    return
+  }
+
+  try {
+    // Fetch latest feature branch state
+    await fetchBranch(repo.rootPath, plan.featureBranch, 'origin')
+
+    // Get commits between base and feature branch
+    const commits = await getCommitsBetween(
+      repo.rootPath,
+      `origin/${baseBranch}`,
+      `origin/${plan.featureBranch}`
+    )
+
+    // Helper to find taskId for a commit by checking worktree records
+    const findTaskIdForCommit = (sha: string): string | undefined => {
+      if (!plan.worktrees) return undefined
+      // Check if any worktree has this commit recorded
+      for (const worktree of plan.worktrees) {
+        if (worktree.commits?.includes(sha)) {
+          return worktree.taskId
+        }
+      }
+      // Fallback: check existing gitSummary for this SHA
+      const existingCommit = plan.gitSummary?.commits?.find(c => c.sha === sha)
+      return existingCommit?.taskId
+    }
+
+    // Build commit list with metadata
+    const githubUrl = getGitHubUrlFromRemote(repo.remoteUrl)
+    const planCommits: PlanCommit[] = commits.map(c => ({
+      sha: c.sha,
+      shortSha: c.shortSha,
+      message: c.message,
+      taskId: findTaskIdForCommit(c.sha) || 'unknown',
+      timestamp: c.timestamp,
+      repositoryId: repo.id,
+      githubUrl: githubUrl ? `${githubUrl}/commit/${c.sha}` : undefined,
+    }))
+
+    // Replace gitSummary.commits with the refreshed list
+    if (!plan.gitSummary) {
+      plan.gitSummary = { commits: [] }
+    }
+    plan.gitSummary.commits = planCommits
+
+    logger.info('git', `Refreshed git summary: ${planCommits.length} commits on feature branch`, { planId: plan.id })
+    addPlanActivity(plan.id, 'info', `Git summary refreshed: ${planCommits.length} commit(s) on feature branch`)
+
+    savePlan(plan)
+    emitPlanUpdate(plan)
+  } catch (error) {
+    logger.warn('git', 'Failed to refresh git summary', { planId: plan.id }, { error: error instanceof Error ? error.message : String(error) })
+    // Don't fail the overall operation - the existing summary is still valid
+  }
+}
+
+/**
  * Cleanup all worktrees for a plan (used when user marks plan complete)
  */
 export async function cleanupAllWorktrees(planId: string): Promise<void> {
@@ -2840,6 +2916,9 @@ export async function cleanupAllWorktrees(planId: string): Promise<void> {
 export async function completePlan(planId: string): Promise<Plan | null> {
   const plan = getPlanById(planId)
   if (!plan) return null
+
+  // Refresh git summary before cleanup (while worktrees still exist for task correlation)
+  await refreshGitSummary(plan)
 
   // Stop any remaining headless agents
   await stopAllHeadlessAgents(planId)
@@ -2939,6 +3018,10 @@ async function updatePlanStatuses(): Promise<void> {
         logger.planStateChange(plan.id, plan.status, 'ready_for_review', 'All tasks completed')
         plan.status = 'ready_for_review'
         plan.updatedAt = new Date().toISOString()
+
+        // Refresh git summary to get accurate commit count from feature branch
+        await refreshGitSummary(plan)
+
         savePlan(plan)
         emitPlanUpdate(plan)
         addPlanActivity(plan.id, 'success', 'All tasks completed', 'Click "Mark Complete" to cleanup worktrees')
