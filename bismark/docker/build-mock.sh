@@ -9,7 +9,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IMAGE_NAME="bismark-agent-mock:test"
+IMAGE_NAME="bismarck-agent-mock:test"
 
 echo "Building mock agent Docker image..."
 echo "Image name: $IMAGE_NAME"

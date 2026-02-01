@@ -12,9 +12,9 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IMAGE_NAME="${1:-bismark-agent:latest}"
+IMAGE_NAME="${1:-bismarck-agent:latest}"
 
-echo "Building bismark-agent Docker image..."
+echo "Building bismarck-agent Docker image..."
 echo "Image name: $IMAGE_NAME"
 echo "Context: $SCRIPT_DIR"
 
