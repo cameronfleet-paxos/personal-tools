@@ -1,0 +1,104 @@
+BISMARK TO BISMARCK RENAME - AUDIT REPORT
+==========================================
+
+BUILD STATUS: ✓ PASSED
+The project builds successfully with no compilation errors.
+
+GREP AUDIT FINDINGS:
+====================
+
+CRITICAL ISSUES:
+----------------
+
+1. DIRECTORY NAME - /workspace/bismark/
+   - The main project directory is still named "bismark"
+   - Should be renamed to "bismarck"
+   - This is the PRIMARY directory containing all the application code
+
+2. DOCKER IMAGE REFERENCES:
+   - docker/build-mock.sh: Uses "bismark-agent-mock:test" 
+   - src/main/dev-test-harness.ts: References "bismark-agent-mock:test"
+   - src/main/plan-manager.ts: Uses "bismark-agent:latest"
+
+FILES WITH "BISMARK" INSTANCES (excluding directory name):
+---------------------------------------------------------
+
+1. ./README.md
+   - Line 1: "# Bismark" (title)
+   - Line 2: Logo alt text "Bismark Logo"
+   - Line 9: "~/Applications/Bismark.app"
+   - Line 13: "Bismark stores its configuration in ~/.bismark/"
+   - Line 17: "On first launch, Bismark automatically configures..."
+
+2. ./CLAUDE.md
+   - Multiple references to paths like "~/.bismark/plans/"
+   - Screenshot path: "/tmp/claude/bismark-screenshot.png"
+   - Multiple log file references
+
+3. ./docker/gh-proxy-wrapper.sh
+   - Comments: "Bismark containers", "Bismark tool proxy"
+
+4. ./docker/git-proxy-wrapper.sh
+   - Comments: "Bismark containers", "Bismark tool proxy"
+   - BISMARK_HOST_WORKTREE_PATH environment variable
+
+5. ./docker/bd-proxy-wrapper.sh
+   - Comments: "Bismark containers", "Bismark tool proxy"
+   - BISMARK_PLAN_ID environment variable
+   - X-Bismark-Plan-Id HTTP header
+
+6. ./docker/build-mock.sh
+   - BISMARK_TASK_ID environment variable
+
+7. ./docker/mock-claude.js
+   - BISMARCK_TASK_ID environment variable (note: this one has the C!)
+
+8. ./scripts/install.sh
+   - "Building Bismark...", "~/Applications/Bismark.app"
+
+9. ./scripts/test/cdp-server.js
+   - "/tmp/claude/bismark-screenshot.png"
+
+10. ./scripts/test/cdp-helper.js
+    - Comments: "CDP Helper for Bismark Testing"
+    - Window state: "__BISMARK_STATE__"
+    - Target detection: "t.title.includes('Bismark')"
+
+11. ./scripts/test/dev-with-cdp.js
+    - Image name: "bismark-agent-mock:test"
+    - pkill pattern: "electron.*bismark"
+
+12. ./scripts/test/start-with-cdp.sh
+    - pkill patterns: "electron.*bismark", "vite.*bismark"
+
+13. ./src/renderer/components/DevConsole.tsx
+    - BISMARK_MOCK_AGENTS environment variable
+
+14. ./src/main/dev-test-harness.ts
+    - BISMARK_MOCK_AGENTS environment variable
+    - bismark-ready label references (multiple)
+    - /tmp/bismark-mock-plans/ path
+    - "bismark-agent-mock:test" image
+    - Variable name: "bismarkPlan"
+
+15. ./src/main/plan-manager.ts
+    - DOCKER_IMAGE_NAME: "bismark-agent:latest"
+    - Feature branch pattern: "bismark/{id}/feature"
+    - Multiple instruction templates with "[BISMARK ...]" headers
+    - bismark-ready, bismark-sent labels
+    - Task ID pattern: "bismark-xyz.N"
+    - Branch naming: "bismark/{planId}"
+
+SUMMARY:
+========
+- Build: ✓ Successful
+- Main directory: ✗ Still named "bismark"
+- Code references: Many instances of "bismark" found
+- Most critical: Directory name and Docker image references
+- Many environment variables, labels, and paths use "bismark"
+
+RECOMMENDATION:
+===============
+The rename is incomplete. While package.json and source code may have been
+updated in some places, there are still many references throughout the codebase
+that use "bismark" instead of "bismarck".
