@@ -330,16 +330,30 @@ function App() {
         return [...prev, plan]
       })
 
-      // Clear headless agents when plan is restarted (returns to draft/discussed)
-      if (plan.status === 'draft' || plan.status === 'discussed') {
+      // Clear headless agents when plan is restarted (returns to draft/discussed) or cancelled (failed)
+      if (plan.status === 'draft' || plan.status === 'discussed' || plan.status === 'failed') {
         setHeadlessAgents((prev) => {
-          const newMap = new Map(prev)
-          for (const [taskId, info] of newMap) {
+          const agentsToRemove: string[] = []
+          for (const [taskId, info] of prev) {
             if (info.planId === plan.id) {
-              newMap.delete(taskId)
+              agentsToRemove.push(taskId)
             }
           }
-          return newMap
+          if (agentsToRemove.length > 0) {
+            console.log('[Renderer] Clearing headless agents for plan', {
+              planId: plan.id,
+              planStatus: plan.status,
+              agentsToRemove,
+              totalAgentsBefore: prev.size,
+            })
+            const newMap = new Map(prev)
+            for (const taskId of agentsToRemove) {
+              newMap.delete(taskId)
+            }
+            console.log('[Renderer] Headless agents cleared', { totalAgentsAfter: newMap.size })
+            return newMap
+          }
+          return prev
         })
       }
     })
