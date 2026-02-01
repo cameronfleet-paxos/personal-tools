@@ -1,13 +1,13 @@
-# Start Bismark Dev Environment
+# Start Bismarck Dev Environment
 
-Start the Bismark Electron app in development mode.
+Start the Bismarck Electron app in development mode.
 
 ## Quick Start (Recommended)
 
 Use the unified command that handles everything (use `run_in_background: true`):
 
 ```bash
-cd /Users/cameronfleet/dev/personal-tools/bismark && npm run dev:cdp:clean
+cd /Users/cameronfleet/dev/personal-tools/bismarck && npm run dev:cdp:clean
 ```
 
 This single command:
@@ -29,15 +29,15 @@ If you only need basic dev without CDP testing:
 
 1. **Build main process**:
    ```bash
-   cd /Users/cameronfleet/dev/personal-tools/bismark && npm run build:main
+   cd /Users/cameronfleet/dev/personal-tools/bismarck && npm run build:main
    ```
 
 2. **Start Vite dev server** (use `run_in_background: true`):
    ```bash
-   cd /Users/cameronfleet/dev/personal-tools/bismark && npm run dev
+   cd /Users/cameronfleet/dev/personal-tools/bismarck && npm run dev
    ```
 
 3. **Start Electron** (use `run_in_background: true`):
    ```bash
-   cd /Users/cameronfleet/dev/personal-tools/bismark && npm run dev:electron
+   cd /Users/cameronfleet/dev/personal-tools/bismarck && npm run dev:electron
    ```

@@ -1,13 +1,13 @@
-# Start Bismark for Testing
+# Start Bismarck for Testing
 
-Start the Bismark Electron app with Chrome DevTools Protocol (CDP) enabled for automated testing.
+Start the Bismarck Electron app with Chrome DevTools Protocol (CDP) enabled for automated testing.
 
 ## Quick Start
 
 Run the unified dev+CDP command in background:
 
 ```bash
-cd /Users/cameronfleet/dev/personal-tools/bismark && npm run dev:cdp:clean
+cd /Users/cameronfleet/dev/personal-tools/bismarck && npm run dev:cdp:clean
 ```
 
 Use `run_in_background: true` since the command stays running to manage child processes.
@@ -46,6 +46,6 @@ curl -s localhost:9333/health
 ## Notes
 
 - The background command manages child processes - use `/tasks` to see running tasks
-- After starting, use `/bismark:screenshot` or `/bismark:test` to interact with the app
+- After starting, use `/bismarck:screenshot` or `/bismarck:test` to interact with the app
 - CDP endpoint: `http://localhost:9222`
 - CDP server: `http://localhost:9333`

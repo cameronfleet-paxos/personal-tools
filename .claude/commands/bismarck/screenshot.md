@@ -1,10 +1,10 @@
-# Bismark Screenshot
+# Bismarck Screenshot
 
-Capture a screenshot of the current Bismark app state.
+Capture a screenshot of the current Bismarck app state.
 
 ## Prerequisites
 
-1. The app must be running with CDP enabled. Use `/bismark:start-test` to start it.
+1. The app must be running with CDP enabled. Use `/bismarck:start-test` to start it.
 
 2. CDP server must be running:
    ```bash
@@ -12,23 +12,23 @@ Capture a screenshot of the current Bismark app state.
    ```
    If not running, start it:
    ```bash
-   cd /Users/cameronfleet/dev/personal-tools/bismark && npm run test:server &
+   cd /Users/cameronfleet/dev/personal-tools/bismarck && npm run test:server &
    ```
 
 ## Take Screenshot
 
 ```bash
-curl -s "localhost:9333/screenshot?path=/tmp/claude/bismark-screenshot.png"
+curl -s "localhost:9333/screenshot?path=/tmp/claude/bismarck-screenshot.png"
 ```
 
 ## Output
 
-Screenshot saved to `/tmp/claude/bismark-screenshot.png`
+Screenshot saved to `/tmp/claude/bismarck-screenshot.png`
 
 After taking the screenshot, read it to show the user:
 
 ```
-Read the file at /tmp/claude/bismark-screenshot.png
+Read the file at /tmp/claude/bismarck-screenshot.png
 ```
 
 ## Notes

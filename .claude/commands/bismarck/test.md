@@ -1,14 +1,14 @@
-# Bismark UI Test
+# Bismarck UI Test
 
-Run automated tests against the running Bismark app using the CDP server.
+Run automated tests against the running Bismarck app using the CDP server.
 
 ## Prerequisites
 
-1. Bismark must be running with remote debugging enabled. Use `/bismark:start-test` to start it.
+1. Bismarck must be running with remote debugging enabled. Use `/bismarck:start-test` to start it.
 
 2. CDP server must be running. Start it in the background:
    ```bash
-   cd /Users/cameronfleet/dev/personal-tools/bismark && npm run test:server &
+   cd /Users/cameronfleet/dev/personal-tools/bismarck && npm run test:server &
    ```
 
 3. Verify the server is running:
@@ -22,7 +22,7 @@ Run automated tests against the running Bismark app using the CDP server.
 Take a screenshot of the current app state:
 
 ```bash
-curl -s "localhost:9333/screenshot?path=/tmp/claude/bismark-screenshot.png"
+curl -s "localhost:9333/screenshot?path=/tmp/claude/bismarck-screenshot.png"
 ```
 
 ### Get App State
@@ -103,7 +103,7 @@ curl -s -X POST localhost:9333/wait -d '{"selector":".loaded","timeout":5000}'
 
 ## Usage Examples
 
-- `/bismark:test screenshot` - Take a screenshot
-- `/bismark:test mock-agent` - Test mock agent flow
-- `/bismark:test dev-console` - Test dev console toggle
-- `/bismark:test state` - Get current app state
+- `/bismarck:test screenshot` - Take a screenshot
+- `/bismarck:test mock-agent` - Test mock agent flow
+- `/bismarck:test dev-console` - Test dev console toggle
+- `/bismarck:test state` - Get current app state
