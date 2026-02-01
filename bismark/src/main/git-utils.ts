@@ -225,6 +225,25 @@ export async function createWorktree(
   logger.info('worktree', `Creating worktree`, ctx, { baseBranch });
   logger.time(`worktree-create-${worktreePath}`);
 
+  // Check if worktree path already exists and clean it up
+  try {
+    const stat = await fs.stat(worktreePath);
+    if (stat.isDirectory()) {
+      logger.warn('worktree', 'Worktree path already exists, removing it first', ctx);
+      // First try git worktree remove in case it's a valid worktree
+      try {
+        await gitExec(`git worktree remove "${worktreePath}" --force`, repoPath, ctx);
+      } catch {
+        // Not a valid worktree, just remove the directory
+        await fs.rm(worktreePath, { recursive: true, force: true });
+      }
+      // Prune stale refs
+      await gitExec('git worktree prune', repoPath, ctx);
+    }
+  } catch {
+    // Path doesn't exist, which is good
+  }
+
   // Ensure the parent directory exists
   const parentDir = path.dirname(worktreePath);
   await fs.mkdir(parentDir, { recursive: true });
