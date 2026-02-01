@@ -3,7 +3,7 @@
 # bd CLI proxy wrapper for Bismark containers
 #
 # Instead of running bd directly (which would require access to the host's
-# ~/.bismark/plans/ directory), this script proxies all bd commands to the
+# ~/.bismarck/plans/ directory), this script proxies all bd commands to the
 # Bismark tool proxy server running on the host.
 #
 # The tool proxy:

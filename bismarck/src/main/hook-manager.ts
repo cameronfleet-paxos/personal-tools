@@ -52,7 +52,7 @@ export function createHookScript(): void {
 SESSION_ID=$(grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -z "$SESSION_ID" ] && exit 0
 
-MAPPING="$HOME/.bismark/sessions/\${SESSION_ID}.json"
+MAPPING="$HOME/.bismarck/sessions/\${SESSION_ID}.json"
 [ ! -f "$MAPPING" ] && exit 0
 
 # Read both values in one pass using grep (avoids jq startup overhead)
@@ -81,7 +81,7 @@ export function createNotificationHookScript(): void {
 SESSION_ID=$(grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -z "$SESSION_ID" ] && exit 0
 
-MAPPING="$HOME/.bismark/sessions/\${SESSION_ID}.json"
+MAPPING="$HOME/.bismarck/sessions/\${SESSION_ID}.json"
 [ ! -f "$MAPPING" ] && exit 0
 
 # Read both values in one pass using grep (avoids jq startup overhead)
@@ -109,8 +109,8 @@ export function createSessionStartHookScript(): void {
 SESSION_ID=$(grep -o '"session_id":"[^"]*"' | head -1 | cut -d'"' -f4)
 [ -z "$SESSION_ID" ] || [ -z "$BISMARK_WORKSPACE_ID" ] || [ -z "$BISMARK_INSTANCE_ID" ] && exit 0
 
-mkdir -p "$HOME/.bismark/sessions"
-printf '{"workspaceId":"%s","instanceId":"%s"}' "$BISMARK_WORKSPACE_ID" "$BISMARK_INSTANCE_ID" > "$HOME/.bismark/sessions/\${SESSION_ID}.json"
+mkdir -p "$HOME/.bismarck/sessions"
+printf '{"workspaceId":"%s","instanceId":"%s"}' "$BISMARK_WORKSPACE_ID" "$BISMARK_INSTANCE_ID" > "$HOME/.bismarck/sessions/\${SESSION_ID}.json"
 exit 0
 `
 

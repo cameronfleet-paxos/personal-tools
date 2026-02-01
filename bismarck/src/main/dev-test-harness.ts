@@ -714,7 +714,7 @@ export async function startMockAgentWithDocker(
   // Check if mock image exists
   const imageExists = await checkImageExists(MOCK_IMAGE)
   if (!imageExists) {
-    throw new Error(`Mock image ${MOCK_IMAGE} not found. Run: cd bismark/docker && ./build-mock.sh`)
+    throw new Error(`Mock image ${MOCK_IMAGE} not found. Run: cd bismarck/docker && ./build-mock.sh`)
   }
 
   // Create the real HeadlessAgent with mock image
@@ -928,7 +928,7 @@ export async function runMockFlow(options?: Partial<MockFlowOptions>): Promise<M
     const imageExists = await checkImageExists(MOCK_IMAGE)
     if (!imageExists) {
       console.warn(`[DevHarness] Mock image ${MOCK_IMAGE} not found, falling back to JS mock`)
-      console.warn('[DevHarness] To use Docker mock, run: cd bismark/docker && ./build-mock.sh')
+      console.warn('[DevHarness] To use Docker mock, run: cd bismarck/docker && ./build-mock.sh')
       opts.useMockImage = false
     } else {
       console.log('[DevHarness] Using Docker mock image:', MOCK_IMAGE)

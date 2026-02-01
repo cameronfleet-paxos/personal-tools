@@ -53,7 +53,7 @@ npm run dev:electron
 
 ## Configuration
 
-Bismark stores its configuration in `~/.bismark/`:
+Bismarck stores its configuration in `~/.bismarck/`:
 
 - `settings.json` - Application settings
 - `sockets/` - Unix sockets for agent communication

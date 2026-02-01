@@ -131,7 +131,7 @@ export async function checkHeadlessModeAvailable(): Promise<{
       available: false,
       dockerAvailable: true,
       imageExists: false,
-      message: `Docker image '${DOCKER_IMAGE_NAME}' not found. Run: cd bismark/docker && ./build.sh`,
+      message: `Docker image '${DOCKER_IMAGE_NAME}' not found. Run: cd bismarck/docker && ./build.sh`,
     }
   }
 
@@ -290,7 +290,7 @@ export function createPlan(
     baseBranch,
     // Generate feature branch name for feature_branch strategy
     featureBranch: branchStrategy === 'feature_branch'
-      ? `bismark/${planId.split('-')[1]}/feature`
+      ? `bismarck/${planId.split('-')[1]}/feature`
       : undefined,
     gitSummary: {
       commits: branchStrategy === 'feature_branch' ? [] : undefined,
@@ -614,7 +614,7 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
 
   addPlanActivity(planId, 'info', `Plan execution started with reference: ${referenceName}`)
 
-  // Ensure beads repo exists for this plan (creates ~/.bismark/plans/{plan_id}/)
+  // Ensure beads repo exists for this plan (creates ~/.bismarck/plans/{plan_id}/)
   const planDir = await ensureBeadsRepo(plan.id)
 
   // Update plan with reference agent and set status to delegating
@@ -1511,7 +1511,7 @@ async function createTaskAgentWithWorktree(
   if (!plan) return null
 
   // Generate unique branch name
-  const baseBranchName = `bismark/${planId.split('-')[1]}/${worktreeName}`
+  const baseBranchName = `bismarck/${planId.split('-')[1]}/${worktreeName}`
   const branchName = await generateUniqueBranchName(repository.rootPath, baseBranchName)
 
   // Determine worktree path
@@ -1959,7 +1959,7 @@ async function handleTaskCompletionStrategy(planId: string, taskId: string, work
 async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repository: Repository): Promise<void> {
   if (!plan.featureBranch) {
     // Create the feature branch if it doesn't exist
-    plan.featureBranch = `bismark/${plan.id.split('-')[1]}/feature`
+    plan.featureBranch = `bismarck/${plan.id.split('-')[1]}/feature`
     savePlan(plan)
   }
 
