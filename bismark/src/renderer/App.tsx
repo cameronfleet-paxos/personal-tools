@@ -49,6 +49,7 @@ function App() {
   const [preferences, setPreferences] = useState<AppPreferences>({
     attentionMode: 'focus',
     operatingMode: 'solo',
+    agentModel: 'sonnet',
   })
 
   // Team mode state

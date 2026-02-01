@@ -84,6 +84,7 @@ export function getDefaultPreferences(): AppPreferences {
   return {
     attentionMode: 'focus',
     operatingMode: 'solo',
+    agentModel: 'sonnet',
   }
 }
 
@@ -172,9 +173,20 @@ export function loadState(): AppState {
   try {
     const content = fs.readFileSync(statePath, 'utf-8')
     const state = JSON.parse(content) as AppState
+    let needsSave = false
     // Ensure preferences exist (migration for existing state files)
     if (!state.preferences) {
       state.preferences = getDefaultPreferences()
+      needsSave = true
+    }
+    // Migration: add agentModel if missing (default to 'sonnet')
+    if (!state.preferences.agentModel) {
+      state.preferences.agentModel = 'sonnet'
+      needsSave = true
+    }
+    // Persist migrations
+    if (needsSave) {
+      writeConfigAtomic(statePath, state)
     }
     return state
   } catch {

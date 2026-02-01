@@ -5,7 +5,7 @@ import {
   DialogTitle,
 } from '@/renderer/components/ui/dialog'
 import { Label } from '@/renderer/components/ui/label'
-import type { AppPreferences, AttentionMode, OperatingMode } from '@/shared/types'
+import type { AppPreferences, AttentionMode, OperatingMode, AgentModel } from '@/shared/types'
 
 interface SettingsModalProps {
   open: boolean
@@ -26,6 +26,10 @@ export function SettingsModal({
 
   const handleOperatingModeChange = (mode: OperatingMode) => {
     onPreferencesChange({ operatingMode: mode })
+  }
+
+  const handleAgentModelChange = (model: AgentModel) => {
+    onPreferencesChange({ agentModel: model })
   }
 
   return (
@@ -111,6 +115,63 @@ export function SettingsModal({
                   <div className="font-medium">Team</div>
                   <div className="text-sm text-muted-foreground">
                     Enable plans sidebar. Leader agents delegate tasks to workers via bd.
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div className="grid gap-3">
+            <Label className="text-base font-medium">Agent Model</Label>
+            <p className="text-sm text-muted-foreground">
+              Model used for headless task agents in Team mode
+            </p>
+            <div className="grid gap-2">
+              <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="radio"
+                  name="agentModel"
+                  value="sonnet"
+                  checked={preferences.agentModel === 'sonnet'}
+                  onChange={() => handleAgentModelChange('sonnet')}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium">Sonnet</div>
+                  <div className="text-sm text-muted-foreground">
+                    Best balance of speed, cost, and capability
+                  </div>
+                </div>
+              </label>
+              <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="radio"
+                  name="agentModel"
+                  value="opus"
+                  checked={preferences.agentModel === 'opus'}
+                  onChange={() => handleAgentModelChange('opus')}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium">Opus</div>
+                  <div className="text-sm text-muted-foreground">
+                    Most capable model, higher cost
+                  </div>
+                </div>
+              </label>
+              <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="radio"
+                  name="agentModel"
+                  value="haiku"
+                  checked={preferences.agentModel === 'haiku'}
+                  onChange={() => handleAgentModelChange('haiku')}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium">Haiku</div>
+                  <div className="text-sm text-muted-foreground">
+                    Fastest and most affordable, good for simpler tasks
                   </div>
                 </div>
               </label>
