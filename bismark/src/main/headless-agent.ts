@@ -21,7 +21,7 @@ import {
 } from './docker-sandbox'
 
 // Debug log file
-const DEBUG_LOG_PATH = '/tmp/claude/bismark-docker-debug.log'
+const DEBUG_LOG_PATH = '/tmp/claude/bismarck-docker-debug.log'
 
 function debugLog(message: string): void {
   const timestamp = new Date().toISOString()
