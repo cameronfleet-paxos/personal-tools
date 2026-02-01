@@ -11,13 +11,14 @@
  * - Streams JSON output for parsing
  */
 
-import { spawn, ChildProcess } from 'child_process'
+import { ChildProcess } from 'child_process'
 import { Readable, PassThrough } from 'stream'
 import { EventEmitter } from 'events'
 import * as path from 'path'
 import { getProxyUrl } from './tool-proxy'
 import { getClaudeOAuthToken } from './config'
 import { logger, LogContext } from './logger'
+import { spawnWithPath } from './exec-utils'
 
 export interface ContainerConfig {
   image: string // Docker image name (e.g., "bismark-agent:latest")
@@ -157,7 +158,7 @@ export async function spawnContainerAgent(
   })
   logger.debug('docker', `Docker command: docker ${args.join(' ')}`, logContext)
 
-  const dockerProcess = spawn('docker', args, {
+  const dockerProcess = spawnWithPath('docker', args, {
     stdio: ['pipe', 'pipe', 'pipe'],
   })
 
@@ -256,7 +257,7 @@ export async function spawnContainerAgent(
  */
 export async function checkDockerAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
-    const proc = spawn('docker', ['version'], { stdio: 'pipe' })
+    const proc = spawnWithPath('docker', ['version'], { stdio: 'pipe' })
 
     proc.on('close', (code) => {
       resolve(code === 0)
@@ -275,7 +276,7 @@ export async function checkImageExists(
   imageName: string = DEFAULT_IMAGE
 ): Promise<boolean> {
   return new Promise((resolve) => {
-    const proc = spawn('docker', ['image', 'inspect', imageName], {
+    const proc = spawnWithPath('docker', ['image', 'inspect', imageName], {
       stdio: 'pipe',
     })
 
@@ -298,7 +299,7 @@ export async function buildAgentImage(
 ): Promise<{ success: boolean; output: string }> {
   return new Promise((resolve) => {
     const contextDir = path.dirname(dockerfilePath)
-    const proc = spawn(
+    const proc = spawnWithPath(
       'docker',
       ['build', '-t', imageName, '-f', dockerfilePath, contextDir],
       { stdio: 'pipe' }

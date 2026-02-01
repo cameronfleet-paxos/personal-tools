@@ -1,15 +1,16 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { ExecOptions } from 'child_process'
 import { logger } from './logger'
+import { execWithPath } from './exec-utils'
 import type { BeadTask } from '../shared/types'
 
 // Re-export BeadTask for convenience
 export type { BeadTask }
 
-const execAsync = promisify(exec)
+// Use shared exec utility with extended PATH
+const execAsync = (command: string, options?: ExecOptions) => execWithPath(command, options)
 
 /**
  * Get the plan-specific directory path

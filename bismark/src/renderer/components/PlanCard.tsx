@@ -9,7 +9,7 @@ interface PlanCardProps {
   taskAssignments: TaskAssignment[]
   activities: PlanActivity[]
   isActive: boolean
-  onExecute: (referenceAgentId: string) => void
+  onExecute: (referenceAgentId: string) => void | Promise<void>
   onStartDiscussion: (referenceAgentId: string) => void
   onCancelDiscussion: () => Promise<void>
   onCancel: () => Promise<void>
@@ -97,6 +97,7 @@ export function PlanCard({
   const [activityLogExpanded, setActivityLogExpanded] = useState(true)
   const [isCancelling, setIsCancelling] = useState(false)
   const [isRestarting, setIsRestarting] = useState(false)
+  const [isExecuting, setIsExecuting] = useState(false)
   const [copiedActivity, setCopiedActivity] = useState(false)
   const activityLogRef = useRef<HTMLDivElement>(null)
 
@@ -239,17 +240,31 @@ export function PlanCard({
                 </Button>
                 <Button
                   size="sm"
-                  className="flex-1"
-                  disabled={!selectedReference}
-                  onClick={(e) => {
+                  className="flex-1 cursor-pointer"
+                  disabled={!selectedReference || isExecuting}
+                  onClick={async (e) => {
                     e.stopPropagation()
-                    if (selectedReference) {
-                      onExecute(selectedReference)
+                    if (selectedReference && !isExecuting) {
+                      setIsExecuting(true)
+                      try {
+                        await onExecute(selectedReference)
+                      } finally {
+                        setIsExecuting(false)
+                      }
                     }
                   }}
                 >
-                  <Play className="h-3 w-3 mr-1" />
-                  Execute
+                  {isExecuting ? (
+                    <>
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="h-3 w-3 mr-1" />
+                      Execute
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -306,16 +321,31 @@ export function PlanCard({
               </select>
               <Button
                 size="sm"
-                disabled={!selectedReference}
-                onClick={(e) => {
+                className="cursor-pointer"
+                disabled={!selectedReference || isExecuting}
+                onClick={async (e) => {
                   e.stopPropagation()
-                  if (selectedReference) {
-                    onExecute(selectedReference)
+                  if (selectedReference && !isExecuting) {
+                    setIsExecuting(true)
+                    try {
+                      await onExecute(selectedReference)
+                    } finally {
+                      setIsExecuting(false)
+                    }
                   }
                 }}
               >
-                <Play className="h-3 w-3 mr-1" />
-                Execute
+                {isExecuting ? (
+                  <>
+                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-3 w-3 mr-1" />
+                    Execute
+                  </>
+                )}
               </Button>
             </div>
           )}

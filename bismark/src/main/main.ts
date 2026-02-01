@@ -317,7 +317,7 @@ function registerIpcHandlers() {
   })
 
   // Plan management (Team Mode)
-  ipcMain.handle('create-plan', (_event, title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: 'feature_branch' | 'raise_prs'; baseBranch?: string }) => {
+  ipcMain.handle('create-plan', (_event, title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: 'feature_branch' | 'raise_prs' }) => {
     return createPlan(title, description, options)
   })
 
@@ -326,7 +326,10 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('execute-plan', async (_event, planId: string, referenceAgentId: string) => {
-    return executePlan(planId, referenceAgentId)
+    console.log('[Main] execute-plan IPC received:', { planId, referenceAgentId })
+    const result = await executePlan(planId, referenceAgentId)
+    console.log('[Main] execute-plan result:', result?.status)
+    return result
   })
 
   ipcMain.handle('start-discussion', async (_event, planId: string, referenceAgentId: string) => {

@@ -1,7 +1,7 @@
 import './index.css'
 import './electron.d.ts'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, ChevronRight, ChevronLeft, Settings, Check, X, Maximize2, Minimize2, ListTodo, Container } from 'lucide-react'
+import { Plus, ChevronRight, ChevronLeft, Settings, Check, X, Maximize2, Minimize2, ListTodo, Container, CheckCircle2, FileText } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import {
   Dialog,
@@ -74,8 +74,8 @@ function App() {
   const [dropTargetPosition, setDropTargetPosition] = useState<number | null>(null)
   const [dropTargetTabId, setDropTargetTabId] = useState<string | null>(null)
 
-  // Manual maximize state (independent of waiting queue expand mode)
-  const [maximizedAgentId, setMaximizedAgentId] = useState<string | null>(null)
+  // Manual maximize state per tab (independent of waiting queue expand mode)
+  const [maximizedAgentIdByTab, setMaximizedAgentIdByTab] = useState<Record<string, string | null>>({})
 
   // Stop confirmation dialog state
   const [stopConfirmAgentId, setStopConfirmAgentId] = useState<string | null>(null)
@@ -161,10 +161,12 @@ function App() {
       }
 
       // Determine if we're in auto-expand mode (not manually maximized)
+      // For keyboard shortcuts, we need to check the current active tab's maximized state
+      const activeTabMaximizedAgentId = activeTabId ? (maximizedAgentIdByTab[activeTabId] || null) : null
       const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
       const autoExpandedAgentId = isExpandModeActive ? waitingQueue[0] : null
-      const expandedAgentId = maximizedAgentId || autoExpandedAgentId
-      const isAutoExpanded = expandedAgentId === autoExpandedAgentId && !maximizedAgentId
+      const expandedAgentId = activeTabMaximizedAgentId || autoExpandedAgentId
+      const isAutoExpanded = expandedAgentId === autoExpandedAgentId && !activeTabMaximizedAgentId
 
       // Cmd/Ctrl+D to dismiss current waiting agent in expand mode
       if ((e.metaKey || e.ctrlKey) && e.key === 'd') {
@@ -201,7 +203,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [preferences.attentionMode, waitingQueue, tabs, activeTabId, maximizedAgentId, handleFocusAgent])
+  }, [preferences.attentionMode, waitingQueue, tabs, activeTabId, maximizedAgentIdByTab, handleFocusAgent])
 
   const loadPreferences = async () => {
     const prefs = await window.electronAPI?.getPreferences?.()
@@ -267,7 +269,14 @@ function App() {
 
     // Listen for maximize agent events
     window.electronAPI?.onMaximizeWorkspace?.((agentId: string) => {
-      setMaximizedAgentId(agentId)
+      // Find which tab contains this agent and maximize it there
+      setTabs(currentTabs => {
+        const tab = currentTabs.find(t => t.workspaceIds.includes(agentId))
+        if (tab) {
+          setMaximizedAgentIdByTab(prev => ({ ...prev, [tab.id]: agentId }))
+        }
+        return currentTabs
+      })
     })
 
     // Listen for waiting queue changes
@@ -386,6 +395,23 @@ function App() {
       if (state.activeTabId) {
         setActiveTabId(state.activeTabId)
       }
+
+      // Clean up maximized state for workspaces that no longer exist in any tab
+      const allWorkspaceIds = new Set(
+        (state.tabs || []).flatMap(t => t.workspaceIds)
+      )
+      setMaximizedAgentIdByTab(prev => {
+        const updated = { ...prev }
+        let changed = false
+        for (const tabId of Object.keys(updated)) {
+          if (updated[tabId] && !allWorkspaceIds.has(updated[tabId]!)) {
+            updated[tabId] = null
+            changed = true
+          }
+        }
+        return changed ? updated : prev
+      })
+
       // Reload agents to pick up new orchestrator workspaces
       loadAgents()
     })
@@ -534,10 +560,18 @@ function App() {
         setFocusedAgentId(null)
         window.electronAPI?.setFocusedWorkspace?.(undefined)
       }
-      // Clear maximize if this agent was maximized
-      if (maximizedAgentId === agentId) {
-        setMaximizedAgentId(null)
-      }
+      // Clear maximize if this agent was maximized in any tab
+      setMaximizedAgentIdByTab(prev => {
+        const updated = { ...prev }
+        let changed = false
+        for (const tabId of Object.keys(updated)) {
+          if (updated[tabId] === agentId) {
+            updated[tabId] = null
+            changed = true
+          }
+        }
+        return changed ? updated : prev
+      })
       // Refresh tabs
       const state = await window.electronAPI.getState()
       setTabs(state.tabs || [])
@@ -771,12 +805,17 @@ function App() {
 
   // Plan handlers (Team Mode)
   // Note: We don't update local state here because the onPlanUpdate event listener handles it
-  const handleCreatePlan = async (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }) => {
+  const handleCreatePlan = async (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy }) => {
     await window.electronAPI?.createPlan?.(title, description, options)
   }
 
   const handleExecutePlan = async (planId: string, referenceAgentId: string) => {
-    await window.electronAPI?.executePlan?.(planId, referenceAgentId)
+    console.log('[App] handleExecutePlan called:', { planId, referenceAgentId })
+    console.log('[App] electronAPI available:', !!window.electronAPI)
+    console.log('[App] executePlan available:', !!window.electronAPI?.executePlan)
+    const result = await window.electronAPI?.executePlan?.(planId, referenceAgentId)
+    console.log('[App] executePlan result:', result)
+    return result
   }
 
   const handleStartDiscussion = async (planId: string, referenceAgentId: string) => {
@@ -1088,10 +1127,13 @@ function App() {
             const isExpandModeActive = preferences.attentionMode === 'expand' && waitingQueue.length > 0
             // Auto-expand the first waiting agent in expand mode
             const autoExpandedAgentId = isExpandModeActive ? waitingQueue[0] : null
-            const expandedAgentId = maximizedAgentId || autoExpandedAgentId
-            // In expand mode, show the tab containing the expanded agent instead of the active tab
-            const tabContainsExpandedAgent = expandedAgentId && tabWorkspaceIds.includes(expandedAgentId)
-            const shouldShowTab = expandedAgentId ? tabContainsExpandedAgent : isActiveTab
+            // Use per-tab maximized state - only applies when this tab is active
+            const tabMaximizedAgentId = isActiveTab ? (maximizedAgentIdByTab[tab.id] || null) : null
+            const expandedAgentId = tabMaximizedAgentId || autoExpandedAgentId
+            // In auto-expand mode (attention mode), show the tab containing the waiting agent
+            // For manual maximize, the tab must be active (handled above by nulling tabMaximizedAgentId)
+            const tabContainsAutoExpandedAgent = autoExpandedAgentId && tabWorkspaceIds.includes(autoExpandedAgentId)
+            const shouldShowTab = tabContainsAutoExpandedAgent ? true : isActiveTab
 
             return (
               <div
@@ -1099,9 +1141,28 @@ function App() {
                 className={`absolute inset-2 ${shouldShowTab ? '' : 'invisible pointer-events-none'}`}
               >
                 {tabWorkspaceIds.length === 0 && getHeadlessAgentsForTab(tab).length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-muted-foreground">
-                    Launch an agent to see the terminal
-                  </div>
+                  tab.isPlanTab && plans.find(p => p.orchestratorTabId === tab.id && p.status === 'discussed') ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center gap-4 p-8">
+                      <CheckCircle2 className="h-12 w-12 text-green-500" />
+                      <div>
+                        <h3 className="text-lg font-medium">Discussion Complete</h3>
+                        <p className="text-muted-foreground mt-2">
+                          Open the Plans panel to select a reference agent and execute your plan.
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => setPlanSidebarOpen(true)}
+                      >
+                        <FileText className="h-4 w-4 mr-2" />
+                        Open Plans
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="h-full flex items-center justify-center text-muted-foreground">
+                      Launch an agent to see the terminal
+                    </div>
+                  )
                 ) : tab.isPlanTab ? (
                   // Scrollable 2-column grid for plan tabs (unlimited agents)
                   // Use CSS grid with fixed row heights that match the regular 2x2 layout
@@ -1159,9 +1220,9 @@ function App() {
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     if (isExpanded) {
-                                      setMaximizedAgentId(null)
+                                      setMaximizedAgentIdByTab(prev => ({ ...prev, [tab.id]: null }))
                                     } else {
-                                      setMaximizedAgentId(workspaceId)
+                                      setMaximizedAgentIdByTab(prev => ({ ...prev, [tab.id]: workspaceId }))
                                     }
                                   }}
                                   className="h-6 w-6 p-0"
@@ -1254,7 +1315,7 @@ function App() {
                                 info.status === 'failed' ? 'bg-red-500/20 text-red-400' :
                                 'bg-yellow-500/20 text-yellow-400'
                               }`}>{info.status}</span>
-                              <Button size="sm" variant="ghost" onClick={() => setMaximizedAgentId(isExpanded ? null : info.id)} className="h-6 w-6 p-0">
+                              <Button size="sm" variant="ghost" onClick={() => setMaximizedAgentIdByTab(prev => ({ ...prev, [tab.id]: isExpanded ? null : info.id }))} className="h-6 w-6 p-0">
                                 {isExpanded ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
                               </Button>
                             </div>
@@ -1363,9 +1424,9 @@ function App() {
                                 onClick={(e) => {
                                   e.stopPropagation()
                                   if (isExpanded) {
-                                    setMaximizedAgentId(null) // minimize
+                                    setMaximizedAgentIdByTab(prev => ({ ...prev, [tab.id]: null })) // minimize
                                   } else {
-                                    setMaximizedAgentId(workspaceId) // maximize
+                                    setMaximizedAgentIdByTab(prev => ({ ...prev, [tab.id]: workspaceId })) // maximize
                                   }
                                 }}
                                 className="h-6 w-6 p-0"

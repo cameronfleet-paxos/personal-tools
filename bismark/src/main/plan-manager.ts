@@ -52,6 +52,7 @@ import { HeadlessAgent, HeadlessAgentOptions } from './headless-agent'
 import { runSetupToken } from './oauth-setup'
 import { startToolProxy, stopToolProxy, isProxyRunning, proxyEvents } from './tool-proxy'
 import { checkDockerAvailable, checkImageExists, stopAllContainers } from './docker-sandbox'
+import { execWithPath } from './exec-utils'
 
 let mainWindow: BrowserWindow | null = null
 let pollInterval: NodeJS.Timeout | null = null
@@ -274,13 +275,11 @@ export function createPlan(
   options?: {
     maxParallelAgents?: number
     branchStrategy?: BranchStrategy
-    baseBranch?: string
   }
 ): Plan {
   const now = new Date().toISOString()
   const planId = generatePlanId()
   const branchStrategy = options?.branchStrategy ?? 'feature_branch'
-  const baseBranch = options?.baseBranch ?? 'main'
 
   const plan: Plan = {
     id: planId,
@@ -296,7 +295,6 @@ export function createPlan(
     maxParallelAgents: options?.maxParallelAgents ?? DEFAULT_MAX_PARALLEL_AGENTS,
     worktrees: [],
     branchStrategy,
-    baseBranch,
     // Generate feature branch name for feature_branch strategy
     featureBranch: branchStrategy === 'feature_branch'
       ? `bismark/${planId.split('-')[1]}/feature`
@@ -661,7 +659,10 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
   // Use in-memory set because status check alone isn't fast enough - the second call
   // arrives before the first call has persisted the status change
   if (executingPlans.has(planId) || plan.status === 'delegating' || plan.status === 'in_progress') {
-    logger.debug('plan', 'Skipping duplicate execution call', logCtx)
+    logger.info('plan', 'Skipping duplicate execution call', logCtx, {
+      inExecutingSet: executingPlans.has(planId),
+      status: plan.status,
+    })
     return plan
   }
 
@@ -801,10 +802,26 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
     } catch (error) {
       console.error(`[PlanManager] Failed to create orchestrator terminal:`, error)
       addPlanActivity(planId, 'error', 'Failed to start orchestrator', error instanceof Error ? error.message : 'Unknown error')
+      // Clean up executingPlans to allow retry
+      executingPlans.delete(planId)
+      // Revert status since we couldn't actually execute
+      plan.status = 'discussed'
+      plan.updatedAt = new Date().toISOString()
+      savePlan(plan)
+      emitPlanUpdate(plan)
+      return plan
     }
   } else {
     console.error(`[PlanManager] Cannot create orchestrator terminal - mainWindow is null`)
     addPlanActivity(planId, 'error', 'Cannot start orchestrator - window not available')
+    // Clean up executingPlans to allow retry
+    executingPlans.delete(planId)
+    // Revert status since we couldn't actually execute
+    plan.status = 'discussed'
+    plan.updatedAt = new Date().toISOString()
+    savePlan(plan)
+    emitPlanUpdate(plan)
+    return plan
   }
 
   // Start polling for task updates for this plan
@@ -1541,7 +1558,7 @@ function buildTaskPrompt(planId: string, task: BeadTask, repository?: Repository
   const plan = getPlanById(planId)
   const planDir = getPlanDir(planId)
   // Prefer repository's detected defaultBranch over plan's potentially incorrect default
-  const baseBranch = repository?.defaultBranch || plan?.baseBranch || 'main'
+  const baseBranch = repository?.defaultBranch || 'main'
 
   // Build completion instructions based on branch strategy
   let completionInstructions: string
@@ -1877,7 +1894,7 @@ async function createTaskAgentWithWorktree(
 
   // Create the worktree
   try {
-    // Use plan's baseBranch for feature_branch strategy, or calculate for raise_prs
+    // Determine base branch based on strategy and task dependencies
     const baseBranch = await getBaseBranchForTask(plan, task, repository)
     await createWorktree(repository.rootPath, worktreePath, branchName, baseBranch)
     addPlanActivity(planId, 'info', `Created worktree: ${worktreeName}`, `Branch: ${branchName}, Base: ${baseBranch}`)
@@ -2186,7 +2203,7 @@ async function stopAllHeadlessAgents(planId: string): Promise<void> {
 function buildTaskPromptForHeadless(planId: string, task: BeadTask, repository?: Repository, _hostWorktreePath?: string): string {
   const plan = getPlanById(planId)
   // Prefer repository's detected defaultBranch over plan's potentially incorrect default
-  const baseBranch = repository?.defaultBranch || plan?.baseBranch || 'main'
+  const baseBranch = repository?.defaultBranch || 'main'
 
   // Build completion instructions based on branch strategy
   let completionInstructions: string
@@ -2438,16 +2455,15 @@ async function ensureFeatureBranchExists(
 /**
  * Determine the base branch for a task based on the plan's branch strategy
  * - feature_branch: dependent tasks base on the feature branch (to get blocker commits)
- * - raise_prs: use the blocker's branch for dependent tasks, or plan's baseBranch for first tasks
+ * - raise_prs: use the blocker's branch for dependent tasks, or repository's default branch for first tasks
  */
 async function getBaseBranchForTask(
   plan: Plan,
   task: BeadTask,
   repository: Repository
 ): Promise<string> {
-  // Prefer repository's detected defaultBranch over plan's potentially incorrect default
-  // Plan's baseBranch may be 'main' by default, but repo may use 'master'
-  const defaultBase = repository.defaultBranch || plan.baseBranch || 'main'
+  // Use repository's detected defaultBranch with fallback to 'main'
+  const defaultBase = repository.defaultBranch || 'main'
 
   if (plan.branchStrategy === 'feature_branch') {
     // Check if this task has blockers (depends on other tasks)
@@ -2556,7 +2572,7 @@ async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promis
 
       // Rebase this worktree's commits onto the feature branch
       // Prefer repository's detected defaultBranch over plan's potentially incorrect default
-      const baseBranch = repository.defaultBranch || plan.baseBranch || 'main'
+      const baseBranch = repository.defaultBranch || 'main'
       try {
         // First try to rebase onto feature branch if it exists
         await fetchAndRebase(worktree.path, plan.featureBranch)
@@ -2665,7 +2681,7 @@ async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repositor
   try {
     // Get commits made in this worktree
     // Prefer repository's detected defaultBranch over plan's potentially incorrect default
-    const baseBranch = repository.defaultBranch || plan.baseBranch || 'main'
+    const baseBranch = repository.defaultBranch || 'main'
     const commits = await getCommitsBetween(worktree.path, `origin/${baseBranch}`, 'HEAD')
 
     if (commits.length === 0) {
@@ -2746,12 +2762,8 @@ async function recordPullRequest(plan: Plan, worktree: PlanWorktree, repository:
   // This could be enhanced to actually query GitHub for PR info
 
   try {
-    const { exec } = await import('child_process')
-    const { promisify } = await import('util')
-    const execAsync = promisify(exec)
-
-    // Try to get PR info using gh CLI
-    const { stdout } = await execAsync(
+    // Try to get PR info using gh CLI (use execWithPath for extended PATH)
+    const { stdout } = await execWithPath(
       `gh pr list --head "${worktree.branch}" --json number,title,url,baseRefName,headRefName,state --limit 1`,
       { cwd: worktree.path }
     )
@@ -2819,7 +2831,7 @@ async function refreshGitSummary(plan: Plan): Promise<void> {
   if (repos.length === 0) return
 
   const repo = repos[0]
-  const baseBranch = repo.defaultBranch || plan.baseBranch || 'main'
+  const baseBranch = repo.defaultBranch || 'main'
 
   // Check if feature branch exists on remote
   const exists = await remoteBranchExists(repo.rootPath, plan.featureBranch)

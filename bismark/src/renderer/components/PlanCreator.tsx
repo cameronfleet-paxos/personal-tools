@@ -16,7 +16,7 @@ import type { BranchStrategy } from '@/shared/types'
 interface PlanCreatorProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onCreatePlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }) => void
+  onCreatePlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy }) => void
 }
 
 export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorProps) {
@@ -24,20 +24,17 @@ export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorPro
   const [description, setDescription] = useState('')
   const [maxParallelAgents, setMaxParallelAgents] = useState(4)
   const [branchStrategy, setBranchStrategy] = useState<BranchStrategy>('feature_branch')
-  const [baseBranch, setBaseBranch] = useState('main')
 
   const handleSubmit = () => {
     if (title.trim()) {
       onCreatePlan(title.trim(), description.trim(), {
         maxParallelAgents,
         branchStrategy,
-        baseBranch: baseBranch.trim() || 'main',
       })
       setTitle('')
       setDescription('')
       setMaxParallelAgents(4)
       setBranchStrategy('feature_branch')
-      setBaseBranch('main')
       onOpenChange(false)
     }
   }
@@ -48,7 +45,6 @@ export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorPro
       setDescription('')
       setMaxParallelAgents(4)
       setBranchStrategy('feature_branch')
-      setBaseBranch('main')
     }
     onOpenChange(newOpen)
   }
@@ -136,20 +132,6 @@ export function PlanCreator({ open, onOpenChange, onCreatePlan }: PlanCreatorPro
                 </div>
               </button>
             </div>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="baseBranch">Base Branch</Label>
-            <Input
-              id="baseBranch"
-              placeholder="main"
-              value={baseBranch}
-              onChange={(e) => setBaseBranch(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              {branchStrategy === 'feature_branch'
-                ? 'Feature branch will be created from this branch'
-                : 'PRs will target this branch (dependent tasks stack on their blocker\'s PR)'}
-            </p>
           </div>
         </div>
         <DialogFooter>

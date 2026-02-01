@@ -155,6 +155,7 @@ export function PlanDetailView({
   onExecute,
 }: PlanDetailViewProps) {
   const [isCancelling, setIsCancelling] = useState(false)
+  const [isExecuting, setIsExecuting] = useState(false)
   const [selectedReference, setSelectedReference] = useState<string>(plan.referenceAgentId || '')
   const [beadTasks, setBeadTasks] = useState<BeadTask[]>([])
   const [localAssignments, setLocalAssignments] = useState<TaskAssignment[]>([])
@@ -266,9 +267,6 @@ export function PlanDetailView({
               Raise PRs
             </span>
           )}
-          {plan.baseBranch && (
-            <span className="text-muted-foreground">Base: {plan.baseBranch}</span>
-          )}
         </div>
 
         {/* Worktree info */}
@@ -327,15 +325,33 @@ export function PlanDetailView({
             </select>
             <Button
               size="sm"
-              disabled={!selectedReference}
-              onClick={() => {
-                if (selectedReference) {
-                  onExecute(selectedReference)
+              disabled={!selectedReference || isExecuting}
+              className="cursor-pointer"
+              onClick={async () => {
+                if (selectedReference && !isExecuting) {
+                  setIsExecuting(true)
+                  console.log('[PlanDetailView] Execute clicked, calling onExecute with:', selectedReference)
+                  try {
+                    await onExecute(selectedReference)
+                  } catch (err) {
+                    console.error('[PlanDetailView] Execute failed:', err)
+                  } finally {
+                    setIsExecuting(false)
+                  }
                 }
               }}
             >
-              <Play className="h-3 w-3 mr-1" />
-              Execute
+              {isExecuting ? (
+                <>
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                  Starting...
+                </>
+              ) : (
+                <>
+                  <Play className="h-3 w-3 mr-1" />
+                  Execute
+                </>
+              )}
             </Button>
           </div>
         )}

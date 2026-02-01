@@ -15,9 +15,9 @@ import * as http from 'http'
 import * as net from 'net'
 import * as path from 'path'
 import * as os from 'os'
-import { spawn } from 'child_process'
 import { EventEmitter } from 'events'
 import { logger } from './logger'
+import { spawnWithPath } from './exec-utils'
 
 export interface ToolProxyConfig {
   port: number // Default: 9847
@@ -95,8 +95,9 @@ async function executeCommand(
   options?: { cwd?: string }
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve) => {
-    const proc = spawn(command, args, {
-      env: process.env, // Inherits tokens from host environment
+    // Use spawnWithPath to ensure tools like gh, bd are found in user paths
+    const proc = spawnWithPath(command, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
       cwd: options?.cwd,
     })
@@ -104,17 +105,17 @@ async function executeCommand(
     let stdout = ''
     let stderr = ''
 
-    proc.stdout.on('data', (data) => {
+    proc.stdout?.on('data', (data: Buffer) => {
       stdout += data.toString()
     })
 
-    proc.stderr.on('data', (data) => {
+    proc.stderr?.on('data', (data: Buffer) => {
       stderr += data.toString()
     })
 
     if (stdin) {
-      proc.stdin.write(stdin)
-      proc.stdin.end()
+      proc.stdin?.write(stdin)
+      proc.stdin?.end()
     }
 
     proc.on('close', (code) => {

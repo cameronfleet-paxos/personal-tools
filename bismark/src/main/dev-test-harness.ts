@@ -21,9 +21,8 @@
  */
 
 import { EventEmitter } from 'events'
-import { exec } from 'child_process'
-import { promisify } from 'util'
 import { BrowserWindow } from 'electron'
+import { execWithPath } from './exec-utils'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -44,7 +43,8 @@ import { registerHeadlessAgentInfo, emitHeadlessAgentUpdatePublic, emitHeadlessA
 import { HeadlessAgent } from './headless-agent'
 import { MOCK_IMAGE, checkImageExists } from './docker-sandbox'
 
-const execAsync = promisify(exec)
+// Use shared exec utility with extended PATH for bd commands
+const execAsync = execWithPath
 
 // ============================================
 // Mock Event Sequences

@@ -49,7 +49,7 @@ export interface ElectronAPI {
   setPreferences: (preferences: Partial<AppPreferences>) => Promise<AppPreferences>
 
   // Plan management (Team Mode)
-  createPlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }) => Promise<Plan>
+  createPlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy }) => Promise<Plan>
   getPlans: () => Promise<Plan[]>
   executePlan: (planId: string, referenceAgentId: string) => Promise<Plan | null>
   startDiscussion: (planId: string, referenceAgentId: string) => Promise<Plan | null>

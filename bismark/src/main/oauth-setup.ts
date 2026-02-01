@@ -5,8 +5,8 @@
  * and storing it for use by headless agents.
  */
 
-import { spawn } from 'child_process'
 import { setClaudeOAuthToken } from './config'
+import { spawnWithPath } from './exec-utils'
 
 // Regex to match OAuth tokens from claude setup-token output
 const TOKEN_REGEX = /sk-ant-oat01-[A-Za-z0-9_-]+/
@@ -28,7 +28,8 @@ export async function runSetupToken(): Promise<string> {
   return new Promise((resolve, reject) => {
     // Use `script` to allocate a PTY for the interactive command
     // This is necessary on macOS/Linux for the OAuth flow to work
-    const proc = spawn('script', ['-q', '/dev/null', 'claude', 'setup-token'], {
+    // Use spawnWithPath to ensure claude is found in user paths
+    const proc = spawnWithPath('script', ['-q', '/dev/null', 'claude', 'setup-token'], {
       stdio: ['inherit', 'pipe', 'pipe'],
     })
 
@@ -80,7 +81,8 @@ export async function runSetupToken(): Promise<string> {
  */
 export async function checkClaudeAvailable(): Promise<boolean> {
   return new Promise((resolve) => {
-    const proc = spawn('which', ['claude'], { stdio: 'pipe' })
+    // Use spawnWithPath to search for claude in user paths
+    const proc = spawnWithPath('which', ['claude'], { stdio: 'pipe' })
 
     proc.on('close', (code) => {
       resolve(code === 0)

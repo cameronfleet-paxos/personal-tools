@@ -218,7 +218,6 @@ export interface Plan {
   // Branch/PR strategy configuration
   branchStrategy: BranchStrategy   // How task agents handle git operations
   featureBranch?: string           // Shared branch name (feature_branch strategy)
-  baseBranch?: string              // Base branch for PRs or feature branch
   gitSummary?: PlanGitSummary      // Commits/PRs created during execution
 
   // Discussion output file path (written by discussion agent)

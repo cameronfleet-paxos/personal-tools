@@ -69,7 +69,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('set-preferences', preferences),
 
   // Plan management (Team Mode)
-  createPlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy; baseBranch?: string }): Promise<Plan> =>
+  createPlan: (title: string, description: string, options?: { maxParallelAgents?: number; branchStrategy?: BranchStrategy }): Promise<Plan> =>
     ipcRenderer.invoke('create-plan', title, description, options),
   getPlans: (): Promise<Plan[]> =>
     ipcRenderer.invoke('get-plans'),

@@ -4,10 +4,10 @@
 
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import { exec } from 'child_process'
-import { promisify } from 'util'
+import { execWithPath } from './exec-utils'
 
-const execAsync = promisify(exec)
+// Use shared exec utility with extended PATH
+const execAsync = execWithPath
 
 const SOCKET_BASE_DIR = '/tmp/bm'
 const STALE_THRESHOLD_MS = 24 * 60 * 60 * 1000 // 24 hours

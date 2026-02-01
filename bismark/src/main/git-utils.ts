@@ -2,13 +2,13 @@
  * Git utility functions for repository detection and worktree management
  */
 
-import { exec as execCallback } from 'child_process';
-import { promisify } from 'util';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { logger, LogContext } from './logger';
+import { execWithPath } from './exec-utils';
 
-const exec = promisify(execCallback);
+// Use shared exec utility with extended PATH for git commands
+const exec = execWithPath;
 
 /**
  * Execute a git command in the specified directory
