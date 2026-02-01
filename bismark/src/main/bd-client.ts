@@ -10,7 +10,7 @@ const execAsync = promisify(exec)
  * Get the plan-specific directory path
  */
 export function getPlanDir(planId: string): string {
-  return path.join(os.homedir(), '.bismark', 'plans', planId)
+  return path.join(os.homedir(), '.bismarck', 'plans', planId)
 }
 
 export interface BeadTask {
@@ -46,8 +46,8 @@ export async function ensureBeadsRepo(planId: string): Promise<string> {
       await execAsync('git init', { cwd: planDir })
     }
 
-    // Initialize beads with bismark prefix
-    await execAsync('bd --sandbox init --prefix bismark', { cwd: planDir })
+    // Initialize beads with bismarck prefix
+    await execAsync('bd --sandbox init --prefix bismarck', { cwd: planDir })
 
     // Create .claude directory and settings.json to pre-allow bd commands
     const claudeDir = path.join(planDir, '.claude')
