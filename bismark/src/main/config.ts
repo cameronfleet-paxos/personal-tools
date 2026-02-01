@@ -6,6 +6,33 @@ import { agentIcons, type AgentIconName } from '../shared/constants'
 
 const CONFIG_DIR_NAME = '.bismark'
 
+// Mutex for serializing plan modifications to prevent race conditions
+const planMutexes: Map<string, Promise<void>> = new Map()
+
+/**
+ * Execute a function with exclusive access to a plan's data.
+ * Prevents concurrent read-modify-write race conditions.
+ */
+export async function withPlanLock<T>(planId: string, fn: () => Promise<T>): Promise<T> {
+  // Wait for any pending operation on this plan
+  const pending = planMutexes.get(planId) || Promise.resolve()
+
+  let resolve: () => void
+  const newPending = new Promise<void>((r) => { resolve = r })
+  planMutexes.set(planId, newPending)
+
+  try {
+    await pending
+    return await fn()
+  } finally {
+    resolve!()
+    // Clean up if no other operations queued
+    if (planMutexes.get(planId) === newPending) {
+      planMutexes.delete(planId)
+    }
+  }
+}
+
 export function getConfigDir(): string {
   const homeDir = app?.getPath('home') || process.env.HOME || ''
   return path.join(homeDir, CONFIG_DIR_NAME)

@@ -20,6 +20,7 @@ import {
   savePlanActivities,
   loadHeadlessAgentInfo,
   saveHeadlessAgentInfo,
+  withPlanLock,
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, closeTerminal, getTerminalEmitter } from './terminal'
@@ -1923,12 +1924,18 @@ async function createTaskAgentWithWorktree(
     blockedBy: task.blockedBy,
   }
 
-  // Add worktree to plan
-  if (!plan.worktrees) {
-    plan.worktrees = []
-  }
-  plan.worktrees.push(planWorktree)
-  savePlan(plan)
+  // Add worktree to plan (use lock to prevent race conditions with parallel agent spawns)
+  await withPlanLock(planId, async () => {
+    // Re-fetch plan inside lock to get latest state
+    const currentPlan = getPlanById(planId)
+    if (!currentPlan) throw new Error(`Plan ${planId} not found`)
+
+    if (!currentPlan.worktrees) {
+      currentPlan.worktrees = []
+    }
+    currentPlan.worktrees.push(planWorktree)
+    savePlan(currentPlan)
+  })
 
   return { agent: taskAgent, worktree: planWorktree }
 }
@@ -2232,8 +2239,6 @@ All these commands work normally (they are proxied to the host automatically):
    - bd close ${task.id} --message "..."  (REQUIRED when done)
    - The --sandbox flag is added automatically
 
-IMPORTANT: After 'bd close' succeeds, you MUST run 'exit 0' to terminate the session.
-
 === COMMIT STYLE ===
 Keep commits simple and direct:
 - Use: git commit -m "Brief description of change"
@@ -2250,8 +2255,7 @@ ${completionInstructions}
 
 CRITICAL: There is no interactive mode. You must:
 - Complete all work
-- Close the task with 'bd close ${task.id} --message "..."'
-- Run 'exit 0' immediately after bd close succeeds to end the session`
+- Close the task with 'bd close ${task.id} --message "..."' to signal completion`
 }
 
 /**
@@ -2358,42 +2362,50 @@ async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
  * Mark a worktree as ready for review (task agent completed)
  */
 async function markWorktreeReadyForReview(planId: string, taskId: string): Promise<void> {
-  const plan = getPlanById(planId)
-  if (!plan || !plan.worktrees) return
+  // Use lock to safely read and modify the plan (prevents race conditions with parallel agents)
+  const worktreeForStrategy = await withPlanLock(planId, async () => {
+    const plan = getPlanById(planId)
+    if (!plan || !plan.worktrees) return null
 
-  const worktree = plan.worktrees.find(w => w.taskId === taskId)
-  if (!worktree || worktree.status !== 'active') return
+    const worktree = plan.worktrees.find(w => w.taskId === taskId)
+    if (!worktree || worktree.status !== 'active') return null
 
-  const logCtx: LogContext = { planId, taskId, worktreePath: worktree.path, branch: worktree.branch }
-  logger.info('task', 'Marking worktree ready for review', logCtx)
+    const logCtx: LogContext = { planId, taskId, worktreePath: worktree.path, branch: worktree.branch }
+    logger.info('task', 'Marking worktree ready for review', logCtx)
 
-  // Cleanup the agent window (but NOT the git worktree - that stays for review)
-  if (worktree.agentId) {
-    const agent = getWorkspaces().find(a => a.id === worktree.agentId)
-    if (agent) {
-      logger.debug('task', 'Cleaning up agent workspace', logCtx, { agentId: agent.id })
-      const terminalId = getTerminalForWorkspace(agent.id)
-      if (terminalId) {
-        closeTerminal(terminalId)
+    // Cleanup the agent window (but NOT the git worktree - that stays for review)
+    if (worktree.agentId) {
+      const agent = getWorkspaces().find(a => a.id === worktree.agentId)
+      if (agent) {
+        logger.debug('task', 'Cleaning up agent workspace', logCtx, { agentId: agent.id })
+        const terminalId = getTerminalForWorkspace(agent.id)
+        if (terminalId) {
+          closeTerminal(terminalId)
+        }
+        removeActiveWorkspace(agent.id)
+        removeWorkspaceFromTab(agent.id)
+        deleteWorkspace(agent.id)
       }
-      removeActiveWorkspace(agent.id)
-      removeWorkspaceFromTab(agent.id)
-      deleteWorkspace(agent.id)
     }
-  }
 
-  worktree.status = 'ready_for_review'
-  // Note: agentId kept for reference even though agent is cleaned up
-  savePlan(plan)
-  emitPlanUpdate(plan)
-  emitStateUpdate()
+    worktree.status = 'ready_for_review'
+    // Note: agentId kept for reference even though agent is cleaned up
+    savePlan(plan)
+    emitPlanUpdate(plan)
+    emitStateUpdate()
 
-  logger.info('task', 'Task completed and ready for review', logCtx)
-  addPlanActivity(planId, 'success', `Task ${taskId} ready for review`, `Worktree: ${worktree.branch}`)
+    logger.info('task', 'Task completed and ready for review', logCtx)
+    addPlanActivity(planId, 'success', `Task ${taskId} ready for review`, `Worktree: ${worktree.branch}`)
 
-  // Handle branch strategy on task completion (await to ensure commits are recorded before cleanup)
+    // Return worktree copy for use outside the lock
+    return { ...worktree }
+  })
+
+  if (!worktreeForStrategy) return
+
+  // Git operations can happen outside the lock (no plan state modification)
   try {
-    await handleTaskCompletionStrategy(planId, taskId, worktree)
+    await handleTaskCompletionStrategy(planId, taskId, worktreeForStrategy)
   } catch (error) {
     console.error(`[PlanManager] Error handling task completion strategy:`, error)
     addPlanActivity(planId, 'warning', `Git operation warning for ${taskId}`, error instanceof Error ? error.message : 'Unknown error')
@@ -2587,7 +2599,10 @@ async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promis
         if (!plan.gitSummary.commits) {
           plan.gitSummary.commits = []
         }
-        plan.gitSummary.commits.push(...planCommits)
+        // Deduplicate by SHA - after rebase, worktrees may contain commits from other tasks
+        const existingShas = new Set(plan.gitSummary.commits.map(c => c.sha))
+        const newCommits = planCommits.filter(c => !existingShas.has(c.sha))
+        plan.gitSummary.commits.push(...newCommits)
       }
 
       addPlanActivity(
@@ -2690,7 +2705,10 @@ async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repositor
     if (!plan.gitSummary.commits) {
       plan.gitSummary.commits = []
     }
-    plan.gitSummary.commits.push(...planCommits)
+    // Deduplicate by SHA - after rebase, worktrees may contain commits from other tasks
+    const existingShas = new Set(plan.gitSummary.commits.map(c => c.sha))
+    const newCommits = planCommits.filter(c => !existingShas.has(c.sha))
+    plan.gitSummary.commits.push(...newCommits)
 
     savePlan(plan)
     emitPlanUpdate(plan)
@@ -2703,7 +2721,7 @@ async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repositor
     addPlanActivity(
       plan.id,
       'success',
-      `Pushed ${commits.length} commit(s) for task ${worktree.taskId}`,
+      `Pushed ${newCommits.length} new commit(s) for task ${worktree.taskId}`,
       `To feature branch: ${plan.featureBranch}`
     )
   } catch (error) {

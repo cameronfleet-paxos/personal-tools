@@ -424,7 +424,7 @@ export function PlanDetailView({
                   )
                 })()}
               </div>
-              <div className="space-y-0.5 max-h-32 overflow-y-auto">
+              <div className="space-y-0.5 max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-muted-foreground/30 scrollbar-track-transparent">
                 {plan.gitSummary.commits.map((commit) => (
                   <div key={commit.sha} className="text-xs flex items-start gap-1.5 p-1 hover:bg-muted/30 rounded">
                     <code className="text-muted-foreground font-mono shrink-0">{commit.shortSha}</code>
