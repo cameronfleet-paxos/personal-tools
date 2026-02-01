@@ -163,6 +163,30 @@ Press `Cmd+Shift+D` to toggle the dev console for:
 - Testing event flow without API costs
 - Viewing real-time event logs
 
+### Monitoring Debug Logs
+
+Each plan has a debug log at `~/.bismark/plans/<planId>/debug.log`. To monitor a running plan:
+
+```bash
+# Find the active plan ID
+cat ~/.bismark/plans.json | jq '.[] | select(.status == "in_progress") | .id'
+
+# Tail the debug log (replace <planId> with actual ID)
+tail -f ~/.bismark/plans/<planId>/debug.log
+
+# Filter for important events only
+tail -f ~/.bismark/plans/<planId>/debug.log | grep -E "\[INFO\]|\[WARN\]|\[ERROR\]"
+
+# Filter for worktree/task activity
+tail -f ~/.bismark/plans/<planId>/debug.log | grep -E "(worktree|task|agent)"
+```
+
+You can also check task status directly:
+```bash
+cd ~/.bismark/plans/<planId>
+bd --sandbox list --json | jq '.[] | {id, status, labels}'
+```
+
 ### Useful CDP Patterns
 
 ```javascript
