@@ -24,7 +24,7 @@ import {
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
 import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, closeTerminal, getTerminalEmitter } from './terminal'
 import { queueTerminalCreation } from './terminal-queue'
-import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState, setFocusedWorkspace } from './state-manager'
+import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState, setFocusedWorkspace, getPreferences } from './state-manager'
 import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus, BranchStrategy, PlanCommit, PlanPullRequest, PlanDiscussion } from '../shared/types'
 import {
   createWorktree,
@@ -49,7 +49,7 @@ import {
 } from './repository-manager'
 import { HeadlessAgent, HeadlessAgentOptions } from './headless-agent'
 import { runSetupToken } from './oauth-setup'
-import { startToolProxy, stopToolProxy, isProxyRunning } from './tool-proxy'
+import { startToolProxy, stopToolProxy, isProxyRunning, proxyEvents } from './tool-proxy'
 import { checkDockerAvailable, checkImageExists, stopAllContainers } from './docker-sandbox'
 
 let mainWindow: BrowserWindow | null = null
@@ -832,13 +832,7 @@ export async function cancelPlan(planId: string): Promise<Plan | null> {
   await killAllPlanAgents(plan)
   logger.info('plan', 'Finished killing all plan agents', logCtx, { durationMs: Date.now() - killStartTime })
 
-  // 2. Cleanup worktrees (slow - git operations)
-  logger.info('plan', 'Cleaning up worktrees', logCtx)
-  const cleanupStartTime = Date.now()
-  await cleanupAllWorktreesOnly(planId)
-  logger.info('plan', 'Finished cleaning up worktrees', logCtx, { durationMs: Date.now() - cleanupStartTime })
-
-  // 3. Update plan state
+  // 2. Update plan state BEFORE worktree cleanup so UI knows plan is cancelled immediately
   plan.status = 'failed'
   plan.updatedAt = new Date().toISOString()
   savePlan(plan)
@@ -848,6 +842,13 @@ export async function cancelPlan(planId: string): Promise<Plan | null> {
 
   // Remove from executing set
   executingPlans.delete(planId)
+
+  // 3. Cleanup worktrees (slow - git operations, done after UI update)
+  logger.info('plan', 'Cleaning up worktrees', logCtx)
+  const cleanupStartTime = Date.now()
+  await cleanupAllWorktreesOnly(planId)
+  logger.info('plan', 'Finished cleaning up worktrees', logCtx, { durationMs: Date.now() - cleanupStartTime })
+
   logger.info('plan', 'Plan cancellation complete', logCtx)
 
   return plan
@@ -1009,8 +1010,10 @@ async function killAllPlanAgents(plan: Plan): Promise<void> {
     logger.debug('plan', 'Deleting orchestrator tab', logCtx, { tabId: plan.orchestratorTabId })
     deleteTab(plan.orchestratorTabId)
     plan.orchestratorTabId = null
-    emitStateUpdate()
   }
+
+  // Emit state update so renderer reloads workspaces (clears headless agents from sidebar)
+  emitStateUpdate()
 
   logger.info('plan', 'All plan agents killed', logCtx)
 }
@@ -1433,10 +1436,12 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
         await startToolProxy()
         addPlanActivity(planId, 'info', 'Tool proxy started')
       }
+      setupBdCloseListener()
 
       await startHeadlessTaskAgent(planId, task, worktree, repository)
 
-      assignment.status = 'sent'
+      // Set to in_progress immediately - agent is starting, not just queued
+      assignment.status = 'in_progress'
       saveTaskAssignment(planId, assignment)
       emitTaskAssignmentUpdate(assignment)
 
@@ -1493,16 +1498,17 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
         // Set up listener for task completion
         const terminalEmitter = getTerminalEmitter(terminalId)
         if (terminalEmitter) {
-          const exitHandler = (data: string) => {
+          const exitHandler = async (data: string) => {
             if (data.includes('Goodbye') || data.includes('Session ended')) {
               terminalEmitter.removeListener('data', exitHandler)
-              markWorktreeReadyForReview(planId, task.id)
+              await markWorktreeReadyForReview(planId, task.id)
             }
           }
           terminalEmitter.on('data', exitHandler)
         }
 
-        assignment.status = 'sent'
+        // Set to in_progress immediately - agent is starting, not just queued
+        assignment.status = 'in_progress'
         saveTaskAssignment(planId, assignment)
         emitTaskAssignmentUpdate(assignment)
 
@@ -1533,7 +1539,8 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
 function buildTaskPrompt(planId: string, task: BeadTask, repository?: Repository): string {
   const plan = getPlanById(planId)
   const planDir = getPlanDir(planId)
-  const baseBranch = plan?.baseBranch || repository?.defaultBranch || 'main'
+  // Prefer repository's detected defaultBranch over plan's potentially incorrect default
+  const baseBranch = repository?.defaultBranch || plan?.baseBranch || 'main'
 
   // Build completion instructions based on branch strategy
   let completionInstructions: string
@@ -1969,11 +1976,12 @@ async function startHeadlessTaskAgent(
     agentInfo.status = status
     emitHeadlessAgentUpdate(agentInfo)
 
-    // Sync task assignment status when agent starts running
+    // Ensure task assignment status is in_progress when agent starts running
+    // This handles edge cases where status might still be pending/sent
     if (status === 'running') {
       const assignments = loadTaskAssignments(planId)
       const assignment = assignments.find((a) => a.beadId === task.id)
-      if (assignment && assignment.status === 'sent') {
+      if (assignment && (assignment.status === 'sent' || assignment.status === 'pending')) {
         assignment.status = 'in_progress'
         saveTaskAssignment(planId, assignment)
         emitTaskAssignmentUpdate(assignment)
@@ -1993,18 +2001,30 @@ async function startHeadlessTaskAgent(
     }
   })
 
-  agent.on('complete', (result) => {
-    agentInfo.status = result.success ? 'completed' : 'failed'
+  agent.on('complete', async (result) => {
+    // Check if bd close succeeded - if so, treat as success even if container was force-stopped (exit 143)
+    const bdCloseSucceeded = tasksWithSuccessfulBdClose.has(task.id)
+    const effectiveSuccess = result.success || bdCloseSucceeded
+
+    logger.info('agent', 'Headless agent complete event received', { planId, taskId: task.id }, {
+      success: result.success,
+      exitCode: result.exitCode,
+      bdCloseSucceeded,
+      effectiveSuccess,
+    })
+
+    agentInfo.status = effectiveSuccess ? 'completed' : 'failed'
     agentInfo.completedAt = new Date().toISOString()
     agentInfo.result = result
     emitHeadlessAgentUpdate(agentInfo)
 
     // Clean up tracking
     headlessAgents.delete(task.id)
+    tasksWithSuccessfulBdClose.delete(task.id)
 
-    if (result.success) {
+    if (effectiveSuccess) {
       addPlanActivity(planId, 'success', `Task ${task.id} completed (headless)`)
-      markWorktreeReadyForReview(planId, task.id)
+      await markWorktreeReadyForReview(planId, task.id)
     } else {
       addPlanActivity(planId, 'error', `Task ${task.id} failed`, result.error)
     }
@@ -2021,6 +2041,7 @@ async function startHeadlessTaskAgent(
 
   // Start the agent
   try {
+    const agentModel = getPreferences().agentModel || 'sonnet'
     await agent.start({
       prompt: taskPrompt,
       worktreePath: worktree.path,
@@ -2028,7 +2049,7 @@ async function startHeadlessTaskAgent(
       planId,
       taskId: task.id,
       image: DOCKER_IMAGE_NAME,
-      claudeFlags: ['--model', 'opus'],
+      claudeFlags: ['--model', agentModel],
     })
 
     addPlanActivity(planId, 'info', `Task ${task.id} started (headless container)`)
@@ -2042,6 +2063,52 @@ async function startHeadlessTaskAgent(
 
     throw error
   }
+}
+
+let bdCloseListenerSetup = false
+
+// Track tasks that have successfully run bd close (even if container exit code is non-zero)
+const tasksWithSuccessfulBdClose: Set<string> = new Set()
+
+/**
+ * Check if a task successfully ran bd close
+ */
+export function taskHasSuccessfulBdClose(taskId: string): boolean {
+  return tasksWithSuccessfulBdClose.has(taskId)
+}
+
+/**
+ * Set up listener for bd-close-success events to stop containers after grace period
+ */
+function setupBdCloseListener(): void {
+  if (bdCloseListenerSetup) return
+  bdCloseListenerSetup = true
+
+  proxyEvents.on('bd-close-success', async ({ planId, taskId }: { planId: string; taskId: string }) => {
+    const logCtx: LogContext = { planId, taskId }
+    logger.info('proxy', 'Received bd-close-success, marking task as successfully closed', logCtx)
+
+    // Mark this task as having successfully closed via bd
+    tasksWithSuccessfulBdClose.add(taskId)
+
+    logger.info('proxy', 'Scheduling container stop after 3s grace period', logCtx)
+
+    // Grace period for agent to exit voluntarily via exit 0
+    setTimeout(async () => {
+      const agent = headlessAgents.get(taskId)
+      if (!agent) {
+        logger.info('agent', 'Agent already removed from tracking (exited cleanly)', logCtx)
+        return
+      }
+      const status = agent.getStatus()
+      if (status === 'running') {
+        logger.info('agent', 'Container still running after bd close grace period, forcing stop', logCtx)
+        await agent.stop()
+      } else {
+        logger.info('agent', 'Agent already stopped/completed', logCtx, { status })
+      }
+    }, 3000)
+  })
 }
 
 /**
@@ -2111,7 +2178,8 @@ async function stopAllHeadlessAgents(planId: string): Promise<void> {
  */
 function buildTaskPromptForHeadless(planId: string, task: BeadTask, repository?: Repository, _hostWorktreePath?: string): string {
   const plan = getPlanById(planId)
-  const baseBranch = plan?.baseBranch || repository?.defaultBranch || 'main'
+  // Prefer repository's detected defaultBranch over plan's potentially incorrect default
+  const baseBranch = repository?.defaultBranch || plan?.baseBranch || 'main'
 
   // Build completion instructions based on branch strategy
   let completionInstructions: string
@@ -2164,8 +2232,7 @@ All these commands work normally (they are proxied to the host automatically):
    - bd close ${task.id} --message "..."  (REQUIRED when done)
    - The --sandbox flag is added automatically
 
-IMPORTANT: You MUST close your task using 'bd close' when finished.
-This signals to Bismark that your work is complete and triggers the commit push.
+IMPORTANT: After 'bd close' succeeds, you MUST run 'exit 0' to terminate the session.
 
 === COMMIT STYLE ===
 Keep commits simple and direct:
@@ -2184,7 +2251,7 @@ ${completionInstructions}
 CRITICAL: There is no interactive mode. You must:
 - Complete all work
 - Close the task with 'bd close ${task.id} --message "..."'
-- The session ends automatically after task closure`
+- Run 'exit 0' immediately after bd close succeeds to end the session`
 }
 
 /**
@@ -2290,7 +2357,7 @@ async function cleanupTaskAgent(planId: string, taskId: string): Promise<void> {
 /**
  * Mark a worktree as ready for review (task agent completed)
  */
-function markWorktreeReadyForReview(planId: string, taskId: string): void {
+async function markWorktreeReadyForReview(planId: string, taskId: string): Promise<void> {
   const plan = getPlanById(planId)
   if (!plan || !plan.worktrees) return
 
@@ -2324,11 +2391,13 @@ function markWorktreeReadyForReview(planId: string, taskId: string): void {
   logger.info('task', 'Task completed and ready for review', logCtx)
   addPlanActivity(planId, 'success', `Task ${taskId} ready for review`, `Worktree: ${worktree.branch}`)
 
-  // Handle branch strategy on task completion
-  handleTaskCompletionStrategy(planId, taskId, worktree).catch(error => {
+  // Handle branch strategy on task completion (await to ensure commits are recorded before cleanup)
+  try {
+    await handleTaskCompletionStrategy(planId, taskId, worktree)
+  } catch (error) {
     console.error(`[PlanManager] Error handling task completion strategy:`, error)
     addPlanActivity(planId, 'warning', `Git operation warning for ${taskId}`, error instanceof Error ? error.message : 'Unknown error')
-  })
+  }
 }
 
 /**
@@ -2474,7 +2543,8 @@ async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promis
       }
 
       // Rebase this worktree's commits onto the feature branch
-      const baseBranch = plan.baseBranch || repository.defaultBranch
+      // Prefer repository's detected defaultBranch over plan's potentially incorrect default
+      const baseBranch = repository.defaultBranch || plan.baseBranch || 'main'
       try {
         // First try to rebase onto feature branch if it exists
         await fetchAndRebase(worktree.path, plan.featureBranch)
@@ -2579,7 +2649,8 @@ async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repositor
 
   try {
     // Get commits made in this worktree
-    const baseBranch = plan.baseBranch || repository.defaultBranch
+    // Prefer repository's detected defaultBranch over plan's potentially incorrect default
+    const baseBranch = repository.defaultBranch || plan.baseBranch || 'main'
     const commits = await getCommitsBetween(worktree.path, `origin/${baseBranch}`, 'HEAD')
 
     if (commits.length === 0) {

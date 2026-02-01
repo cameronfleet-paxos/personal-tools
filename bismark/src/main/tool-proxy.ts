@@ -264,6 +264,16 @@ async function handleBdRequest(
     // Execute in plan directory context
     const result = await executeCommand('bd', args, body.stdin, { cwd: planDir })
 
+    // Emit specialized event on successful bd close
+    if (result.exitCode === 0 && filteredArgs.includes('close')) {
+      const closeIndex = filteredArgs.indexOf('close')
+      const taskId = filteredArgs[closeIndex + 1]
+      if (taskId && !taskId.startsWith('-')) {
+        logger.info('proxy', 'bd close succeeded, emitting bd-close-success', { planId }, { taskId })
+        proxyEvents.emit('bd-close-success', { planId, taskId })
+      }
+    }
+
     logger.proxyRequest('bd', args, result.exitCode === 0, { planId }, {
       exitCode: result.exitCode,
     })
