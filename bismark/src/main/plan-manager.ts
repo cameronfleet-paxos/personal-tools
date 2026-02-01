@@ -19,14 +19,14 @@ import {
   saveHeadlessAgentInfo,
 } from './config'
 import { bdCreate, bdList, bdUpdate, BeadTask, ensureBeadsRepo, getPlanDir } from './bd-client'
-import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, createTerminal, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
-import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState } from './state-manager'
+import { injectTextToTerminal, injectPromptToTerminal, getTerminalForWorkspace, waitForTerminalOutput, closeTerminal, getTerminalEmitter, sendExitToTerminal } from './terminal'
+import { queueTerminalCreation } from './terminal-queue'
+import { createTab, addWorkspaceToTab, addActiveWorkspace, removeActiveWorkspace, removeWorkspaceFromTab, setActiveTab, deleteTab, getState, setFocusedWorkspace } from './state-manager'
 import type { Plan, TaskAssignment, PlanStatus, Agent, PlanActivity, PlanActivityType, Workspace, PlanWorktree, Repository, StreamEvent, HeadlessAgentInfo, HeadlessAgentStatus, BranchStrategy, PlanCommit, PlanPullRequest, PlanDiscussion } from '../shared/types'
 import {
   createWorktree,
   removeWorktree,
   pruneWorktrees,
-  generateUniqueBranchName,
   pushBranch,
   pushBranchToRemoteBranch,
   getCommitsBetween,
@@ -34,6 +34,8 @@ import {
   getGitHubUrlFromRemote,
   createBranch,
   getHeadCommit,
+  fetchBranch,
+  remoteBranchExists,
 } from './git-utils'
 import {
   getRepositoryById,
@@ -343,6 +345,8 @@ function generateDiscussionId(): string {
  * This agent engages the user in structured brainstorming BEFORE task creation
  */
 function buildDiscussionAgentPrompt(plan: Plan, codebasePath: string): string {
+  const planDir = getPlanDir(plan.id)
+
   return `[BISMARK DISCUSSION AGENT]
 Plan: ${plan.title}
 ${plan.description}
@@ -351,10 +355,17 @@ ${plan.description}
 You are a Discussion Agent helping to refine this plan BEFORE implementation.
 Your goal is to help the user think through the problem completely before any code is written.
 
+=== ASKING QUESTIONS ===
+When you need input from the user, use the AskUserQuestion tool.
+This provides a better UI experience than typing in the terminal.
+- Structure questions with 2-4 clear options when possible
+- Use multiSelect: true when multiple answers make sense
+- The user can always provide custom input via "Other"
+
 === THE PROCESS ===
 1. **Understanding the idea:**
    - Check the codebase at ${codebasePath} first to understand the existing architecture
-   - Ask questions ONE AT A TIME (never overwhelm with multiple questions)
+   - Ask questions ONE AT A TIME using AskUserQuestion tool
    - Prefer multiple choice when possible (easier for user to respond)
    - Focus on: purpose, constraints, success criteria
 
@@ -377,21 +388,46 @@ Make sure to discuss these areas (in order):
 - **Edge cases**: What failure modes exist? How do we handle errors?
 
 === KEY PRINCIPLES ===
-- Ask ONE question at a time
-- Multiple choice is preferred (e.g., "Which approach do you prefer? A) ... B) ... C) ...")
+- Ask ONE question at a time using AskUserQuestion tool
+- Multiple choice is preferred (2-4 options per question)
 - YAGNI ruthlessly - challenge any unnecessary features
 - Always propose 2-3 approaches before settling on one
 - Present design in digestible sections (200-300 words)
 - Be opinionated - share your recommendation clearly
 
 === WHEN COMPLETE ===
-When you have covered all the key areas and the user seems satisfied:
-1. Summarize the key decisions made in a clear list
-2. Ask: "Ready to create tasks for this plan? Type 'yes' to proceed."
-3. When the user confirms with 'yes', type /exit to signal that discussion is complete
+When you have covered all the key areas and the user is satisfied:
+
+1. Write a structured summary to: ${planDir}/discussion-output.md
+
+   The file should contain:
+   \`\`\`markdown
+   # Discussion Summary: ${plan.title}
+
+   ## Requirements Agreed Upon
+   - [List requirements decided during discussion]
+
+   ## Architecture Decisions
+   - [List architecture decisions made]
+
+   ## Testing Strategy
+   - [Testing approach agreed upon]
+
+   ## Edge Cases to Handle
+   - [Edge cases identified]
+
+   ## Proposed Task Breakdown
+   - Task 1: [description]
+     - Dependencies: none
+   - Task 2: [description]
+     - Dependencies: Task 1
+   - [etc.]
+   \`\`\`
+
+2. Type /exit to signal that discussion is complete
 
 === BEGIN ===
-Start by briefly reviewing the codebase structure, then ask your first clarifying question about the requirements.`
+Start by briefly reviewing the codebase structure, then use AskUserQuestion to ask your first clarifying question about the requirements.`
 }
 
 /**
@@ -461,29 +497,48 @@ export async function startDiscussion(planId: string, referenceAgentId: string):
       const claudeFlags = `--add-dir "${referenceWorkspace.directory}"`
 
       console.log(`[PlanManager] Creating terminal for discussion agent ${discussionWorkspace.id}`)
-      const terminalId = createTerminal(discussionWorkspace.id, mainWindow, discussionPrompt, claudeFlags)
+      const terminalId = await queueTerminalCreation(discussionWorkspace.id, mainWindow, {
+        initialPrompt: discussionPrompt,
+        claudeFlags,
+      })
       console.log(`[PlanManager] Created discussion terminal: ${terminalId}`)
 
       addActiveWorkspace(discussionWorkspace.id)
       addWorkspaceToTab(discussionWorkspace.id, discussionTab.id)
       setActiveTab(discussionTab.id)
 
-      // Notify renderer about the new terminal
+      // Notify renderer about the new terminal and maximize it
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('terminal-created', {
           terminalId,
           workspaceId: discussionWorkspace.id,
         })
+        // Send maximize event to renderer so it displays full screen
+        mainWindow.webContents.send('maximize-workspace', discussionWorkspace.id)
       }
 
-      // Set up listener for discussion agent exit
+      // Set up listener for discussion agent completion
+      // Watch for the discussion output file being written
+      const discussionOutputPath = `${getPlanDir(planId)}/discussion-output.md`
       const discussionEmitter = getTerminalEmitter(terminalId)
+      let completionTriggered = false
+
       if (discussionEmitter) {
-        const exitHandler = (data: string) => {
-          // Claude shows "Goodbye!" when /exit is used
-          if (data.includes('Goodbye') || data.includes('Session ended')) {
-            discussionEmitter.removeListener('data', exitHandler)
-            completeDiscussion(planId)
+        const exitHandler = async (data: string) => {
+          if (completionTriggered) return
+
+          // Check if discussion output file was written
+          // Look for the Write tool output or file creation confirmation
+          if (data.includes('discussion-output.md') && (data.includes('Wrote') || data.includes('lines to'))) {
+            // Verify file exists before completing
+            try {
+              await fs.access(discussionOutputPath)
+              completionTriggered = true
+              discussionEmitter.removeListener('data', exitHandler)
+              completeDiscussion(planId)
+            } catch {
+              // File not created yet, keep waiting
+            }
           }
         }
         discussionEmitter.on('data', exitHandler)
@@ -515,8 +570,11 @@ async function completeDiscussion(planId: string): Promise<void> {
     plan.discussion.status = 'approved'
     plan.discussion.approvedAt = new Date().toISOString()
     // Generate a summary from the discussion (the agent should have done this)
-    plan.discussion.summary = 'Discussion completed - see terminal output for decisions made.'
+    plan.discussion.summary = 'Discussion completed - see discussion-output.md for decisions made.'
   }
+
+  // Store the path to the discussion output file
+  plan.discussionOutputPath = `${getPlanDir(planId)}/discussion-output.md`
 
   // Cleanup discussion agent
   if (plan.discussionAgentWorkspaceId) {
@@ -530,6 +588,8 @@ async function completeDiscussion(planId: string): Promise<void> {
     plan.discussionAgentWorkspaceId = null
   }
 
+  // Transition to 'discussed' status - ready for execution
+  plan.status = 'discussed'
   plan.updatedAt = new Date().toISOString()
   savePlan(plan)
 
@@ -648,13 +708,16 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
   console.log(`[PlanManager] mainWindow is: ${mainWindow ? 'defined' : 'NULL'}`)
   if (mainWindow) {
     try {
-      // Build the orchestrator prompt and pass it to createTerminal
+      // Build the orchestrator prompt and pass it to queueTerminalCreation
       // Claude will automatically process it when it's ready
       // Pass --add-dir flag so orchestrator has permission to access plan directory without prompts
       const claudeFlags = `--add-dir "${planDir}"`
       const orchestratorPrompt = await buildOrchestratorPrompt(plan, allAgents)
       console.log(`[PlanManager] Creating terminal for orchestrator ${orchestratorWorkspace.id}`)
-      const orchestratorTerminalId = createTerminal(orchestratorWorkspace.id, mainWindow, orchestratorPrompt, claudeFlags)
+      const orchestratorTerminalId = await queueTerminalCreation(orchestratorWorkspace.id, mainWindow, {
+        initialPrompt: orchestratorPrompt,
+        claudeFlags,
+      })
       console.log(`[PlanManager] Created terminal: ${orchestratorTerminalId}`)
       addActiveWorkspace(orchestratorWorkspace.id)
       addWorkspaceToTab(orchestratorWorkspace.id, orchestratorTab.id)
@@ -688,7 +751,10 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
       const planAgentClaudeFlags = `--add-dir "${planDir}" --add-dir "${referenceWorkspace.directory}"`
       const planAgentPrompt = buildPlanAgentPrompt(plan, allAgents, referenceWorkspace.directory)
       console.log(`[PlanManager] Creating terminal for plan agent ${planAgentWorkspace.id}`)
-      const planAgentTerminalId = createTerminal(planAgentWorkspace.id, mainWindow, planAgentPrompt, planAgentClaudeFlags)
+      const planAgentTerminalId = await queueTerminalCreation(planAgentWorkspace.id, mainWindow, {
+        initialPrompt: planAgentPrompt,
+        claudeFlags: planAgentClaudeFlags,
+      })
       console.log(`[PlanManager] Created plan agent terminal: ${planAgentTerminalId}`)
       addActiveWorkspace(planAgentWorkspace.id)
       addWorkspaceToTab(planAgentWorkspace.id, orchestratorTab.id)
@@ -1070,10 +1136,40 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
   // Log task discovery
   addPlanActivity(planId, 'info', `Processing task: ${task.id}`, `Repo: ${repoName}, Worktree: ${worktreeName}`)
 
+  // For feature_branch strategy with dependent tasks, ensure we have the latest feature branch
+  const hasBlockers = task.blockedBy && task.blockedBy.length > 0
+  if (plan.branchStrategy === 'feature_branch' && hasBlockers && plan.featureBranch) {
+    // Check if we need to spawn a merge agent for parallel blocker tasks
+    const mergeAgentSpawned = await maybeSpawnMergeAgent(plan, task)
+    if (mergeAgentSpawned) {
+      // Merge agent was spawned - this task will be retried after merge completes
+      addPlanActivity(planId, 'info', `Merge agent spawned for task ${task.id}`, 'Waiting for parallel task commits to be merged')
+      return
+    }
+
+    // Fetch the feature branch to ensure worktree has latest commits from blockers
+    try {
+      const featureBranchExists = await remoteBranchExists(repository.rootPath, plan.featureBranch)
+      if (featureBranchExists) {
+        await fetchBranch(repository.rootPath, plan.featureBranch)
+        addPlanActivity(planId, 'info', `Fetched feature branch for dependent task`, plan.featureBranch)
+      }
+    } catch (error) {
+      addPlanActivity(
+        planId,
+        'warning',
+        `Failed to fetch feature branch`,
+        error instanceof Error ? error.message : 'Unknown error'
+      )
+      // Continue anyway - the worktree creation will handle missing remote branch
+    }
+  }
+
   // Create task assignment
   const assignment: TaskAssignment = {
     beadId: task.id,
     agentId: '', // Will be set after agent creation
+    planId: planId,
     status: 'pending',
     assignedAt: new Date().toISOString(),
   }
@@ -1171,7 +1267,11 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
         const planDir = getPlanDir(planId)
         const claudeFlags = `--add-dir "${worktree.path}" --add-dir "${planDir}"`
 
-        const terminalId = createTerminal(agent.id, mainWindow, taskPrompt, claudeFlags, true)
+        const terminalId = await queueTerminalCreation(agent.id, mainWindow, {
+          initialPrompt: taskPrompt,
+          claudeFlags,
+          autoAcceptMode: true,
+        })
         addActiveWorkspace(agent.id)
         addWorkspaceToTab(agent.id, plan.orchestratorTabId)
 
@@ -1311,6 +1411,12 @@ Max parallel agents: ${maxParallel}
 List all tasks:
   bd --sandbox list --json
 
+List only open tasks:
+  bd --sandbox list --json
+
+List all tasks (including closed):
+  bd --sandbox list --all --json
+
 Assign a task to a repository with worktree name:
   bd --sandbox update <task-id> --add-label "repo:<repo-name>" --add-label "worktree:<descriptive-name>"
 
@@ -1319,6 +1425,19 @@ Mark task ready for pickup:
 
 Check task dependencies:
   bd --sandbox dep list <task-id> --direction=down
+
+=== JQ FILTERING ===
+IMPORTANT: When filtering with jq, avoid using != or ! operators.
+Bash's history expansion interprets ! specially and causes syntax errors.
+
+Good (use select with ==):
+  bd --sandbox list --json | jq '.[] | select(.status == "open")'
+
+Bad (will fail with shell escaping issues):
+  bd --sandbox list --json | jq '.[] | select(.status != "closed")'
+
+For exclusion, use "not" instead:
+  bd --sandbox list --json | jq '.[] | select(.id == "x" | not)'
 
 === WORKFLOW ===
 Phase 1 - Initial Setup (after Plan Agent exits):
@@ -1329,7 +1448,7 @@ Phase 1 - Initial Setup (after Plan Agent exits):
 3. Mark first task(s) (those with no blockers) as ready
 
 Phase 2 - Monitoring (every 30 seconds):
-1. Check for closed tasks: bd --sandbox list --closed --json
+1. Check for closed tasks: bd --sandbox list --all --json
 2. For each newly closed task, find dependents: bd --sandbox dep list <task-id> --direction=up
 3. Check if dependent's blockers are all closed
 4. If all blockers closed, mark the dependent task as ready
@@ -1357,16 +1476,21 @@ function buildPlanAgentPrompt(plan: Plan, _agents: Agent[], codebasePath: string
   const planDir = getPlanDir(plan.id)
 
   // Include discussion context if a discussion was completed
-  const discussionContext = plan.discussion?.status === 'approved' && plan.discussion?.summary
+  const discussionContext = plan.discussion?.status === 'approved' && plan.discussionOutputPath
     ? `
 === DISCUSSION OUTCOMES ===
-A brainstorming discussion was completed before task creation. Key decisions:
+A brainstorming discussion was completed before task creation.
 
-${plan.discussion.summary}
+Read the discussion outcomes at: ${plan.discussionOutputPath}
 
-IMPORTANT: Create tasks that align with these decisions. The discussion covered
-requirements, architecture, testing, and edge cases. Honor these decisions.
+This file contains:
+- Requirements agreed upon
+- Architecture decisions made
+- Testing strategy
+- Edge cases to handle
+- Proposed task breakdown with dependencies
 
+IMPORTANT: Create tasks that match the structure in this file.
 `
     : ''
 
@@ -1510,9 +1634,10 @@ async function createTaskAgentWithWorktree(
   const plan = getPlanById(planId)
   if (!plan) return null
 
-  // Generate unique branch name
-  const baseBranchName = `bismark/${planId.split('-')[1]}/${worktreeName}`
-  const branchName = await generateUniqueBranchName(repository.rootPath, baseBranchName)
+  // Include task ID suffix to guarantee uniqueness across parallel task creation
+  // Task IDs are like "bismark-6c8.1", extract the suffix after the dot
+  const taskSuffix = task.id.includes('.') ? task.id.split('.').pop() : task.id.split('-').pop()
+  const branchName = `bismark/${planId.split('-')[1]}/${worktreeName}-${taskSuffix}`
 
   // Determine worktree path
   const worktreePath = getWorktreePath(planId, repository.name, worktreeName)
@@ -1562,6 +1687,8 @@ async function createTaskAgentWithWorktree(
     agentId: taskAgent.id,
     status: 'active',
     createdAt: new Date().toISOString(),
+    // Track task dependencies for merge logic
+    blockedBy: task.blockedBy,
   }
 
   // Add worktree to plan
@@ -1609,6 +1736,17 @@ async function startHeadlessTaskAgent(
   agent.on('status', (status: HeadlessAgentStatus) => {
     agentInfo.status = status
     emitHeadlessAgentUpdate(agentInfo)
+
+    // Sync task assignment status when agent starts running
+    if (status === 'running') {
+      const assignments = loadTaskAssignments(planId)
+      const assignment = assignments.find((a) => a.beadId === task.id)
+      if (assignment && assignment.status === 'sent') {
+        assignment.status = 'in_progress'
+        saveTaskAssignment(planId, assignment)
+        emitTaskAssignmentUpdate(assignment)
+      }
+    }
   })
 
   agent.on('event', (event: StreamEvent) => {
@@ -1739,11 +1877,13 @@ All these commands work normally (they are proxied to the host automatically):
    - git status
    - git add .
    - git commit -m "Your commit message"
-   - git push origin HEAD
 
    IMPORTANT: For git commit, always use -m "message" inline.
    Do NOT use --file or -F flags - file paths don't work across the proxy
    since files in the container aren't accessible to git on the host.
+
+   NOTE: Do NOT push your commits directly. Bismark will automatically push
+   your commits to the shared feature branch when you close the task.
 
 2. GitHub CLI (gh):
    - gh pr create --base ${baseBranch} --title "..." --body "..."
@@ -1758,7 +1898,13 @@ All these commands work normally (they are proxied to the host automatically):
    - The --sandbox flag is added automatically
 
 IMPORTANT: You MUST close your task using 'bd close' when finished.
-This signals to Bismark that your work is complete.
+This signals to Bismark that your work is complete and triggers the commit push.
+
+=== COMMIT STYLE ===
+Keep commits simple and direct:
+- Use: git commit -m "Brief description of change"
+- Do NOT use HEREDOC, --file, or multi-step verification
+- Commit once when work is complete, don't overthink it
 
 === YOUR WORKING DIRECTORY ===
 You are in a dedicated git worktree: /workspace
@@ -1906,7 +2052,7 @@ function markWorktreeReadyForReview(planId: string, taskId: string): void {
 
 /**
  * Determine the base branch for a task based on the plan's branch strategy
- * - feature_branch: always use the shared feature branch (or baseBranch if not created yet)
+ * - feature_branch: dependent tasks base on the feature branch (to get blocker commits)
  * - raise_prs: use the blocker's branch for dependent tasks, or plan's baseBranch for first tasks
  */
 function getBaseBranchForTask(plan: Plan, task: BeadTask, repository: Repository): string {
@@ -1914,9 +2060,16 @@ function getBaseBranchForTask(plan: Plan, task: BeadTask, repository: Repository
   const defaultBase = plan.baseBranch || repository.defaultBranch
 
   if (plan.branchStrategy === 'feature_branch') {
-    // For feature branch strategy, task branches are created off the default base (e.g., main)
-    // When the task completes, commits are pushed to the shared feature branch
-    // This avoids needing the feature branch to exist before the first task starts
+    // Check if this task has blockers (depends on other tasks)
+    const hasBlockers = task.blockedBy && task.blockedBy.length > 0
+
+    if (hasBlockers && plan.featureBranch) {
+      // Dependent tasks base on the feature branch to get commits from blockers
+      // The feature branch should have been updated when blocker tasks completed
+      return plan.featureBranch
+    }
+
+    // First tasks (no blockers) start from the default base (e.g., main)
     return defaultBase
   }
 
@@ -1929,6 +2082,141 @@ function getBaseBranchForTask(plan: Plan, task: BeadTask, repository: Repository
   }
 
   return defaultBase
+}
+
+/**
+ * Check if parallel blocker tasks need to be merged before a dependent task can start.
+ * Returns true if a merge agent was spawned (caller should wait and retry).
+ *
+ * A merge agent is needed when:
+ * 1. The dependent task has multiple blockers
+ * 2. Those blockers ran in parallel (not depending on each other)
+ * 3. At least one blocker's commits haven't been merged yet
+ */
+async function maybeSpawnMergeAgent(plan: Plan, dependentTask: BeadTask): Promise<boolean> {
+  if (plan.branchStrategy !== 'feature_branch') return false
+  if (!plan.featureBranch) return false
+  if (!dependentTask.blockedBy || dependentTask.blockedBy.length <= 1) return false
+
+  // Find worktrees for blocker tasks that are ready_for_review
+  const blockerWorktrees = (plan.worktrees || []).filter(w =>
+    dependentTask.blockedBy?.includes(w.taskId) &&
+    w.status === 'ready_for_review'
+  )
+
+  // If not all blockers are done yet, wait
+  if (blockerWorktrees.length !== dependentTask.blockedBy.length) {
+    return false
+  }
+
+  // Check which blocker worktrees haven't been merged into the feature branch yet
+  const unmergedWorktrees = blockerWorktrees.filter(w => !w.mergedIntoFeatureBranch)
+
+  // If all already merged, no merge agent needed
+  if (unmergedWorktrees.length === 0) {
+    return false
+  }
+
+  // If only one unmerged, the normal push should handle it
+  if (unmergedWorktrees.length === 1) {
+    return false
+  }
+
+  // Multiple unmerged parallel worktrees - spawn a merge agent
+  addPlanActivity(
+    plan.id,
+    'info',
+    `Multiple parallel tasks need merging`,
+    `Tasks: ${unmergedWorktrees.map(w => w.taskId).join(', ')}`
+  )
+
+  // For now, we'll sequentially push each worktree's commits to the feature branch
+  // This is simpler than spawning a merge agent and handles most cases
+  const repository = await getRepositoryById(blockerWorktrees[0].repositoryId)
+  if (!repository) {
+    addPlanActivity(plan.id, 'error', 'Repository not found for merge operation')
+    return false
+  }
+
+  for (const worktree of unmergedWorktrees) {
+    try {
+      // Fetch latest feature branch state
+      try {
+        await fetchBranch(worktree.path, plan.featureBranch)
+      } catch {
+        // Feature branch might not exist yet for first push
+      }
+
+      // Rebase this worktree's commits onto the feature branch
+      const baseBranch = plan.baseBranch || repository.defaultBranch
+      try {
+        // First try to rebase onto feature branch if it exists
+        await fetchAndRebase(worktree.path, plan.featureBranch)
+      } catch {
+        // Feature branch might not exist or rebase failed
+        // Try rebasing onto base branch instead
+        try {
+          await fetchAndRebase(worktree.path, baseBranch)
+        } catch {
+          // Ignore rebase failures - push will either work or fail with clear error
+        }
+      }
+
+      // Push to feature branch with force-with-lease since we may have rebased
+      await pushBranchToRemoteBranch(worktree.path, 'HEAD', plan.featureBranch, 'origin', true)
+
+      // Mark as merged
+      worktree.mergedAt = new Date().toISOString()
+      worktree.mergedIntoFeatureBranch = true
+
+      // Get commits for git summary
+      const commits = await getCommitsBetween(worktree.path, `origin/${baseBranch}`, 'HEAD')
+      if (commits.length > 0) {
+        worktree.commits = commits.map(c => c.sha)
+
+        const githubUrl = getGitHubUrlFromRemote(repository.remoteUrl)
+        const planCommits: PlanCommit[] = commits.map(c => ({
+          sha: c.sha,
+          shortSha: c.shortSha,
+          message: c.message,
+          taskId: worktree.taskId,
+          timestamp: c.timestamp,
+          repositoryId: repository.id,
+          githubUrl: githubUrl ? `${githubUrl}/commit/${c.sha}` : undefined,
+        }))
+
+        if (!plan.gitSummary) {
+          plan.gitSummary = { commits: [] }
+        }
+        if (!plan.gitSummary.commits) {
+          plan.gitSummary.commits = []
+        }
+        plan.gitSummary.commits.push(...planCommits)
+      }
+
+      addPlanActivity(
+        plan.id,
+        'success',
+        `Merged task ${worktree.taskId} into feature branch`,
+        `${commits.length} commit(s) pushed`
+      )
+    } catch (error) {
+      addPlanActivity(
+        plan.id,
+        'error',
+        `Failed to merge task ${worktree.taskId}`,
+        error instanceof Error ? error.message : 'Unknown error'
+      )
+      // Continue trying other worktrees
+    }
+  }
+
+  savePlan(plan)
+  emitPlanUpdate(plan)
+
+  // Return false to indicate the dependent task can now proceed
+  // (we handled the merge synchronously rather than spawning an async agent)
+  return false
 }
 
 /**
@@ -2010,19 +2298,26 @@ async function pushToFeatureBranch(plan: Plan, worktree: PlanWorktree, repositor
     savePlan(plan)
     emitPlanUpdate(plan)
 
+    // Mark worktree as merged into feature branch
+    worktree.mergedAt = new Date().toISOString()
+    worktree.mergedIntoFeatureBranch = true
+    savePlan(plan)
+
     addPlanActivity(
       plan.id,
       'success',
       `Pushed ${commits.length} commit(s) for task ${worktree.taskId}`,
-      `Branch: ${worktree.branch}`
+      `To feature branch: ${plan.featureBranch}`
     )
   } catch (error) {
     addPlanActivity(
       plan.id,
-      'warning',
+      'error',
       `Failed to push commits for task ${worktree.taskId}`,
       error instanceof Error ? error.message : 'Unknown error'
     )
+    // Re-throw so calling code knows the push failed
+    throw error
   }
 }
 

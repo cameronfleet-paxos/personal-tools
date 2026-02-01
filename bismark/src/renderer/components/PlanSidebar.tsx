@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Plus, X } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { PlanCard } from '@/renderer/components/PlanCard'
@@ -40,12 +40,34 @@ export function PlanSidebar({
 }: PlanSidebarProps) {
   const [detailPlanId, setDetailPlanId] = useState<string | null>(null)
 
+  // Track whether user has explicitly dismissed the detail view
+  const userDismissedRef = useRef(false)
+  // Track the previous discussing plan ID to detect new discussions
+  const prevDiscussingIdRef = useRef<string | null>(null)
+
+  // Reset dismissal flag when sidebar opens
+  useEffect(() => {
+    if (open) {
+      userDismissedRef.current = false
+    }
+  }, [open])
+
   // Auto-expand detail view for plans in 'discussing' status
-  const discussingPlan = plans.find(p => p.status === 'discussing')
-  if (discussingPlan && !detailPlanId) {
-    // Use setTimeout to avoid React warning about updating during render
-    setTimeout(() => setDetailPlanId(discussingPlan.id), 0)
-  }
+  useEffect(() => {
+    const discussingPlan = plans.find(p => p.status === 'discussing')
+    const discussingId = discussingPlan?.id ?? null
+
+    // If a new plan entered discussing status, reset dismissal flag
+    if (discussingId && discussingId !== prevDiscussingIdRef.current) {
+      userDismissedRef.current = false
+    }
+    prevDiscussingIdRef.current = discussingId
+
+    // Auto-expand only if user hasn't dismissed and there's a discussing plan
+    if (discussingPlan && !detailPlanId && !userDismissedRef.current) {
+      setDetailPlanId(discussingPlan.id)
+    }
+  }, [plans, detailPlanId])
 
   if (!open) return null
 
@@ -61,7 +83,10 @@ export function PlanSidebar({
           activities={planActivities.get(detailPlan.id) || []}
           taskAssignments={taskAssignments}
           agents={agents}
-          onBack={() => setDetailPlanId(null)}
+          onBack={() => {
+            userDismissedRef.current = true
+            setDetailPlanId(null)
+          }}
           onComplete={() => {
             onCompletePlan(detailPlan.id)
             setDetailPlanId(null)
@@ -74,6 +99,9 @@ export function PlanSidebar({
             await onCancelDiscussion(detailPlan.id)
             setDetailPlanId(null)
           }}
+          onExecute={(referenceAgentId) => {
+            onExecutePlan(detailPlan.id, referenceAgentId)
+          }}
         />
       </aside>
     )
@@ -82,7 +110,7 @@ export function PlanSidebar({
   const activePlans = plans.filter(
     (p) => p.status === 'discussing' || p.status === 'delegating' || p.status === 'in_progress' || p.status === 'ready_for_review'
   )
-  const draftPlans = plans.filter((p) => p.status === 'draft')
+  const draftPlans = plans.filter((p) => p.status === 'draft' || p.status === 'discussed')
   const completedPlans = plans.filter(
     (p) => p.status === 'completed' || p.status === 'failed'
   )

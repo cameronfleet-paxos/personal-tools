@@ -87,6 +87,7 @@ export interface ElectronAPI {
   // Agent waiting events
   onAgentWaiting: (callback: (workspaceId: string) => void) => void
   onFocusWorkspace: (callback: (workspaceId: string) => void) => void
+  onMaximizeWorkspace: (callback: (workspaceId: string) => void) => void
   onWaitingQueueChanged: (callback: (queue: string[]) => void) => void
   onInitialState: (callback: (state: AppState) => void) => void
 
@@ -102,8 +103,17 @@ export interface ElectronAPI {
   onHeadlessAgentUpdate: (callback: (info: HeadlessAgentInfo) => void) => void
   onHeadlessAgentEvent: (callback: (data: { planId: string; taskId: string; event: StreamEvent }) => void) => void
 
+  // Terminal queue status
+  onTerminalQueueStatus: (callback: (status: { queued: number; active: number; pending: string[] }) => void) => void
+
   // External URL handling
   openExternal: (url: string) => Promise<void>
+
+  // Open Docker Desktop
+  openDockerDesktop: () => Promise<{ success: boolean; error?: string }>
+
+  // File reading
+  readFile: (filePath: string) => Promise<{ success: boolean; content?: string; error?: string }>
 
   // Tray updates
   updateTray: (count: number) => void

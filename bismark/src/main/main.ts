@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import path from 'path'
+import fs from 'fs'
 import { randomUUID } from 'crypto'
 import {
   ensureConfigDirExists,
@@ -13,12 +14,18 @@ import {
 } from './config'
 import { runSetupToken } from './oauth-setup'
 import {
-  createTerminal,
   writeTerminal,
   resizeTerminal,
   closeTerminal,
   closeAllTerminals,
+  getTerminalForWorkspace,
 } from './terminal'
+import {
+  queueTerminalCreationWithSetup,
+  setQueueMainWindow,
+  clearQueue,
+} from './terminal-queue'
+import { cleanupOrphanedProcesses } from './process-cleanup'
 import {
   createSocketServer,
   closeSocketServer,
@@ -95,6 +102,26 @@ import type { Workspace, AppPreferences, Repository } from '../shared/types'
 // Generate unique instance ID for socket isolation
 const instanceId = randomUUID()
 
+// Signal handlers for graceful shutdown on crash
+process.on('uncaughtException', async (error) => {
+  console.error('[Main] Uncaught exception:', error)
+  try {
+    clearQueue()
+    closeAllTerminals()
+    closeAllSocketServers()
+    await cleanupPlanManager()
+    await cleanupDevHarness()
+  } catch (cleanupError) {
+    console.error('[Main] Cleanup error during crash:', cleanupError)
+  }
+  process.exit(1)
+})
+
+process.on('unhandledRejection', async (reason, promise) => {
+  console.error('[Main] Unhandled rejection at:', promise, 'reason:', reason)
+  // Don't exit for unhandled rejections, just log them
+})
+
 let mainWindow: BrowserWindow | null = null
 
 function createWindow() {
@@ -108,10 +135,11 @@ function createWindow() {
     },
   })
 
-  // Set the main window reference for socket server, plan manager, and dev harness
+  // Set the main window reference for socket server, plan manager, dev harness, and queue
   setMainWindow(mainWindow)
   setPlanManagerWindow(mainWindow)
   setDevHarnessWindow(mainWindow)
+  setQueueMainWindow(mainWindow)
 
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL('http://localhost:5173')
@@ -125,6 +153,7 @@ function createWindow() {
     setMainWindow(null)
     setPlanManagerWindow(null)
     setDevHarnessWindow(null)
+    setQueueMainWindow(null)
   })
 
   // Create system tray
@@ -150,25 +179,20 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('delete-workspace', (_event, id: string) => {
+    // Close terminal first to ensure PTY process is killed
+    const terminalId = getTerminalForWorkspace(id)
+    if (terminalId) {
+      closeTerminal(terminalId)
+    }
     deleteWorkspace(id)
     removeActiveWorkspace(id)
     closeSocketServer(id)
   })
 
   // Terminal management
-  ipcMain.handle('create-terminal', (_event, workspaceId: string) => {
-    // Create socket server for this workspace
-    createSocketServer(workspaceId)
-
-    // Add to active workspaces
-    addActiveWorkspace(workspaceId)
-
-    // Auto-place workspace in a tab with space (or create new tab)
-    const tab = getOrCreateTabForWorkspace(workspaceId)
-    addWorkspaceToTab(workspaceId, tab.id)
-    setActiveTab(tab.id)
-
-    return createTerminal(workspaceId, mainWindow)
+  ipcMain.handle('create-terminal', async (_event, workspaceId: string) => {
+    // Use the queue for terminal creation with full setup
+    return queueTerminalCreationWithSetup(workspaceId, mainWindow)
   })
 
   ipcMain.handle('write-terminal', (_event, terminalId: string, data: string) => {
@@ -195,7 +219,18 @@ function registerIpcHandlers() {
     setFocusedWorkspace(workspaceId)
   })
 
+  ipcMain.handle('maximize-workspace', (_event, workspaceId: string) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('maximize-workspace', workspaceId)
+    }
+  })
+
   ipcMain.handle('stop-workspace', (_event, workspaceId: string) => {
+    // Close terminal first to ensure PTY process is killed
+    const terminalId = getTerminalForWorkspace(workspaceId)
+    if (terminalId) {
+      closeTerminal(terminalId)
+    }
     removeWorkspaceFromTab(workspaceId)
     removeActiveWorkspace(workspaceId)
     closeSocketServer(workspaceId)
@@ -378,6 +413,31 @@ function registerIpcHandlers() {
     return shell.openExternal(url)
   })
 
+  // Open Docker Desktop application
+  ipcMain.handle('open-docker-desktop', async () => {
+    try {
+      // On macOS, open Docker Desktop app
+      const { exec } = await import('child_process')
+      const { promisify } = await import('util')
+      const execAsync = promisify(exec)
+      await execAsync('open -a "Docker Desktop"')
+      return { success: true }
+    } catch (error) {
+      console.error('Failed to open Docker Desktop:', error)
+      return { success: false, error: String(error) }
+    }
+  })
+
+  // File reading (for discussion output, etc.)
+  ipcMain.handle('read-file', async (_event, filePath: string) => {
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf-8')
+      return { success: true, content }
+    } catch (error) {
+      return { success: false, error: String(error) }
+    }
+  })
+
   // Git repository management
   ipcMain.handle('detect-git-repository', async (_event, directory: string) => {
     return detectRepository(directory)
@@ -431,6 +491,9 @@ app.whenReady().then(async () => {
   // Initialize config directory structure
   ensureConfigDirExists()
 
+  // Cleanup orphaned processes from previous sessions
+  await cleanupOrphanedProcesses()
+
   // Initialize state
   initializeState()
 
@@ -462,6 +525,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', async () => {
+  clearQueue()
   closeAllTerminals()
   closeAllSocketServers()
   await cleanupPlanManager()
@@ -479,6 +543,7 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', async () => {
+  clearQueue()
   closeAllTerminals()
   closeAllSocketServers()
   await cleanupPlanManager()

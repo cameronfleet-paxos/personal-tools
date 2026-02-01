@@ -131,8 +131,9 @@ export interface TerminalSession {
 
 // Plan status for team mode
 // 'discussing' = brainstorming phase before task creation
+// 'discussed' = discussion complete, ready for execution
 // 'ready_for_review' = all agents done, awaiting user review before cleanup
-export type PlanStatus = 'draft' | 'discussing' | 'delegating' | 'in_progress' | 'ready_for_review' | 'completed' | 'failed'
+export type PlanStatus = 'draft' | 'discussing' | 'discussed' | 'delegating' | 'in_progress' | 'ready_for_review' | 'completed' | 'failed'
 
 // Discussion category for structured brainstorming
 export type DiscussionCategory =
@@ -181,6 +182,11 @@ export interface PlanWorktree {
   prUrl?: string                // PR URL
   prBaseBranch?: string         // Branch this PR targets
   commits?: string[]            // Commit SHAs pushed (feature_branch strategy)
+  // Merge tracking for feature_branch strategy
+  mergedAt?: string             // When commits were merged into feature branch
+  mergedIntoFeatureBranch?: boolean  // True if commits have been pushed to feature branch
+  // Task dependency tracking
+  blockedBy?: string[]          // Task IDs this task depends on
 }
 
 // Plan definition for team mode coordination
@@ -210,6 +216,9 @@ export interface Plan {
   featureBranch?: string           // Shared branch name (feature_branch strategy)
   baseBranch?: string              // Base branch for PRs or feature branch
   gitSummary?: PlanGitSummary      // Commits/PRs created during execution
+
+  // Discussion output file path (written by discussion agent)
+  discussionOutputPath?: string
 }
 
 // Task assignment status
@@ -219,6 +228,7 @@ export type TaskAssignmentStatus = 'pending' | 'sent' | 'in_progress' | 'complet
 export interface TaskAssignment {
   beadId: string        // bd task ID
   agentId: string       // Assigned agent
+  planId: string        // Plan this task belongs to
   status: TaskAssignmentStatus
   assignedAt: string
   completedAt?: string

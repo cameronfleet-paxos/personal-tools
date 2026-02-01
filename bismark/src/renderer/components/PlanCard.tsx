@@ -22,6 +22,7 @@ interface PlanCardProps {
 const statusIcons: Record<Plan['status'], React.ReactNode> = {
   draft: <Clock className="h-3 w-3 text-muted-foreground" />,
   discussing: <MessageSquare className="h-3 w-3 text-purple-500 animate-pulse" />,
+  discussed: <CheckCircle2 className="h-3 w-3 text-green-500" />,
   delegating: <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />,
   in_progress: <Loader2 className="h-3 w-3 text-yellow-500 animate-spin" />,
   ready_for_review: <CheckCircle2 className="h-3 w-3 text-purple-500" />,
@@ -32,6 +33,7 @@ const statusIcons: Record<Plan['status'], React.ReactNode> = {
 const statusLabels: Record<Plan['status'], string> = {
   draft: 'Draft',
   discussing: 'Discussing',
+  discussed: 'Ready to Execute',
   delegating: 'Delegating',
   in_progress: 'In Progress',
   ready_for_review: 'Ready for Review',
@@ -42,6 +44,7 @@ const statusLabels: Record<Plan['status'], string> = {
 const statusColors: Record<Plan['status'], string> = {
   draft: 'bg-muted text-muted-foreground',
   discussing: 'bg-purple-500/20 text-purple-500',
+  discussed: 'bg-green-500/20 text-green-500',
   delegating: 'bg-blue-500/20 text-blue-500',
   in_progress: 'bg-yellow-500/20 text-yellow-500',
   ready_for_review: 'bg-purple-500/20 text-purple-500',
@@ -264,6 +267,42 @@ export function PlanCard({
                     Cancel Discussion
                   </>
                 )}
+              </Button>
+            </div>
+          )}
+
+          {plan.status === 'discussed' && (
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">
+                Discussion complete. Select an agent and execute the plan.
+              </p>
+              <select
+                value={selectedReference}
+                onChange={(e) => setSelectedReference(e.target.value)}
+                onClick={(e) => e.stopPropagation()}
+                className="w-full text-xs border rounded px-2 py-1.5 bg-background"
+              >
+                <option value="">Select reference agent...</option>
+                {agents
+                  .filter((a) => !a.isOrchestrator && !a.isPlanAgent)
+                  .map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+              </select>
+              <Button
+                size="sm"
+                disabled={!selectedReference}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (selectedReference) {
+                    onExecute(selectedReference)
+                  }
+                }}
+              >
+                <Play className="h-3 w-3 mr-1" />
+                Execute
               </Button>
             </div>
           )}

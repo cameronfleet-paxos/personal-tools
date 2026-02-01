@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit, MessageSquare } from 'lucide-react'
+import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit, MessageSquare, Play, FileText } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
@@ -13,11 +13,13 @@ interface PlanDetailViewProps {
   onComplete: () => void
   onCancel: () => Promise<void>
   onCancelDiscussion?: () => Promise<void>
+  onExecute?: (referenceAgentId: string) => void
 }
 
 const statusIcons: Record<Plan['status'], React.ReactNode> = {
   draft: <Clock className="h-3 w-3 text-muted-foreground" />,
   discussing: <MessageSquare className="h-3 w-3 text-purple-500 animate-pulse" />,
+  discussed: <CheckCircle2 className="h-3 w-3 text-green-500" />,
   delegating: <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />,
   in_progress: <Loader2 className="h-3 w-3 text-yellow-500 animate-spin" />,
   ready_for_review: <CheckCircle2 className="h-3 w-3 text-purple-500" />,
@@ -28,6 +30,7 @@ const statusIcons: Record<Plan['status'], React.ReactNode> = {
 const statusLabels: Record<Plan['status'], string> = {
   draft: 'Draft',
   discussing: 'Discussing',
+  discussed: 'Ready to Execute',
   delegating: 'Delegating',
   in_progress: 'In Progress',
   ready_for_review: 'Ready for Review',
@@ -38,6 +41,7 @@ const statusLabels: Record<Plan['status'], string> = {
 const statusColors: Record<Plan['status'], string> = {
   draft: 'bg-muted text-muted-foreground',
   discussing: 'bg-purple-500/20 text-purple-500',
+  discussed: 'bg-green-500/20 text-green-500',
   delegating: 'bg-blue-500/20 text-blue-500',
   in_progress: 'bg-yellow-500/20 text-yellow-500',
   ready_for_review: 'bg-purple-500/20 text-purple-500',
@@ -69,6 +73,73 @@ function formatActivityTime(timestamp: string): string {
   })
 }
 
+function DiscussionOutputSection({ summary, outputPath }: { summary?: string; outputPath: string }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+  const [content, setContent] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadContent = async () => {
+    if (content !== null) {
+      setIsExpanded(!isExpanded)
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+    try {
+      const result = await window.electronAPI.readFile(outputPath)
+      if (result.success && result.content) {
+        setContent(result.content)
+        setIsExpanded(true)
+      } else {
+        setError(result.error || 'Failed to load file')
+      }
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  return (
+    <div className="p-3 border-b">
+      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+        Discussion Output
+      </h3>
+      {summary && (
+        <p className="text-xs text-muted-foreground mb-2">{summary}</p>
+      )}
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={isLoading}
+        onClick={loadContent}
+      >
+        {isLoading ? (
+          <>
+            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+            Loading...
+          </>
+        ) : (
+          <>
+            <FileText className="h-3 w-3 mr-1" />
+            {isExpanded ? 'Hide Output' : 'View Full Output'}
+          </>
+        )}
+      </Button>
+      {error && (
+        <p className="text-xs text-red-500 mt-2">{error}</p>
+      )}
+      {isExpanded && content && (
+        <div className="mt-3 p-2 bg-muted/30 rounded text-xs overflow-x-auto max-h-64 overflow-y-auto">
+          <pre className="whitespace-pre-wrap font-mono">{content}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function PlanDetailView({
   plan,
   activities,
@@ -78,8 +149,10 @@ export function PlanDetailView({
   onComplete,
   onCancel,
   onCancelDiscussion,
+  onExecute,
 }: PlanDetailViewProps) {
   const [isCancelling, setIsCancelling] = useState(false)
+  const [selectedReference, setSelectedReference] = useState<string>(plan.referenceAgentId || '')
 
   const handleCancel = async () => {
     setIsCancelling(true)
@@ -108,7 +181,7 @@ export function PlanDetailView({
   return (
     <div className="flex flex-col h-full">
       {/* Header with back button */}
-      <div className="flex items-center gap-2 p-3 border-b">
+      <div className="flex items-center gap-2 p-3 border-b shrink-0">
         <Button
           size="sm"
           variant="ghost"
@@ -120,8 +193,10 @@ export function PlanDetailView({
         <h2 className="font-medium truncate flex-1">{plan.title}</h2>
       </div>
 
-      {/* Plan info section */}
-      <div className="p-3 border-b space-y-2">
+      {/* Scrollable content area */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+        {/* Plan info section */}
+        <div className="p-3 border-b space-y-2">
         <div className="flex items-center justify-between">
           <span className={`flex items-center gap-1 text-xs px-1.5 py-0.5 rounded ${statusColors[plan.status]}`}>
             {statusIcons[plan.status]}
@@ -191,6 +266,40 @@ export function PlanDetailView({
           </div>
         )}
 
+        {plan.status === 'discussed' && onExecute && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Discussion complete. Review the outcomes below, then execute the plan.
+            </p>
+            <select
+              value={selectedReference}
+              onChange={(e) => setSelectedReference(e.target.value)}
+              className="w-full text-xs border rounded px-2 py-1.5 bg-background"
+            >
+              <option value="">Select reference agent...</option>
+              {agents
+                .filter((a) => !a.isOrchestrator && !a.isPlanAgent)
+                .map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    {agent.name}
+                  </option>
+                ))}
+            </select>
+            <Button
+              size="sm"
+              disabled={!selectedReference}
+              onClick={() => {
+                if (selectedReference) {
+                  onExecute(selectedReference)
+                }
+              }}
+            >
+              <Play className="h-3 w-3 mr-1" />
+              Execute
+            </Button>
+          </div>
+        )}
+
         {(plan.status === 'delegating' || plan.status === 'in_progress') && (
           <Button
             size="sm"
@@ -239,6 +348,14 @@ export function PlanDetailView({
           </div>
         )}
       </div>
+
+      {/* Discussion Output section */}
+      {plan.discussion?.status === 'approved' && plan.discussionOutputPath && (
+        <DiscussionOutputSection
+          summary={plan.discussion.summary}
+          outputPath={plan.discussionOutputPath}
+        />
+      )}
 
       {/* Git Summary section */}
       {plan.gitSummary && (
@@ -353,18 +470,17 @@ export function PlanDetailView({
         </div>
       )}
 
-      {/* Activity log section - fills remaining space */}
-      <div className="flex-1 flex flex-col min-h-0">
-        <div className="flex items-center justify-between px-3 py-2 bg-muted/50">
-          <div className="flex items-center gap-1.5">
-            <Activity className="h-3 w-3" />
-            <span className="text-xs font-medium">Activity Log</span>
-            {activities.length > 0 && (
-              <span className="text-xs text-muted-foreground">({activities.length})</span>
-            )}
+        {/* Activity log section */}
+        <div className="border-b">
+          <div className="flex items-center justify-between px-3 py-2 bg-muted/50">
+            <div className="flex items-center gap-1.5">
+              <Activity className="h-3 w-3" />
+              <span className="text-xs font-medium">Activity Log</span>
+              {activities.length > 0 && (
+                <span className="text-xs text-muted-foreground">({activities.length})</span>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
           {activities.length === 0 ? (
             <div className="px-3 py-4 text-xs text-muted-foreground text-center">
               No activity yet

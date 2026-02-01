@@ -1,7 +1,7 @@
 import './index.css'
 import './electron.d.ts'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, ChevronRight, ChevronLeft, Settings, Check, X, Maximize2, Minimize2, ListTodo } from 'lucide-react'
+import { Plus, ChevronRight, ChevronLeft, Settings, Check, X, Maximize2, Minimize2, ListTodo, Container } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import {
   Dialog,
@@ -24,6 +24,7 @@ import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
 import { DevConsole } from '@/renderer/components/DevConsole'
 import { PlanAgentGroup } from '@/renderer/components/PlanAgentGroup'
 import { CollapsedPlanGroup } from '@/renderer/components/CollapsedPlanGroup'
+import { BootProgressIndicator } from '@/renderer/components/BootProgressIndicator'
 import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, HeadlessAgentInfo, BranchStrategy } from '@/shared/types'
 import { themes } from '@/shared/constants'
 
@@ -83,6 +84,9 @@ function App() {
 
   // Collapsed plan groups in sidebar
   const [collapsedPlanGroups, setCollapsedPlanGroups] = useState<Set<string>>(new Set())
+
+  // Terminal queue status for boot progress indicator
+  const [terminalQueueStatus, setTerminalQueueStatus] = useState<{ queued: number; active: number }>({ queued: 0, active: 0 })
 
   // Central registry of terminal writers - Map of terminalId -> write function
   const terminalWritersRef = useRef<Map<string, TerminalWriter>>(new Map())
@@ -260,6 +264,11 @@ function App() {
       setFocusedAgentId(agentId)
     })
 
+    // Listen for maximize agent events
+    window.electronAPI?.onMaximizeWorkspace?.((agentId: string) => {
+      setMaximizedAgentId(agentId)
+    })
+
     // Listen for waiting queue changes
     window.electronAPI?.onWaitingQueueChanged?.((queue: string[]) => {
       setWaitingQueue(queue)
@@ -403,6 +412,11 @@ function App() {
         }
         return updated
       })
+    })
+
+    // Terminal queue status for boot progress indicator
+    window.electronAPI?.onTerminalQueueStatus?.((status) => {
+      setTerminalQueueStatus({ queued: status.queued, active: status.active })
     })
   }
 
@@ -813,6 +827,10 @@ function App() {
       <header className="border-b px-4 py-2 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Logo />
+          <BootProgressIndicator
+            queued={terminalQueueStatus.queued}
+            active={terminalQueueStatus.active}
+          />
           {waitingQueue.length > 0 && (
             <span className="bg-yellow-500 text-black text-xs font-medium px-2 py-0.5 rounded-full">
               {waitingQueue.length} waiting
@@ -1187,10 +1205,17 @@ function App() {
                         >
                           <div className="px-3 py-1.5 border-b bg-card text-sm font-medium flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className="text-xs px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">headless</span>
                               <span>Task {info.taskId}</span>
                             </div>
                             <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => window.electronAPI.openDockerDesktop()}
+                                className="flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors cursor-pointer"
+                                title="Open Docker Desktop"
+                              >
+                                <Container className="h-3 w-3" />
+                                <span>Docker</span>
+                              </button>
                               <span className={`text-xs px-1.5 py-0.5 rounded ${
                                 info.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
                                 info.status === 'completed' ? 'bg-green-500/20 text-green-400' :

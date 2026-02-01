@@ -141,6 +141,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       callback(workspaceId)
     )
   },
+  onMaximizeWorkspace: (callback: (workspaceId: string) => void): void => {
+    ipcRenderer.on('maximize-workspace', (_event, workspaceId) =>
+      callback(workspaceId)
+    )
+  },
   onWaitingQueueChanged: (callback: (queue: string[]) => void): void => {
     ipcRenderer.on('waiting-queue-changed', (_event, queue) => callback(queue))
   },
@@ -176,6 +181,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('headless-agent-event', (_event, data) => callback(data))
   },
 
+  // Terminal queue status
+  onTerminalQueueStatus: (callback: (status: { queued: number; active: number; pending: string[] }) => void): void => {
+    ipcRenderer.on('terminal-queue-status', (_event, status) => callback(status))
+  },
+
   // Git repository management
   detectGitRepository: (directory: string): Promise<Repository | null> =>
     ipcRenderer.invoke('detect-git-repository', directory),
@@ -188,6 +198,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke('open-external', url),
 
+  // Open Docker Desktop
+  openDockerDesktop: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('open-docker-desktop'),
+
+  // File reading
+  readFile: (filePath: string): Promise<{ success: boolean; content?: string; error?: string }> =>
+    ipcRenderer.invoke('read-file', filePath),
+
   // Tray updates
   updateTray: (count: number): void => {
     ipcRenderer.send('update-tray', count)
@@ -199,6 +217,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('terminal-exit')
     ipcRenderer.removeAllListeners('agent-waiting')
     ipcRenderer.removeAllListeners('focus-workspace')
+    ipcRenderer.removeAllListeners('maximize-workspace')
     ipcRenderer.removeAllListeners('waiting-queue-changed')
     ipcRenderer.removeAllListeners('initial-state')
     ipcRenderer.removeAllListeners('plan-update')
@@ -209,6 +228,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('headless-agent-started')
     ipcRenderer.removeAllListeners('headless-agent-update')
     ipcRenderer.removeAllListeners('headless-agent-event')
+    ipcRenderer.removeAllListeners('terminal-queue-status')
   },
 
   // Dev test harness (development mode only)

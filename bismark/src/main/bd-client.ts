@@ -21,6 +21,7 @@ export interface BeadTask {
   parent?: string
   assignee?: string
   labels?: string[]
+  blockedBy?: string[]  // Task IDs that this task depends on (blocks this task)
 }
 
 /**
@@ -156,15 +157,31 @@ export async function bdList(planId: string, opts?: {
     }
 
     // Map bd's field names to our interface
-    return rawTasks.map((task: Record<string, unknown>) => ({
-      id: task.id as string,
-      title: task.title as string,
-      status: task.status as 'open' | 'closed',
-      type: task.issue_type as 'epic' | 'task' | undefined,  // bd uses issue_type
-      parent: task.parent as string | undefined,
-      assignee: task.owner as string | undefined,  // bd uses owner
-      labels: task.labels as string[] | undefined,
-    }))
+    return rawTasks.map((task: Record<string, unknown>) => {
+      // Extract blockedBy from dependencies array
+      // Dependencies with type "blocks" mean this task is blocked by depends_on_id
+      let blockedBy: string[] | undefined
+      const dependencies = task.dependencies as Array<{ type: string; depends_on_id: string }> | undefined
+      if (dependencies && Array.isArray(dependencies)) {
+        const blockers = dependencies
+          .filter(dep => dep.type === 'blocks')
+          .map(dep => dep.depends_on_id)
+        if (blockers.length > 0) {
+          blockedBy = blockers
+        }
+      }
+
+      return {
+        id: task.id as string,
+        title: task.title as string,
+        status: task.status as 'open' | 'closed',
+        type: task.issue_type as 'epic' | 'task' | undefined,  // bd uses issue_type
+        parent: task.parent as string | undefined,
+        assignee: task.owner as string | undefined,  // bd uses owner
+        labels: task.labels as string[] | undefined,
+        blockedBy,
+      }
+    })
   } catch (error) {
     // If bd list fails (e.g., no tasks), return empty array
     console.error('bdList error:', error)

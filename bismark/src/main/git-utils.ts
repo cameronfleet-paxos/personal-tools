@@ -356,16 +356,20 @@ export async function pushBranch(
 /**
  * Push a local ref to a different remote branch name
  * e.g., push HEAD to origin/feature-branch
+ *
+ * @param forceWithLease - Use --force-with-lease for safer force pushes (useful after rebasing)
  */
 export async function pushBranchToRemoteBranch(
   repoPath: string,
   localRef: string,
   remoteBranch: string,
-  remote = 'origin'
+  remote = 'origin',
+  forceWithLease = false
 ): Promise<void> {
   // git push origin HEAD:refs/heads/feature-branch
+  const forceFlag = forceWithLease ? '--force-with-lease ' : '';
   await gitExec(
-    `git push ${remote} "${localRef}:refs/heads/${remoteBranch}"`,
+    `git push ${forceFlag}${remote} "${localRef}:refs/heads/${remoteBranch}"`,
     repoPath
   );
 }
@@ -498,4 +502,32 @@ export async function pullBranch(
   remote = 'origin'
 ): Promise<void> {
   await gitExec(`git pull ${remote}`, repoPath);
+}
+
+/**
+ * Fetch a specific branch from remote
+ * Ensures the local remote-tracking branch is up to date
+ */
+export async function fetchBranch(
+  repoPath: string,
+  branchName: string,
+  remote = 'origin'
+): Promise<void> {
+  await gitExec(`git fetch ${remote} "${branchName}"`, repoPath);
+}
+
+/**
+ * Check if a remote branch exists
+ */
+export async function remoteBranchExists(
+  repoPath: string,
+  branchName: string,
+  remote = 'origin'
+): Promise<boolean> {
+  try {
+    await gitExec(`git ls-remote --exit-code --heads ${remote} "${branchName}"`, repoPath);
+    return true;
+  } catch {
+    return false;
+  }
 }
