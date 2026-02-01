@@ -379,6 +379,27 @@ function App() {
       }
     })
 
+    window.electronAPI?.onPlanDeleted?.((planId: string) => {
+      console.log('[Renderer] Received plan-deleted', { planId })
+      setPlans((prev) => prev.filter((p) => p.id !== planId))
+      // Clear any headless agents associated with this plan
+      setHeadlessAgents((prev) => {
+        const newMap = new Map(prev)
+        for (const [taskId, info] of prev) {
+          if (info.planId === planId) {
+            newMap.delete(taskId)
+          }
+        }
+        return newMap
+      })
+      // Clear plan activities
+      setPlanActivities((prev) => {
+        const newMap = new Map(prev)
+        newMap.delete(planId)
+        return newMap
+      })
+    })
+
     window.electronAPI?.onTaskAssignmentUpdate?.((assignment: TaskAssignment) => {
       setTaskAssignments((prev) => {
         const index = prev.findIndex((a) => a.beadId === assignment.beadId)
@@ -861,6 +882,14 @@ function App() {
 
   const handleRequestFollowUps = async (planId: string) => {
     await window.electronAPI?.requestFollowUps?.(planId)
+  }
+
+  const handleDeletePlans = async (planIds: string[]) => {
+    await window.electronAPI?.deletePlans?.(planIds)
+  }
+
+  const handleClonePlan = async (planId: string, options?: { includeDiscussion?: boolean }) => {
+    await window.electronAPI?.clonePlan?.(planId, options)
   }
 
   const handleSelectPlan = async (planId: string | null) => {
@@ -1588,6 +1617,8 @@ function App() {
             onRestartPlan={handleRestartPlan}
             onCompletePlan={handleCompletePlan}
             onRequestFollowUps={handleRequestFollowUps}
+            onDeletePlans={handleDeletePlans}
+            onClonePlan={handleClonePlan}
           />
         )}
       </div>

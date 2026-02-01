@@ -9,12 +9,14 @@ interface PlanCardProps {
   taskAssignments: TaskAssignment[]
   activities: PlanActivity[]
   isActive: boolean
+  isSelected?: boolean
+  onToggleSelect?: () => void
   onExecute: (referenceAgentId: string) => void | Promise<void>
   onStartDiscussion: (referenceAgentId: string) => void
   onCancelDiscussion: () => Promise<void>
   onCancel: () => Promise<void>
   onRestart?: () => Promise<void>
-  onComplete: () => void
+  onComplete: () => Promise<void>
   onClick: () => void
   onExpand?: () => void
 }
@@ -83,6 +85,8 @@ export function PlanCard({
   taskAssignments,
   activities,
   isActive,
+  isSelected,
+  onToggleSelect,
   onExecute,
   onStartDiscussion,
   onCancelDiscussion,
@@ -96,6 +100,7 @@ export function PlanCard({
   const [selectedReference, setSelectedReference] = useState<string>('')
   const [activityLogExpanded, setActivityLogExpanded] = useState(true)
   const [isCancelling, setIsCancelling] = useState(false)
+  const [isCompleting, setIsCompleting] = useState(false)
   const [isRestarting, setIsRestarting] = useState(false)
   const [isExecuting, setIsExecuting] = useState(false)
   const [copiedActivity, setCopiedActivity] = useState(false)
@@ -105,6 +110,11 @@ export function PlanCard({
     setIsCancelling(true)
     await onCancel()
     // Note: Component may unmount or plan status may change, but that's fine
+  }
+
+  const handleComplete = async () => {
+    setIsCompleting(true)
+    await onComplete()
   }
 
   const handleCancelDiscussion = async () => {
@@ -141,12 +151,34 @@ export function PlanCard({
   return (
     <div
       className={`rounded-lg border p-3 transition-all cursor-pointer ${
-        isActive ? 'ring-2 ring-primary' : 'hover:border-primary/50'
+        isSelected
+          ? 'ring-2 ring-blue-500 bg-blue-500/10'
+          : isActive
+            ? 'ring-2 ring-primary'
+            : 'hover:border-primary/50'
       }`}
       onClick={onClick}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
+          {/* Selection checkbox */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleSelect?.()
+            }}
+            className={`p-0.5 rounded border ${
+              isSelected
+                ? 'bg-blue-500 border-blue-500'
+                : 'border-muted-foreground/40 hover:border-primary'
+            }`}
+          >
+            {isSelected ? (
+              <Check className="h-3 w-3 text-white" />
+            ) : (
+              <div className="h-3 w-3" />
+            )}
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation()
@@ -388,13 +420,23 @@ export function PlanCard({
               <div className="flex gap-2">
                 <Button
                   size="sm"
+                  disabled={isCompleting}
                   onClick={(e) => {
                     e.stopPropagation()
-                    onComplete()
+                    handleComplete()
                   }}
                 >
-                  <Check className="h-3 w-3 mr-1" />
-                  Mark Complete
+                  {isCompleting ? (
+                    <>
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      Completing...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-3 w-3 mr-1" />
+                      Mark Complete
+                    </>
+                  )}
                 </Button>
                 <Button
                   size="sm"

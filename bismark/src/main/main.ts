@@ -61,6 +61,9 @@ import {
 import {
   createPlan,
   getPlans,
+  deletePlanById,
+  deletePlansById,
+  clonePlan,
   executePlan,
   cancelPlan,
   restartPlan,
@@ -380,6 +383,18 @@ function registerIpcHandlers() {
 
   ipcMain.handle('set-active-plan-id', (_event, planId: string | null) => {
     setActivePlanId(planId)
+  })
+
+  ipcMain.handle('delete-plan', async (_event, planId: string) => {
+    return deletePlanById(planId)
+  })
+
+  ipcMain.handle('delete-plans', async (_event, planIds: string[]) => {
+    return deletePlansById(planIds)
+  })
+
+  ipcMain.handle('clone-plan', async (_event, planId: string, options?: { includeDiscussion?: boolean }) => {
+    return clonePlan(planId, options)
   })
 
   // Headless mode management

@@ -502,6 +502,67 @@ export async function fetchAndRebase(
 }
 
 /**
+ * Push to remote branch with automatic retry on non-fast-forward errors.
+ * On failure, fetches latest, rebases, and retries.
+ */
+export async function pushWithRetry(
+  repoPath: string,
+  localRef: string,
+  remoteBranch: string,
+  remote = 'origin',
+  maxRetries = 3,
+  logContext?: LogContext
+): Promise<void> {
+  const ctx = { ...logContext, repo: repoPath, branch: remoteBranch };
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // On retry attempts, fetch and rebase first
+      if (attempt > 1) {
+        logger.info('git', `Retry attempt ${attempt}/${maxRetries}: fetch and rebase`, ctx);
+        try {
+          await gitExec(`git fetch ${remote}`, repoPath, ctx);
+          await gitExec(`git rebase "${remote}/${remoteBranch}"`, repoPath, ctx);
+        } catch (rebaseError) {
+          const err = rebaseError as Error;
+          // Rebase conflict - abort and propagate error
+          if (err.message.includes('CONFLICT') || err.message.includes('could not apply')) {
+            logger.error('git', 'Rebase conflict detected, aborting', ctx);
+            try {
+              await gitExec('git rebase --abort', repoPath, ctx);
+            } catch { /* ignore abort errors */ }
+            throw new Error(`Rebase conflict while pushing to ${remoteBranch}. Manual resolution required.`);
+          }
+          // Other rebase errors - log and continue with push attempt
+          logger.warn('git', 'Rebase failed, attempting push anyway', ctx, { error: err.message });
+        }
+      }
+
+      // Attempt the push
+      await pushBranchToRemoteBranch(repoPath, localRef, remoteBranch, remote, false, ctx);
+
+      if (attempt > 1) {
+        logger.info('git', `Push succeeded on attempt ${attempt}`, ctx);
+      }
+      return; // Success
+
+    } catch (error) {
+      const err = error as Error;
+      const isNonFastForward = err.message.includes('non-fast-forward') ||
+                               err.message.includes('rejected') ||
+                               err.message.includes('failed to push');
+
+      if (!isNonFastForward || attempt === maxRetries) {
+        logger.error('git', `Push failed after ${attempt} attempt(s)`, ctx, { error: err.message });
+        throw error;
+      }
+
+      logger.warn('git', `Push failed (non-fast-forward), will retry`, ctx, { attempt, maxRetries });
+    }
+  }
+}
+
+/**
  * Get the GitHub URL for a repository from its remote URL
  * Converts git@github.com:org/repo.git to https://github.com/org/repo
  */

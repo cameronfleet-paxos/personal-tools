@@ -63,6 +63,9 @@ export interface ElectronAPI {
   getBeadTasks: (planId: string) => Promise<BeadTask[]>
   setPlanSidebarOpen: (open: boolean) => Promise<void>
   setActivePlanId: (planId: string | null) => Promise<void>
+  deletePlan: (planId: string) => Promise<void>
+  deletePlans: (planIds: string[]) => Promise<{ deleted: string[]; errors: Array<{ planId: string; error: string }> }>
+  clonePlan: (planId: string, options?: { includeDiscussion?: boolean }) => Promise<Plan>
 
   // Headless agent management
   getHeadlessAgentInfo: (taskId: string) => Promise<HeadlessAgentInfo | undefined>
@@ -96,6 +99,7 @@ export interface ElectronAPI {
 
   // Plan events (Team Mode)
   onPlanUpdate: (callback: (plan: Plan) => void) => void
+  onPlanDeleted: (callback: (planId: string) => void) => void
   onTaskAssignmentUpdate: (callback: (assignment: TaskAssignment) => void) => void
   onPlanActivity: (callback: (activity: PlanActivity) => void) => void
   onStateUpdate: (callback: (state: AppState) => void) => void

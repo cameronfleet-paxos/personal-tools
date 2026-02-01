@@ -97,6 +97,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('set-plan-sidebar-open', open),
   setActivePlanId: (planId: string | null): Promise<void> =>
     ipcRenderer.invoke('set-active-plan-id', planId),
+  deletePlan: (planId: string): Promise<void> =>
+    ipcRenderer.invoke('delete-plan', planId),
+  deletePlans: (planIds: string[]): Promise<{ deleted: string[]; errors: Array<{ planId: string; error: string }> }> =>
+    ipcRenderer.invoke('delete-plans', planIds),
+  clonePlan: (planId: string, options?: { includeDiscussion?: boolean }): Promise<Plan> =>
+    ipcRenderer.invoke('clone-plan', planId, options),
 
   // Headless agent management
   getHeadlessAgentInfo: (taskId: string): Promise<HeadlessAgentInfo | undefined> =>
@@ -162,6 +168,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Plan events (Team Mode)
   onPlanUpdate: (callback: (plan: Plan) => void): void => {
     ipcRenderer.on('plan-update', (_event, plan) => callback(plan))
+  },
+  onPlanDeleted: (callback: (planId: string) => void): void => {
+    ipcRenderer.on('plan-deleted', (_event, planId) => callback(planId))
   },
   onTaskAssignmentUpdate: (callback: (assignment: TaskAssignment) => void): void => {
     ipcRenderer.on('task-assignment-update', (_event, assignment) => callback(assignment))
@@ -232,6 +241,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('waiting-queue-changed')
     ipcRenderer.removeAllListeners('initial-state')
     ipcRenderer.removeAllListeners('plan-update')
+    ipcRenderer.removeAllListeners('plan-deleted')
     ipcRenderer.removeAllListeners('task-assignment-update')
     ipcRenderer.removeAllListeners('plan-activity')
     ipcRenderer.removeAllListeners('state-update')

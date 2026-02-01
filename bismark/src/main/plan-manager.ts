@@ -6,6 +6,7 @@ import {
   loadPlans,
   savePlan,
   getPlanById,
+  deletePlan,
   loadTaskAssignments,
   saveTaskAssignment,
   saveTaskAssignments,
@@ -324,12 +325,13 @@ export function getPlans(): Plan[] {
  */
 export async function deletePlanById(planId: string): Promise<void> {
   const plan = getPlanById(planId)
+  const logCtx: LogContext = { planId }
   if (!plan) {
-    logger.warn('plan', `Plan not found for deletion: ${planId}`)
+    logger.warn('plan', `Plan not found for deletion: ${planId}`, logCtx)
     return
   }
 
-  logger.info('plan', `Deleting plan: ${planId}`, { title: plan.title })
+  logger.info('plan', `Deleting plan: ${planId}`, logCtx, { title: plan.title })
 
   // Clean up any active agents/terminals
   if (plan.discussionAgentWorkspaceId) {
@@ -361,10 +363,10 @@ export async function deletePlanById(planId: string): Promise<void> {
   const planDir = getPlanDir(planId)
   try {
     await fs.rm(planDir, { recursive: true, force: true })
-    logger.info('plan', `Deleted plan directory: ${planDir}`)
+    logger.info('plan', `Deleted plan directory: ${planDir}`, logCtx)
   } catch (error) {
     // Directory may not exist, that's okay
-    logger.debug('plan', `Could not delete plan directory (may not exist): ${planDir}`, { error })
+    logger.debug('plan', `Could not delete plan directory (may not exist): ${planDir}`, logCtx)
   }
 
   // Emit deletion event
@@ -411,6 +413,7 @@ export async function clonePlan(
 
   const now = new Date().toISOString()
   const newPlanId = generatePlanId()
+  const logCtx: LogContext = { planId }
 
   const newPlan: Plan = {
     id: newPlanId,
@@ -448,9 +451,9 @@ export async function clonePlan(
     try {
       await fs.copyFile(source.discussionOutputPath, newDiscussionPath)
       newPlan.discussionOutputPath = newDiscussionPath
-      logger.info('plan', `Copied discussion output to: ${newDiscussionPath}`)
+      logger.info('plan', `Copied discussion output to: ${newDiscussionPath}`, { planId: newPlanId })
     } catch (error) {
-      logger.warn('plan', `Failed to copy discussion output: ${error}`)
+      logger.warn('plan', `Failed to copy discussion output: ${error}`, logCtx)
       // Downgrade status to draft if we couldn't copy the discussion
       newPlan.status = 'draft'
     }
@@ -467,7 +470,7 @@ export async function clonePlan(
 
   savePlan(newPlan)
   emitPlanUpdate(newPlan)
-  logger.info('plan', `Cloned plan ${planId} to ${newPlanId}`, { title: newPlan.title })
+  logger.info('plan', `Cloned plan ${planId} to ${newPlanId}`, logCtx, { newPlanId, title: newPlan.title })
 
   return newPlan
 }

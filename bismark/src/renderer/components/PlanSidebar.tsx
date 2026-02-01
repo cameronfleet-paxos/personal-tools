@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus, X, Trash2, Copy } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { PlanCard } from '@/renderer/components/PlanCard'
 import { PlanDetailView } from '@/renderer/components/PlanDetailView'
+import { ClonePlanDialog } from '@/renderer/components/ClonePlanDialog'
 import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
 
 interface PlanSidebarProps {
@@ -23,6 +24,8 @@ interface PlanSidebarProps {
   onRestartPlan: (planId: string) => Promise<void>
   onCompletePlan: (planId: string) => Promise<void>
   onRequestFollowUps: (planId: string) => Promise<void>
+  onDeletePlans: (planIds: string[]) => Promise<void>
+  onClonePlan: (planId: string, options?: { includeDiscussion?: boolean }) => Promise<void>
 }
 
 export function PlanSidebar({
@@ -43,8 +46,13 @@ export function PlanSidebar({
   onRestartPlan,
   onCompletePlan,
   onRequestFollowUps,
+  onDeletePlans,
+  onClonePlan,
 }: PlanSidebarProps) {
   const [detailPlanId, setDetailPlanId] = useState<string | null>(null)
+  const [selectedPlanIds, setSelectedPlanIds] = useState<Set<string>>(new Set())
+  const [clonePlanId, setClonePlanId] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Track whether user has explicitly dismissed the detail view
   const userDismissedRef = useRef(false)
@@ -82,7 +90,73 @@ export function PlanSidebar({
     }
   }, [plans, detailPlanId])
 
+  // Clear selection when plans list changes (e.g., after deletion)
+  useEffect(() => {
+    const planIdSet = new Set(plans.map(p => p.id))
+    setSelectedPlanIds(prev => {
+      const filtered = new Set([...prev].filter(id => planIdSet.has(id)))
+      return filtered.size === prev.size ? prev : filtered
+    })
+  }, [plans])
+
   if (!open) return null
+
+  // Handle toggling selection
+  const toggleSelection = (planId: string) => {
+    setSelectedPlanIds(prev => {
+      const next = new Set(prev)
+      if (next.has(planId)) {
+        next.delete(planId)
+      } else {
+        next.add(planId)
+      }
+      return next
+    })
+  }
+
+  // Clear selection
+  const clearSelection = () => {
+    setSelectedPlanIds(new Set())
+  }
+
+  // Handle delete selected plans
+  const handleDeleteSelected = async () => {
+    if (selectedPlanIds.size === 0) return
+    setIsDeleting(true)
+    try {
+      await onDeletePlans([...selectedPlanIds])
+      clearSelection()
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  // Handle clone - check if plan has discussion to show dialog
+  const handleCloneClick = () => {
+    if (selectedPlanIds.size !== 1) return
+    const planId = [...selectedPlanIds][0]
+    const plan = plans.find(p => p.id === planId)
+    if (!plan) return
+
+    // If plan has completed discussion, show dialog for options
+    if (plan.discussionOutputPath) {
+      setClonePlanId(planId)
+    } else {
+      // Clone directly without dialog
+      onClonePlan(planId)
+      clearSelection()
+    }
+  }
+
+  // Handle clone confirmation from dialog
+  const handleCloneConfirm = async (includeDiscussion: boolean) => {
+    if (!clonePlanId) return
+    await onClonePlan(clonePlanId, { includeDiscussion })
+    setClonePlanId(null)
+    clearSelection()
+  }
+
+  const isSelectionMode = selectedPlanIds.size > 0
 
   // Find the plan being viewed in detail
   const detailPlan = detailPlanId ? plans.find((p) => p.id === detailPlanId) : null
@@ -131,20 +205,53 @@ export function PlanSidebar({
     (p) => p.status === 'completed' || p.status === 'failed'
   )
 
+  // Get the plan for clone dialog
+  const clonePlan = clonePlanId ? plans.find(p => p.id === clonePlanId) : null
+
   return (
     <aside className="w-[360px] border-l flex flex-col bg-background">
       {/* Header */}
       <div className="flex items-center justify-between p-3 border-b">
-        <h2 className="font-medium">Plans</h2>
-        <div className="flex items-center gap-1">
-          <Button size="sm" onClick={onCreatePlan}>
-            <Plus className="h-4 w-4 mr-1" />
-            New
-          </Button>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        {isSelectionMode ? (
+          <>
+            <h2 className="font-medium text-sm">
+              {selectedPlanIds.size} selected
+            </h2>
+            <div className="flex items-center gap-1">
+              {selectedPlanIds.size === 1 && (
+                <Button size="sm" variant="outline" onClick={handleCloneClick}>
+                  <Copy className="h-4 w-4 mr-1" />
+                  Clone
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleDeleteSelected}
+                disabled={isDeleting}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={clearSelection}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="font-medium">Plans</h2>
+            <div className="flex items-center gap-1">
+              <Button size="sm" onClick={onCreatePlan}>
+                <Plus className="h-4 w-4 mr-1" />
+                New
+              </Button>
+              <Button size="sm" variant="ghost" onClick={onClose}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Content */}
@@ -171,6 +278,8 @@ export function PlanSidebar({
                     taskAssignments={taskAssignments}
                     activities={planActivities.get(plan.id) || []}
                     isActive={activePlanId === plan.id}
+                    isSelected={selectedPlanIds.has(plan.id)}
+                    onToggleSelect={() => toggleSelection(plan.id)}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
                     onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
                     onCancelDiscussion={() => onCancelDiscussion(plan.id)}
@@ -196,6 +305,8 @@ export function PlanSidebar({
                     taskAssignments={taskAssignments}
                     activities={planActivities.get(plan.id) || []}
                     isActive={activePlanId === plan.id}
+                    isSelected={selectedPlanIds.has(plan.id)}
+                    onToggleSelect={() => toggleSelection(plan.id)}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
                     onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
                     onCancelDiscussion={() => onCancelDiscussion(plan.id)}
@@ -221,6 +332,8 @@ export function PlanSidebar({
                     taskAssignments={taskAssignments}
                     activities={planActivities.get(plan.id) || []}
                     isActive={activePlanId === plan.id}
+                    isSelected={selectedPlanIds.has(plan.id)}
+                    onToggleSelect={() => toggleSelection(plan.id)}
                     onExecute={(leaderId) => onExecutePlan(plan.id, leaderId)}
                     onStartDiscussion={(leaderId) => onStartDiscussion(plan.id, leaderId)}
                     onCancelDiscussion={() => onCancelDiscussion(plan.id)}
@@ -236,6 +349,15 @@ export function PlanSidebar({
           </>
         )}
       </div>
+
+      {/* Clone Dialog */}
+      {clonePlan && (
+        <ClonePlanDialog
+          plan={clonePlan}
+          onConfirm={handleCloneConfirm}
+          onCancel={() => setClonePlanId(null)}
+        />
+      )}
     </aside>
   )
 }

@@ -33,6 +33,31 @@ export async function withPlanLock<T>(planId: string, fn: () => Promise<T>): Pro
   }
 }
 
+// Mutex for serializing git push operations per plan (separate from plan state lock)
+const gitPushMutexes: Map<string, Promise<void>> = new Map()
+
+/**
+ * Execute a function with exclusive access to git push operations for a plan.
+ * Prevents concurrent pushes to the same feature branch.
+ */
+export async function withGitPushLock<T>(planId: string, fn: () => Promise<T>): Promise<T> {
+  const pending = gitPushMutexes.get(planId) || Promise.resolve()
+
+  let resolve: () => void
+  const newPending = new Promise<void>((r) => { resolve = r })
+  gitPushMutexes.set(planId, newPending)
+
+  try {
+    await pending
+    return await fn()
+  } finally {
+    resolve!()
+    if (gitPushMutexes.get(planId) === newPending) {
+      gitPushMutexes.delete(planId)
+    }
+  }
+}
+
 export function getConfigDir(): string {
   const homeDir = app?.getPath('home') || process.env.HOME || ''
   return path.join(homeDir, CONFIG_DIR_NAME)
