@@ -82,10 +82,14 @@ export type AttentionMode = 'focus' | 'expand'
 // Operating mode determines how agents work together
 export type OperatingMode = 'solo' | 'team'
 
+// Model for headless task agents
+export type AgentModel = 'opus' | 'sonnet' | 'haiku'
+
 // App preferences (stored in ~/.bismark/state.json)
 export interface AppPreferences {
   attentionMode: AttentionMode
   operatingMode: OperatingMode
+  agentModel: AgentModel
 }
 
 // App state (stored in ~/.bismark/state.json)
@@ -371,4 +375,60 @@ export interface HeadlessAgentInfo {
 export interface AgentWithMode extends Agent {
   executionMode?: AgentExecutionMode
   headlessInfo?: HeadlessAgentInfo
+}
+
+// ============================================
+// Bead Task Types (from bd CLI)
+// ============================================
+
+// Bead task from bd CLI
+export interface BeadTask {
+  id: string
+  title: string
+  status: 'open' | 'closed'
+  type?: 'epic' | 'task'
+  parent?: string
+  assignee?: string
+  labels?: string[]
+  blockedBy?: string[]  // Task IDs that this task depends on (blocks this task)
+}
+
+// ============================================
+// Dependency Graph Types
+// ============================================
+
+// Combined status for task nodes (assignment status + planned state)
+export type TaskNodeStatus = TaskAssignmentStatus | 'planned' | 'ready' | 'blocked'
+
+// Dependency graph node representing a task with its relationships
+export interface TaskNode {
+  id: string
+  title: string
+  status: TaskNodeStatus  // 'planned' = not yet assigned, 'ready' = can start, 'blocked' = waiting
+  blockedBy: string[]     // Task IDs this task depends on
+  blocks: string[]        // Task IDs that depend on this task
+  depth: number           // Distance from root (for layout)
+  isOnCriticalPath: boolean
+  assignment?: TaskAssignment  // If task has been dispatched
+}
+
+// Full dependency graph structure
+export interface DependencyGraph {
+  nodes: Map<string, TaskNode>
+  edges: Array<{ from: string; to: string; isOnCriticalPath: boolean }>
+  roots: string[]        // Tasks with no blockers
+  leaves: string[]       // Tasks that don't block anything
+  criticalPath: string[] // Longest chain of incomplete tasks
+  maxDepth: number
+}
+
+// Graph statistics for summary display
+export interface GraphStats {
+  total: number
+  completed: number
+  inProgress: number
+  sent: number
+  blocked: number    // Planned with unfinished blockers
+  ready: number      // Planned with all blockers done
+  failed: number
 }

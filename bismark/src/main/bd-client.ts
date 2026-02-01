@@ -4,6 +4,10 @@ import * as os from 'os'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import { logger } from './logger'
+import type { BeadTask } from '../shared/types'
+
+// Re-export BeadTask for convenience
+export type { BeadTask }
 
 const execAsync = promisify(exec)
 
@@ -12,17 +16,6 @@ const execAsync = promisify(exec)
  */
 export function getPlanDir(planId: string): string {
   return path.join(os.homedir(), '.bismark', 'plans', planId)
-}
-
-export interface BeadTask {
-  id: string
-  title: string
-  status: 'open' | 'closed'
-  type?: 'epic' | 'task'
-  parent?: string
-  assignee?: string
-  labels?: string[]
-  blockedBy?: string[]  // Task IDs that this task depends on (blocks this task)
 }
 
 /**
@@ -127,10 +120,11 @@ export async function bdList(planId: string, opts?: {
   parent?: string
   status?: 'open' | 'closed' | 'all'
   labels?: string[]
+  recursive?: boolean  // If true, fetches all tasks including children
 }): Promise<BeadTask[]> {
   const planDir = await ensureBeadsRepo(planId)
 
-  let cmd = 'bd --sandbox list --json'
+  let cmd = 'bd --sandbox list --json --limit 0'  // No limit to get all results
 
   if (opts?.parent) {
     cmd += ` --parent ${opts.parent}`

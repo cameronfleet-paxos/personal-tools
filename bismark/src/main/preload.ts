@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -89,6 +89,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-task-assignments', planId),
   getPlanActivities: (planId: string): Promise<PlanActivity[]> =>
     ipcRenderer.invoke('get-plan-activities', planId),
+  getBeadTasks: (planId: string): Promise<BeadTask[]> =>
+    ipcRenderer.invoke('get-bead-tasks', planId),
   setPlanSidebarOpen: (open: boolean): Promise<void> =>
     ipcRenderer.invoke('set-plan-sidebar-open', open),
   setActivePlanId: (planId: string | null): Promise<void> =>

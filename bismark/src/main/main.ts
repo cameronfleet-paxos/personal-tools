@@ -85,6 +85,7 @@ import {
   getAllRepositories,
   updateRepository,
 } from './repository-manager'
+import { bdList } from './bd-client'
 import { initializeDockerEnvironment } from './docker-sandbox'
 import {
   setDevHarnessWindow,
@@ -354,6 +355,15 @@ function registerIpcHandlers() {
 
   ipcMain.handle('get-plan-activities', (_event, planId: string) => {
     return getPlanActivities(planId)
+  })
+
+  ipcMain.handle('get-bead-tasks', async (_event, planId: string) => {
+    try {
+      return await bdList(planId, { status: 'all' })
+    } catch (error) {
+      console.error('[Main] Failed to get bead tasks:', error)
+      return []
+    }
   })
 
   ipcMain.handle('set-plan-sidebar-open', (_event, open: boolean) => {

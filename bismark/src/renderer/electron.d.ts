@@ -1,4 +1,4 @@
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask } from '../shared/types'
 
 export interface ElectronAPI {
   // Workspace management
@@ -59,6 +59,7 @@ export interface ElectronAPI {
   completePlan: (planId: string) => Promise<Plan | null>
   getTaskAssignments: (planId: string) => Promise<TaskAssignment[]>
   getPlanActivities: (planId: string) => Promise<PlanActivity[]>
+  getBeadTasks: (planId: string) => Promise<BeadTask[]>
   setPlanSidebarOpen: (open: boolean) => Promise<void>
   setActivePlanId: (planId: string | null) => Promise<void>
 

@@ -1,8 +1,11 @@
-import { useState } from 'react'
-import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit, MessageSquare, Play, FileText } from 'lucide-react'
+import { useState, useEffect, useMemo } from 'react'
+import { ArrowLeft, Check, X, Loader2, Activity, GitBranch, GitPullRequest, Clock, CheckCircle2, AlertCircle, ExternalLink, GitCommit, MessageSquare, Play, FileText, Network } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { TaskCard } from '@/renderer/components/TaskCard'
-import type { Plan, TaskAssignment, Agent, PlanActivity } from '@/shared/types'
+import { DependencyProgressBar } from '@/renderer/components/DependencyProgressBar'
+import { DependencyGraphModal } from '@/renderer/components/DependencyGraphModal'
+import { buildDependencyGraph, calculateGraphStats } from '@/renderer/utils/build-dependency-graph'
+import type { Plan, TaskAssignment, Agent, PlanActivity, DependencyGraph, GraphStats, BeadTask } from '@/shared/types'
 
 interface PlanDetailViewProps {
   plan: Plan
@@ -153,6 +156,44 @@ export function PlanDetailView({
 }: PlanDetailViewProps) {
   const [isCancelling, setIsCancelling] = useState(false)
   const [selectedReference, setSelectedReference] = useState<string>(plan.referenceAgentId || '')
+  const [beadTasks, setBeadTasks] = useState<BeadTask[]>([])
+  const [graphModalOpen, setGraphModalOpen] = useState(false)
+
+  // Fetch bead tasks on mount/plan change
+  useEffect(() => {
+    const fetchTasks = async () => {
+      try {
+        const tasks = await window.electronAPI.getBeadTasks(plan.id)
+        console.log('[PlanDetailView] Fetched bead tasks:', tasks.length, tasks.map(t => ({ id: t.id, blockedBy: t.blockedBy })))
+        setBeadTasks(tasks)
+      } catch (err) {
+        console.error('Failed to fetch bead tasks:', err)
+      }
+    }
+
+    // Only fetch if plan is in a state that has tasks
+    if (['delegating', 'in_progress', 'ready_for_review', 'completed', 'failed'].includes(plan.status)) {
+      fetchTasks()
+    }
+  }, [plan.id, plan.status])
+
+  // Build dependency graph from bead tasks and assignments
+  const graph: DependencyGraph = useMemo(() => {
+    if (beadTasks.length === 0) {
+      return {
+        nodes: new Map(),
+        edges: [],
+        roots: [],
+        leaves: [],
+        criticalPath: [],
+        maxDepth: 0,
+      }
+    }
+    return buildDependencyGraph(beadTasks, taskAssignments)
+  }, [beadTasks, taskAssignments])
+
+  // Calculate stats from graph
+  const graphStats: GraphStats = useMemo(() => calculateGraphStats(graph), [graph])
 
   const handleCancel = async () => {
     setIsCancelling(true)
@@ -167,13 +208,6 @@ export function PlanDetailView({
 
   const getAgentById = (id: string) => agents.find((a) => a.id === id)
   const referenceAgent = plan.referenceAgentId ? getAgentById(plan.referenceAgentId) : null
-
-  // Filter task assignments for this plan
-  const planTasks = taskAssignments.filter((t) => {
-    // Match tasks whose agent belongs to this plan
-    const agent = getAgentById(t.agentId)
-    return agent?.parentPlanId === plan.id
-  })
 
   // Reverse activities for newest-first display
   const reversedActivities = [...activities].reverse()
@@ -452,23 +486,181 @@ export function PlanDetailView({
         </div>
       )}
 
-      {/* Tasks section */}
-      {planTasks.length > 0 && (
+      {/* Tasks section - shows all tasks from graph */}
+      {graph.nodes.size > 0 && (
         <div className="p-3 border-b">
-          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-            Tasks ({planTasks.length})
-          </h3>
-          <div className="space-y-2">
-            {planTasks.map((task) => (
-              <TaskCard
-                key={task.beadId}
-                assignment={task}
-                agent={getAgentById(task.agentId)}
-              />
-            ))}
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Tasks ({graph.nodes.size})
+            </h3>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-xs"
+              onClick={() => setGraphModalOpen(true)}
+            >
+              <Network className="h-3 w-3 mr-1" />
+              View Graph
+            </Button>
+          </div>
+
+          {/* Progress bar */}
+          <DependencyProgressBar stats={graphStats} className="mb-3" />
+
+          {/* Task lists organized by status */}
+          <div className="space-y-3">
+            {/* In Progress tasks */}
+            {(() => {
+              const inProgressNodes = Array.from(graph.nodes.values()).filter(
+                (n) => n.status === 'in_progress'
+              )
+              if (inProgressNodes.length === 0) return null
+              return (
+                <div>
+                  <div className="text-[10px] font-medium text-yellow-500 mb-1">
+                    In Progress ({inProgressNodes.length})
+                  </div>
+                  <div className="space-y-1">
+                    {inProgressNodes.map((node) => (
+                      <TaskCard
+                        key={node.id}
+                        node={node}
+                        assignment={node.assignment}
+                        agent={node.assignment ? getAgentById(node.assignment.agentId) : undefined}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Sent tasks (dispatched but not picked up) */}
+            {(() => {
+              const sentNodes = Array.from(graph.nodes.values()).filter(
+                (n) => n.status === 'sent' || n.status === 'pending'
+              )
+              if (sentNodes.length === 0) return null
+              return (
+                <div>
+                  <div className="text-[10px] font-medium text-blue-500 mb-1">
+                    Sent ({sentNodes.length})
+                  </div>
+                  <div className="space-y-1">
+                    {sentNodes.map((node) => (
+                      <TaskCard
+                        key={node.id}
+                        node={node}
+                        assignment={node.assignment}
+                        agent={node.assignment ? getAgentById(node.assignment.agentId) : undefined}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Ready tasks (can start now) */}
+            {(() => {
+              const readyNodes = Array.from(graph.nodes.values()).filter(
+                (n) => n.status === 'ready'
+              )
+              if (readyNodes.length === 0) return null
+              return (
+                <div>
+                  <div className="text-[10px] font-medium text-blue-500 mb-1">
+                    Ready ({readyNodes.length})
+                  </div>
+                  <div className="space-y-1">
+                    {readyNodes.map((node) => (
+                      <TaskCard key={node.id} node={node} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Blocked tasks */}
+            {(() => {
+              const blockedNodes = Array.from(graph.nodes.values()).filter(
+                (n) => n.status === 'blocked'
+              )
+              if (blockedNodes.length === 0) return null
+              return (
+                <div>
+                  <div className="text-[10px] font-medium text-muted-foreground mb-1">
+                    Blocked ({blockedNodes.length})
+                  </div>
+                  <div className="space-y-1">
+                    {blockedNodes.map((node) => (
+                      <TaskCard key={node.id} node={node} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Failed tasks */}
+            {(() => {
+              const failedNodes = Array.from(graph.nodes.values()).filter(
+                (n) => n.status === 'failed'
+              )
+              if (failedNodes.length === 0) return null
+              return (
+                <div>
+                  <div className="text-[10px] font-medium text-red-500 mb-1">
+                    Failed ({failedNodes.length})
+                  </div>
+                  <div className="space-y-1">
+                    {failedNodes.map((node) => (
+                      <TaskCard
+                        key={node.id}
+                        node={node}
+                        assignment={node.assignment}
+                        agent={node.assignment ? getAgentById(node.assignment.agentId) : undefined}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Completed tasks (collapsed by default) */}
+            {(() => {
+              const completedNodes = Array.from(graph.nodes.values()).filter(
+                (n) => n.status === 'completed'
+              )
+              if (completedNodes.length === 0) return null
+              return (
+                <details className="group">
+                  <summary className="text-[10px] font-medium text-green-500 mb-1 cursor-pointer list-none flex items-center gap-1">
+                    <span className="group-open:rotate-90 transition-transform">▶</span>
+                    Completed ({completedNodes.length})
+                  </summary>
+                  <div className="space-y-1 mt-1">
+                    {completedNodes.map((node) => (
+                      <TaskCard
+                        key={node.id}
+                        node={node}
+                        assignment={node.assignment}
+                        agent={node.assignment ? getAgentById(node.assignment.agentId) : undefined}
+                      />
+                    ))}
+                  </div>
+                </details>
+              )
+            })()}
           </div>
         </div>
       )}
+
+      {/* Graph modal */}
+      <DependencyGraphModal
+        isOpen={graphModalOpen}
+        onClose={() => setGraphModalOpen(false)}
+        graph={graph}
+        stats={graphStats}
+        planTitle={plan.title}
+      />
 
         {/* Activity log section */}
         <div className="border-b">
