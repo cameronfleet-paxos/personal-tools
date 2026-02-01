@@ -115,7 +115,7 @@ export class HeadlessAgent extends EventEmitter {
     try {
       // Build container config
       const containerConfig: ContainerConfig = {
-        image: options.image || 'bismark-agent:latest',
+        image: options.image || 'bismarck-agent:latest',
         workingDir: options.worktreePath,
         planDir: options.planDir,
         planId: options.planId,
@@ -123,7 +123,7 @@ export class HeadlessAgent extends EventEmitter {
         claudeFlags: options.claudeFlags,
         env: {
           ...options.env,
-          BISMARK_TASK_ID: options.taskId || '',
+          BISMARCK_TASK_ID: options.taskId || '',
         },
         useEntrypoint: options.useEntrypoint,
       }
