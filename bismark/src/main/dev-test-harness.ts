@@ -314,7 +314,7 @@ export interface MockOrchestratorOptions {
 /**
  * MockOrchestrator simulates the orchestrator behavior:
  * - Monitors for task completion
- * - Marks next task as bismark-ready when blocker completes
+ * - Marks next task as bismarck-ready when blocker completes
  * - Emits activity events to the renderer via IPC
  */
 export class MockOrchestrator extends EventEmitter {
@@ -443,7 +443,7 @@ export class MockOrchestrator extends EventEmitter {
 
           if (!hasOpenBlockers) {
             // All blockers are closed (or no blockers), mark as ready
-            await execAsync(`bd --sandbox --db "${dbPath}" label add "${task.id}" bismark-ready`)
+            await execAsync(`bd --sandbox --db "${dbPath}" label add "${task.id}" bismarck-ready`)
             console.log('[MockOrchestrator] Marked task ready:', task.id, '(blocker completed:', completedTaskId, ')')
             this.emitActivity('info', `Marked task ready: ${task.id}`)
             if (this.onTaskReadyCallback) {
@@ -560,14 +560,14 @@ export async function setupMockPlan(options?: SetupMockPlanOptions): Promise<Moc
     console.log(`[MockPlanSetup] Created task ${i + 1}:`, tasks[i].id)
   }
 
-  // Mark first task as bismark-ready (simulates orchestrator marking it)
+  // Mark first task as bismarck-ready (simulates orchestrator marking it)
   // For parallel tasks, mark all as ready
   if (parallelTasks) {
     for (const task of tasks) {
-      await execAsync(bdCmd(planDir, `label add "${task.id}" bismark-ready`))
+      await execAsync(bdCmd(planDir, `label add "${task.id}" bismarck-ready`))
     }
   } else {
-    await execAsync(bdCmd(planDir, `label add "${tasks[0].id}" bismark-ready`))
+    await execAsync(bdCmd(planDir, `label add "${tasks[0].id}" bismarck-ready`))
   }
 
   console.log('[MockPlanSetup] Created tasks:', tasks.map(t => t.id))

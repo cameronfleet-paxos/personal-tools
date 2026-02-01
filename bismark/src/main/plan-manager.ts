@@ -902,10 +902,10 @@ IMPORTANT: All bd commands must run in ${planDir} directory.
 2. Create tasks: cd ${planDir} && bd --sandbox create --parent <epic-id> "task title"
 3. Set dependencies: cd ${planDir} && bd --sandbox dep <blocking-task-id> --blocks <blocked-task-id>
 4. Assign: cd ${planDir} && bd --sandbox update <task-id> --assignee <agent-name>
-5. Mark FIRST task ready: cd ${planDir} && bd --sandbox update <first-task-id> --add-label bismark-ready
+5. Mark FIRST task ready: cd ${planDir} && bd --sandbox update <first-task-id> --add-label bismarck-ready
 
 The orchestrator will automatically mark dependent tasks ready when their blockers complete.
-After marking a task with 'bismark-ready', Bismark will automatically send it to the assigned agent.`
+After marking a task with 'bismarck-ready', Bismark will automatically send it to the assigned agent.`
 
   return instructions
 }
@@ -952,7 +952,7 @@ async function syncTasksForPlan(planId: string): Promise<void> {
 
   try {
     // Get tasks marked as ready for Bismark (from the active plan's directory)
-    const readyTasks = await bdList(activePlan.id, { labels: ['bismark-ready'], status: 'open' })
+    const readyTasks = await bdList(activePlan.id, { labels: ['bismarck-ready'], status: 'open' })
 
     for (const task of readyTasks) {
       await processReadyTask(activePlan.id, task)
@@ -1137,7 +1137,7 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
 
       // Update bd labels
       await bdUpdate(planId, task.id, {
-        removeLabels: ['bismark-ready'],
+        removeLabels: ['bismarck-ready'],
         addLabels: ['bismark-sent'],
       })
 
@@ -1199,7 +1199,7 @@ async function processReadyTask(planId: string, task: BeadTask): Promise<void> {
 
         // Update bd labels
         await bdUpdate(planId, task.id, {
-          removeLabels: ['bismark-ready'],
+          removeLabels: ['bismarck-ready'],
           addLabels: ['bismark-sent'],
         })
 
@@ -1315,7 +1315,7 @@ Assign a task to a repository with worktree name:
   bd --sandbox update <task-id> --add-label "repo:<repo-name>" --add-label "worktree:<descriptive-name>"
 
 Mark task ready for pickup:
-  bd --sandbox update <task-id> --add-label bismark-ready
+  bd --sandbox update <task-id> --add-label bismarck-ready
 
 Check task dependencies:
   bd --sandbox dep list <task-id> --direction=down
