@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Build the bismark-agent-mock Docker image
+# Build the bismarck-agent-mock Docker image
 #
 # Usage: ./build-mock.sh
 #
@@ -9,7 +9,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IMAGE_NAME="bismark-agent-mock:test"
+IMAGE_NAME="bismarck-agent-mock:test"
 
 echo "Building mock agent Docker image..."
 echo "Image name: $IMAGE_NAME"
