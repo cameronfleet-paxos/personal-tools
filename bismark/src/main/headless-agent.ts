@@ -165,19 +165,37 @@ export class HeadlessAgent extends EventEmitter {
    * Stop the agent
    */
   async stop(): Promise<void> {
+    const logCtx: LogContext = { planId: this.options?.planId, taskId: this.options?.taskId }
+
+    logger.info('agent', 'HeadlessAgent.stop() called', logCtx, {
+      currentStatus: this.status,
+      hasContainer: !!this.container,
+      worktreePath: this.options?.worktreePath,
+    })
+
     if (this.status !== 'running' && this.status !== 'starting') {
+      logger.info('agent', 'HeadlessAgent.stop() skipped - not running', logCtx, { status: this.status })
       return
     }
 
     this.setStatus('stopping')
+    logger.debug('agent', 'HeadlessAgent status set to stopping', logCtx)
 
     try {
-      await this.container?.stop()
+      if (this.container) {
+        logger.info('agent', 'Calling container.stop()', logCtx)
+        const stopStartTime = Date.now()
+        await this.container.stop()
+        logger.info('agent', 'Container.stop() completed', logCtx, { durationMs: Date.now() - stopStartTime })
+      } else {
+        logger.warn('agent', 'No container to stop', logCtx)
+      }
     } catch (error) {
-      console.error('[HeadlessAgent] Error stopping container:', error)
+      logger.error('agent', 'Error stopping container', logCtx, { error: String(error) })
     }
 
     this.setStatus('completed')
+    logger.info('agent', 'HeadlessAgent.stop() finished', logCtx, { finalStatus: this.status })
   }
 
   private setStatus(status: HeadlessAgentStatus): void {

@@ -202,21 +202,41 @@ export async function spawnContainerAgent(
 
   // Stop function
   const stop = async (): Promise<void> => {
-    logger.info('docker', `Stopping container ${trackingId}`, logContext)
+    logger.info('docker', `Stopping container ${trackingId}`, logContext, {
+      pid: dockerProcess.pid,
+      killed: dockerProcess.killed,
+      exitCode: dockerProcess.exitCode,
+    })
 
     // First try graceful termination
-    dockerProcess.kill('SIGTERM')
+    const sigTermSuccess = dockerProcess.kill('SIGTERM')
+    logger.debug('docker', 'Sent SIGTERM to container', logContext, {
+      success: sigTermSuccess,
+      pid: dockerProcess.pid,
+    })
 
     // Wait a bit for graceful shutdown
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
     // Force kill if still running
     if (!dockerProcess.killed) {
-      logger.debug('docker', 'Force killing container', logContext)
-      dockerProcess.kill('SIGKILL')
+      logger.info('docker', 'Container still running after SIGTERM, sending SIGKILL', logContext, {
+        pid: dockerProcess.pid,
+      })
+      const sigKillSuccess = dockerProcess.kill('SIGKILL')
+      logger.debug('docker', 'Sent SIGKILL to container', logContext, {
+        success: sigKillSuccess,
+        pid: dockerProcess.pid,
+      })
+    } else {
+      logger.debug('docker', 'Container already killed after SIGTERM', logContext)
     }
 
     runningContainers.delete(trackingId)
+    logger.info('docker', `Container stop completed ${trackingId}`, logContext, {
+      finalKilledState: dockerProcess.killed,
+      finalExitCode: dockerProcess.exitCode,
+    })
   }
 
   containerEvents.emit('started', { trackingId, config })
