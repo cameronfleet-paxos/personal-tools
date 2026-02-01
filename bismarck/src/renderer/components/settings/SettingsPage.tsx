@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { SettingsSidebar } from './SettingsSidebar'
+import { RepositoriesSettings } from './RepositoriesSettings'
 
 export type SettingsCategory = 'general' | 'paths' | 'docker' | 'repositories' | 'plans'
 
@@ -47,9 +48,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
             {activeCategory === 'docker' && (
               <div className="text-muted-foreground">Docker settings placeholder</div>
             )}
-            {activeCategory === 'repositories' && (
-              <div className="text-muted-foreground">Repositories settings placeholder</div>
-            )}
+            {activeCategory === 'repositories' && <RepositoriesSettings />}
             {activeCategory === 'plans' && (
               <div className="text-muted-foreground">Plans settings placeholder</div>
             )}
