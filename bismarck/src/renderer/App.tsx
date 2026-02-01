@@ -18,6 +18,7 @@ import { Terminal } from '@/renderer/components/Terminal'
 import { TabBar } from '@/renderer/components/TabBar'
 import { Logo } from '@/renderer/components/Logo'
 import { SettingsModal } from '@/renderer/components/SettingsModal'
+import { SettingsPage } from '@/renderer/components/settings/SettingsPage'
 import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
 import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
@@ -44,6 +45,7 @@ function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsPageOpen, setSettingsPageOpen] = useState(false)
   const [editingAgent, setEditingAgent] = useState<Agent | undefined>()
   const [waitingQueue, setWaitingQueue] = useState<string[]>([])
   const [preferences, setPreferences] = useState<AppPreferences>({
@@ -920,6 +922,11 @@ function App() {
   // Grid positions: TL (0), TR (1), BL (2), BR (3)
   const gridPositions = [0, 1, 2, 3]
 
+  // Settings page routing
+  if (settingsPageOpen) {
+    return <SettingsPage onClose={() => setSettingsPageOpen(false)} />
+  }
+
   // Empty state
   if (agents.length === 0) {
     return (
@@ -996,7 +1003,7 @@ function App() {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => setSettingsPageOpen(true)}
           >
             <Settings className="h-4 w-4" />
           </Button>
