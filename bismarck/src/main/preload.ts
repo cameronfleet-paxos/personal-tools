@@ -211,8 +211,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('detect-git-repository', directory),
   getRepositories: (): Promise<Repository[]> =>
     ipcRenderer.invoke('get-repositories'),
-  updateRepository: (id: string, updates: Partial<Pick<Repository, 'name'>>): Promise<Repository | undefined> =>
+  getAllRepositories: (): Promise<Repository[]> =>
+    ipcRenderer.invoke('get-all-repositories'),
+  updateRepository: (id: string, updates: Partial<Pick<Repository, 'name' | 'purpose' | 'completionCriteria' | 'protectedBranches'>>): Promise<Repository | undefined> =>
     ipcRenderer.invoke('update-repository', id, updates),
+  removeRepository: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('remove-repository', id),
+  refreshRepository: (id: string): Promise<Repository | undefined> =>
+    ipcRenderer.invoke('refresh-repository', id),
 
   // External URL handling
   openExternal: (url: string): Promise<void> =>

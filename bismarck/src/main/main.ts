@@ -485,8 +485,22 @@ function registerIpcHandlers() {
     return getAllRepositories()
   })
 
-  ipcMain.handle('update-repository', async (_event, id: string, updates: Partial<Pick<Repository, 'name'>>) => {
+  ipcMain.handle('update-repository', async (_event, id: string, updates: Partial<Pick<Repository, 'name' | 'purpose' | 'completionCriteria' | 'protectedBranches'>>) => {
     return updateRepository(id, updates)
+  })
+
+  ipcMain.handle('remove-repository', async (_event, id: string) => {
+    const { removeRepository } = await import('./repository-manager')
+    return removeRepository(id)
+  })
+
+  ipcMain.handle('refresh-repository', async (_event, id: string) => {
+    const { refreshRepository } = await import('./repository-manager')
+    return refreshRepository(id)
+  })
+
+  ipcMain.handle('get-all-repositories', async () => {
+    return getAllRepositories()
   })
 
   // Dev test harness (development mode only)

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { Breadcrumb, type BreadcrumbItem } from '@/renderer/components/ui/breadcrumb'
+import { RepositoriesSettings } from '@/renderer/components/RepositoriesSettings'
 
 type SettingsCategory = 'general' | 'paths' | 'docker' | 'repositories' | 'plans'
 
@@ -106,9 +107,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
               <p className="text-muted-foreground mb-6">
                 Configure repository purpose, completion criteria, and protected branches
               </p>
-              <div className="text-sm text-muted-foreground">
-                Repositories settings content will be implemented here
-              </div>
+              <RepositoriesSettings />
             </div>
           )}
 
