@@ -29,6 +29,7 @@ import { CollapsedPlanGroup } from '@/renderer/components/CollapsedPlanGroup'
 import { BootProgressIndicator } from '@/renderer/components/BootProgressIndicator'
 import { Breadcrumb } from '@/renderer/components/Breadcrumb'
 import { AttentionQueue } from '@/renderer/components/AttentionQueue'
+import { SetupWizard } from '@/renderer/components/SetupWizard'
 import type { Agent, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, HeadlessAgentInfo, BranchStrategy } from '@/shared/types'
 import { themes } from '@/shared/constants'
 import { getGridConfig, getGridPosition } from '@/shared/grid-utils'
@@ -39,7 +40,7 @@ interface ActiveTerminal {
 }
 
 // App-level routing
-type AppView = 'main' | 'settings'
+type AppView = 'main' | 'settings' | 'setup-wizard'
 
 // Type for terminal write functions
 type TerminalWriter = (data: string) => void
@@ -97,6 +98,9 @@ function App() {
 
   // Command search state (CMD-K)
   const [commandSearchOpen, setCommandSearchOpen] = useState(false)
+
+  // Setup wizard dismissal state
+  const [wizardDismissed, setWizardDismissed] = useState(false)
 
   // Discussion execute state - maps planId to selected agent id
   const [discussionExecuteAgent, setDiscussionExecuteAgent] = useState<Record<string, string>>({})
@@ -987,8 +991,21 @@ function App() {
   const gridConfig = getGridConfig(preferences.gridSize)
   const gridPositions = gridConfig.positions
 
-  // Empty state
+  // Empty state - Show setup wizard for first-time users
   if (agents.length === 0) {
+    // Show wizard if user hasn't dismissed it
+    if (!wizardDismissed) {
+      return (
+        <SetupWizard
+          onComplete={async () => {
+            setWizardDismissed(true)
+            await loadAgents()
+          }}
+        />
+      )
+    }
+
+    // Fallback to manual agent creation if wizard was dismissed
     return (
       <div className="flex items-center justify-center h-screen bg-background">
         <div className="text-center">
