@@ -18,6 +18,7 @@ import { Terminal } from '@/renderer/components/Terminal'
 import { TabBar } from '@/renderer/components/TabBar'
 import { Logo } from '@/renderer/components/Logo'
 import { SettingsModal } from '@/renderer/components/SettingsModal'
+import { SettingsPage } from '@/renderer/components/SettingsPage'
 import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
 import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
@@ -45,6 +46,7 @@ function App() {
   const [modalOpen, setModalOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [editingAgent, setEditingAgent] = useState<Agent | undefined>()
+  const [currentView, setCurrentView] = useState<'main' | 'settings'>('main')
   const [waitingQueue, setWaitingQueue] = useState<string[]>([])
   const [preferences, setPreferences] = useState<AppPreferences>({
     attentionMode: 'focus',
@@ -946,6 +948,12 @@ function App() {
     )
   }
 
+  // Render settings view
+  if (currentView === 'settings') {
+    return <SettingsPage onClose={() => setCurrentView('main')} />
+  }
+
+  // Render main view
   return (
     <div className="h-screen bg-background flex flex-col">
       {/* Header */}
@@ -996,7 +1004,7 @@ function App() {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => setCurrentView('settings')}
           >
             <Settings className="h-4 w-4" />
           </Button>
