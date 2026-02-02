@@ -17,7 +17,7 @@ import { AgentIcon } from '@/renderer/components/AgentIcon'
 import { Terminal } from '@/renderer/components/Terminal'
 import { TabBar } from '@/renderer/components/TabBar'
 import { Logo } from '@/renderer/components/Logo'
-import { SettingsModal } from '@/renderer/components/SettingsModal'
+import { SettingsPage } from '@/renderer/components/SettingsPage'
 import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
 import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
@@ -1630,9 +1630,9 @@ function App() {
         onSave={handleSaveAgent}
       />
 
-      <SettingsModal
+      <SettingsPage
         open={settingsOpen}
-        onOpenChange={setSettingsOpen}
+        onClose={() => setSettingsOpen(false)}
         preferences={preferences}
         onPreferencesChange={handlePreferencesChange}
       />
