@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { X, Settings, Palette, Bot, Keyboard } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { Label } from '@/renderer/components/ui/label'
+import { Breadcrumb } from '@/renderer/components/ui/breadcrumb'
 import type { AppPreferences, AttentionMode, OperatingMode, AgentModel, GridSize } from '@/shared/types'
 import { cn } from '@/lib/utils'
 
@@ -100,6 +101,19 @@ export function SettingsPage({
       {/* Content Area */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-2xl mx-auto p-6">
+          {/* Breadcrumb Navigation */}
+          <Breadcrumb
+            items={[
+              { label: 'Settings', icon: Settings },
+              {
+                label: categories.find(c => c.id === activeCategory)?.label || '',
+                icon: categories.find(c => c.id === activeCategory)?.icon,
+                isActive: true
+              },
+            ]}
+            className="mb-6"
+          />
+
           {activeCategory === 'general' && (
             <div className="space-y-6">
               <div>
