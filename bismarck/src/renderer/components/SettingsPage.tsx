@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
+import { Breadcrumb, type BreadcrumbItem } from '@/renderer/components/ui/breadcrumb'
 
 type SettingsCategory = 'general' | 'paths' | 'docker' | 'repositories' | 'plans'
 
@@ -17,6 +18,13 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
     { id: 'docker', label: 'Docker', description: 'Images and resource limits' },
     { id: 'repositories', label: 'Repositories', description: 'Manage repository settings' },
     { id: 'plans', label: 'Plans', description: 'Operating mode and agent model' },
+  ]
+
+  // Build breadcrumb items based on current location
+  const breadcrumbItems: BreadcrumbItem[] = [
+    { label: 'Home', onClick: onClose },
+    { label: 'Settings', onClick: () => setActiveCategory('general') },
+    { label: categories.find(c => c.id === activeCategory)?.label || '' },
   ]
 
   return (
@@ -55,6 +63,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
       {/* Content Area */}
       <main className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto p-8">
+          <Breadcrumb items={breadcrumbItems} className="mb-6" />
           {activeCategory === 'general' && (
             <div>
               <h2 className="text-2xl font-bold mb-2">General</h2>
