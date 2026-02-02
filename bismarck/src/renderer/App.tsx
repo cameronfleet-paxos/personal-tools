@@ -36,14 +36,17 @@ interface ActiveTerminal {
 // Type for terminal write functions
 type TerminalWriter = (data: string) => void
 
+// App view routing
+type AppView = 'main' | 'settings'
+
 function App() {
+  const [currentView, setCurrentView] = useState<AppView>('main')
   const [agents, setAgents] = useState<Agent[]>([])
   const [activeTerminals, setActiveTerminals] = useState<ActiveTerminal[]>([])
   const [focusedAgentId, setFocusedAgentId] = useState<string | null>(null)
   const [tabs, setTabs] = useState<AgentTab[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [editingAgent, setEditingAgent] = useState<Agent | undefined>()
   const [waitingQueue, setWaitingQueue] = useState<string[]>([])
   const [preferences, setPreferences] = useState<AppPreferences>({
@@ -164,6 +167,13 @@ function App() {
   // Keyboard shortcuts for expand mode and dev console
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape to return from settings to main view
+      if (e.key === 'Escape' && currentView === 'settings') {
+        e.preventDefault()
+        setCurrentView('main')
+        return
+      }
+
       // Cmd/Ctrl+Shift+D to toggle dev console (development only)
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'd') {
         e.preventDefault()
@@ -214,7 +224,7 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [preferences.attentionMode, waitingQueue, tabs, activeTabId, maximizedAgentIdByTab, handleFocusAgent])
+  }, [currentView, preferences.attentionMode, waitingQueue, tabs, activeTabId, maximizedAgentIdByTab, handleFocusAgent])
 
   const loadPreferences = async () => {
     const prefs = await window.electronAPI?.getPreferences?.()
@@ -946,6 +956,21 @@ function App() {
     )
   }
 
+  // Render settings view
+  if (currentView === 'settings') {
+    return (
+      <div className="h-screen bg-background flex flex-col">
+        <SettingsPage
+          open={true}
+          onClose={() => setCurrentView('main')}
+          preferences={preferences}
+          onPreferencesChange={handlePreferencesChange}
+        />
+      </div>
+    )
+  }
+
+  // Render main view
   return (
     <div className="h-screen bg-background flex flex-col">
       {/* Header */}
@@ -996,7 +1021,7 @@ function App() {
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => setCurrentView('settings')}
           >
             <Settings className="h-4 w-4" />
           </Button>
@@ -1628,13 +1653,6 @@ function App() {
         onOpenChange={setModalOpen}
         agent={editingAgent}
         onSave={handleSaveAgent}
-      />
-
-      <SettingsPage
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        preferences={preferences}
-        onPreferencesChange={handlePreferencesChange}
       />
 
       {/* Stop Agent Confirmation Dialog */}
