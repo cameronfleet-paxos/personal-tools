@@ -5,8 +5,9 @@ import { useSettingsStore } from "@/lib/store";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { LoadingOverlay } from "@/components/loading-overlay";
 import { cn } from "@/lib/utils";
+import { PathsSettings } from "./components/PathsSettings";
 
-type SettingsSection = "general" | "appearance" | "notifications" | "privacy";
+type SettingsSection = "paths" | "general" | "appearance" | "notifications" | "privacy";
 
 interface SidebarItem {
   id: SettingsSection;
@@ -15,6 +16,11 @@ interface SidebarItem {
 }
 
 const sidebarItems: SidebarItem[] = [
+  {
+    id: "paths",
+    label: "Paths",
+    description: "Tool paths and system configuration",
+  },
   {
     id: "general",
     label: "General",
@@ -39,7 +45,7 @@ const sidebarItems: SidebarItem[] = [
 
 export default function SettingsPage() {
   const { isLoading, effectiveUser } = useSettingsStore();
-  const [activeSection, setActiveSection] = useState<SettingsSection>("general");
+  const [activeSection, setActiveSection] = useState<SettingsSection>("paths");
 
   const hasData = effectiveUser !== null;
 
@@ -53,6 +59,8 @@ export default function SettingsPage() {
 
   const renderContent = () => {
     switch (activeSection) {
+      case "paths":
+        return <PathsSettings />;
       case "general":
         return (
           <Card>
