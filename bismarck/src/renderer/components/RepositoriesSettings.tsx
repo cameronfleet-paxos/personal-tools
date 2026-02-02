@@ -10,6 +10,8 @@ export function RepositoriesSettings() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<Partial<Repository>>({})
   const [loading, setLoading] = useState(true)
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [savedId, setSavedId] = useState<string | null>(null)
 
   // Load repositories on mount
   useEffect(() => {
@@ -44,6 +46,7 @@ export function RepositoriesSettings() {
 
   const saveEditing = async (repoId: string) => {
     try {
+      setSavingId(repoId)
       await window.electron.updateRepository(repoId, {
         purpose: editForm.purpose || undefined,
         completionCriteria: editForm.completionCriteria || undefined,
@@ -52,8 +55,16 @@ export function RepositoriesSettings() {
       await loadRepositories()
       setEditingId(null)
       setEditForm({})
+      setSavingId(null)
+      setSavedId(repoId)
+
+      // Clear the "Saved" indicator after 3 seconds
+      setTimeout(() => {
+        setSavedId((current) => (current === repoId ? null : current))
+      }, 3000)
     } catch (error) {
       console.error('Failed to update repository:', error)
+      setSavingId(null)
     }
   }
 
@@ -133,7 +144,20 @@ export function RepositoriesSettings() {
             {/* Repository Header */}
             <div className="flex items-start justify-between">
               <div className="flex-1">
-                <h3 className="font-semibold text-base">{repo.name}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-base">{repo.name}</h3>
+                  {savedId === repo.id && (
+                    <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+                      <Check className="h-3 w-3" />
+                      Saved
+                    </span>
+                  )}
+                  {savingId === repo.id && (
+                    <span className="text-xs text-muted-foreground">
+                      Saving...
+                    </span>
+                  )}
+                </div>
                 <p className="text-xs text-muted-foreground mt-1">
                   {repo.rootPath}
                 </p>
