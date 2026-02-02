@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { X, Settings, Palette, Bot, Keyboard } from 'lucide-react'
+import { X, Settings, Palette, Bot, Keyboard, FolderGit2 } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { Label } from '@/renderer/components/ui/label'
 import { Breadcrumb } from '@/renderer/components/ui/breadcrumb'
 import type { AppPreferences, AttentionMode, OperatingMode, AgentModel, GridSize } from '@/shared/types'
 import { cn } from '@/lib/utils'
+import { RepositoriesSettings } from './settings/sections/RepositoriesSettings'
 
 interface SettingsPageProps {
   open: boolean
@@ -13,7 +14,7 @@ interface SettingsPageProps {
   onPreferencesChange: (preferences: Partial<AppPreferences>) => void
 }
 
-type SettingsCategory = 'general' | 'appearance' | 'agent' | 'shortcuts'
+type SettingsCategory = 'general' | 'repositories' | 'appearance' | 'agent' | 'shortcuts'
 
 export function SettingsPage({
   open,
@@ -46,6 +47,11 @@ export function SettingsPage({
       id: 'general' as const,
       label: 'General',
       icon: Settings,
+    },
+    {
+      id: 'repositories' as const,
+      label: 'Repositories',
+      icon: FolderGit2,
     },
     {
       id: 'appearance' as const,
@@ -280,6 +286,10 @@ export function SettingsPage({
                 </div>
               </div>
             </div>
+          )}
+
+          {activeCategory === 'repositories' && (
+            <RepositoriesSettings />
           )}
 
           {activeCategory === 'appearance' && (
