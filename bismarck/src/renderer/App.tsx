@@ -1,7 +1,7 @@
 import './index.css'
 import './electron.d.ts'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, ChevronRight, ChevronLeft, Settings, Check, X, Maximize2, Minimize2, ListTodo, Container, CheckCircle2, FileText, Play } from 'lucide-react'
+import { Plus, ChevronRight, ChevronLeft, Settings, Check, X, Maximize2, Minimize2, ListTodo, Container, CheckCircle2, FileText, Play, Sparkles } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import {
   Dialog,
@@ -21,6 +21,7 @@ import { SettingsModal } from '@/renderer/components/SettingsModal'
 import { SettingsPage } from '@/renderer/components/SettingsPage'
 import { PlanSidebar } from '@/renderer/components/PlanSidebar'
 import { PlanCreator } from '@/renderer/components/PlanCreator'
+import { SetupWizardModal } from '@/renderer/components/SetupWizardModal'
 import { HeadlessTerminal } from '@/renderer/components/HeadlessTerminal'
 import { DevConsole } from '@/renderer/components/DevConsole'
 import { CommandSearch } from '@/renderer/components/CommandSearch'
@@ -97,6 +98,9 @@ function App() {
 
   // Command search state (CMD-K)
   const [commandSearchOpen, setCommandSearchOpen] = useState(false)
+
+  // Setup wizard state
+  const [setupWizardOpen, setSetupWizardOpen] = useState(false)
 
   // Discussion execute state - maps planId to selected agent id
   const [discussionExecuteAgent, setDiscussionExecuteAgent] = useState<Record<string, string>>({})
@@ -998,10 +1002,16 @@ function App() {
           <p className="text-muted-foreground mb-6">
             No agents configured. Add one to get started.
           </p>
-          <Button onClick={handleAddAgent}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Agent
-          </Button>
+          <div className="flex gap-3 justify-center">
+            <Button onClick={() => setSetupWizardOpen(true)}>
+              <Sparkles className="h-4 w-4 mr-2" />
+              Setup Wizard
+            </Button>
+            <Button variant="outline" onClick={handleAddAgent}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Manually
+            </Button>
+          </div>
         </div>
         <AgentModal
           open={modalOpen}
@@ -1821,6 +1831,13 @@ function App() {
         open={planCreatorOpen}
         onOpenChange={setPlanCreatorOpen}
         onCreatePlan={handleCreatePlan}
+      />
+
+      {/* Setup Wizard Modal */}
+      <SetupWizardModal
+        open={setupWizardOpen}
+        onOpenChange={setSetupWizardOpen}
+        onComplete={loadAgents}
       />
 
       {/* Attention Queue (queue mode only) */}
