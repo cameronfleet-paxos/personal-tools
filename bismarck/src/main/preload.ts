@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask } from '../shared/types'
+import type { AppSettings } from '../main/settings-manager'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -213,6 +214,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-repositories'),
   updateRepository: (id: string, updates: Partial<Pick<Repository, 'name' | 'defaultBranch' | 'remoteUrl' | 'purpose' | 'completionCriteria' | 'protectedBranches'>>): Promise<Repository | undefined> =>
     ipcRenderer.invoke('update-repository', id, updates),
+
+  // Settings management
+  getSettings: (): Promise<AppSettings> =>
+    ipcRenderer.invoke('get-settings'),
+  updateSettings: (updates: Partial<AppSettings>): Promise<AppSettings> =>
+    ipcRenderer.invoke('update-settings', updates),
 
   // External URL handling
   openExternal: (url: string): Promise<void> =>

@@ -89,6 +89,11 @@ import {
   getAllRepositories,
   updateRepository,
 } from './repository-manager'
+import {
+  loadSettings,
+  updateSettings,
+  type AppSettings,
+} from './settings-manager'
 import { bdList } from './bd-client'
 import { initializeDockerEnvironment } from './docker-sandbox'
 import {
@@ -318,6 +323,15 @@ function registerIpcHandlers() {
       stopTaskPolling()
     }
     return updated
+  })
+
+  // Settings management
+  ipcMain.handle('get-settings', () => {
+    return loadSettings()
+  })
+
+  ipcMain.handle('update-settings', (_event, updates: Partial<AppSettings>) => {
+    return updateSettings(updates)
   })
 
   // Plan management (Team Mode)

@@ -1,11 +1,12 @@
-import { useState } from 'react'
-import { X, Settings, Palette, Bot, Keyboard, FolderGit2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { X, Settings, Palette, Bot, Keyboard, FolderGit2, Container } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { Label } from '@/renderer/components/ui/label'
 import { Breadcrumb } from '@/renderer/components/ui/breadcrumb'
 import type { AppPreferences, AttentionMode, OperatingMode, AgentModel, GridSize } from '@/shared/types'
 import { cn } from '@/lib/utils'
 import { RepositoriesSettings } from './settings/sections/RepositoriesSettings'
+import { DockerSettings } from '@/renderer/components/DockerSettings'
 
 interface SettingsPageProps {
   open: boolean
@@ -14,7 +15,7 @@ interface SettingsPageProps {
   onPreferencesChange: (preferences: Partial<AppPreferences>) => void
 }
 
-type SettingsCategory = 'general' | 'repositories' | 'appearance' | 'agent' | 'shortcuts'
+type SettingsCategory = 'general' | 'repositories' | 'appearance' | 'docker' | 'agent' | 'shortcuts'
 
 export function SettingsPage({
   open,
@@ -23,6 +24,24 @@ export function SettingsPage({
   onPreferencesChange,
 }: SettingsPageProps) {
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>('general')
+  const [dockerImages, setDockerImages] = useState<string[]>([])
+  const [dockerResourceLimits, setDockerResourceLimits] = useState({ cpu: '2', memory: '4g' })
+  const [dockerProxiedTools, setDockerProxiedTools] = useState<any[]>([])
+
+  // Load Docker settings on mount
+  useEffect(() => {
+    const loadDockerSettings = async () => {
+      const settings = await window.electronAPI?.getSettings?.()
+      if (settings?.docker) {
+        setDockerImages(settings.docker.images || [])
+        setDockerResourceLimits(settings.docker.resourceLimits || { cpu: '2', memory: '4g' })
+        setDockerProxiedTools(settings.docker.proxiedTools || [])
+      }
+    }
+    if (open) {
+      loadDockerSettings()
+    }
+  }, [open])
 
   if (!open) return null
 
@@ -42,6 +61,28 @@ export function SettingsPage({
     onPreferencesChange({ gridSize: size })
   }
 
+  const handleDockerSettingsChange = async (updates: {
+    images?: string[]
+    resourceLimits?: { cpu: string; memory: string }
+  }) => {
+    // Update local state
+    if (updates.images !== undefined) {
+      setDockerImages(updates.images)
+    }
+    if (updates.resourceLimits !== undefined) {
+      setDockerResourceLimits(updates.resourceLimits)
+    }
+
+    // Persist to disk
+    await window.electronAPI?.updateSettings?.({
+      docker: {
+        images: updates.images !== undefined ? updates.images : dockerImages,
+        resourceLimits: updates.resourceLimits !== undefined ? updates.resourceLimits : dockerResourceLimits,
+        proxiedTools: dockerProxiedTools,
+      },
+    })
+  }
+
   const categories = [
     {
       id: 'general' as const,
@@ -57,6 +98,11 @@ export function SettingsPage({
       id: 'appearance' as const,
       label: 'Appearance',
       icon: Palette,
+    },
+    {
+      id: 'docker' as const,
+      label: 'Docker',
+      icon: Container,
     },
     {
       id: 'agent' as const,
@@ -307,6 +353,14 @@ export function SettingsPage({
                 </div>
               </div>
             </div>
+          )}
+
+          {activeCategory === 'docker' && (
+            <DockerSettings
+              images={dockerImages}
+              resourceLimits={dockerResourceLimits}
+              onSettingsChange={handleDockerSettingsChange}
+            />
           )}
 
           {activeCategory === 'agent' && (

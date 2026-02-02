@@ -1,4 +1,5 @@
 import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask } from '../shared/types'
+import type { AppSettings } from '../main/settings-manager'
 
 export interface ElectronAPI {
   // Workspace management
@@ -83,6 +84,10 @@ export interface ElectronAPI {
   detectGitRepository: (directory: string) => Promise<Repository | null>
   getRepositories: () => Promise<Repository[]>
   updateRepository: (id: string, updates: Partial<Pick<Repository, 'name' | 'defaultBranch' | 'remoteUrl'>>) => Promise<Repository | undefined>
+
+  // Settings management
+  getSettings: () => Promise<AppSettings>
+  updateSettings: (updates: Partial<AppSettings>) => Promise<AppSettings>
 
   // Terminal events
   onTerminalData: (
