@@ -82,7 +82,7 @@ export interface ElectronAPI {
   // Git repository management
   detectGitRepository: (directory: string) => Promise<Repository | null>
   getRepositories: () => Promise<Repository[]>
-  updateRepository: (id: string, updates: Partial<Pick<Repository, 'name'>>) => Promise<Repository | undefined>
+  updateRepository: (id: string, updates: Partial<Pick<Repository, 'name' | 'defaultBranch' | 'remoteUrl'>>) => Promise<Repository | undefined>
 
   // Terminal events
   onTerminalData: (
