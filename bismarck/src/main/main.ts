@@ -104,6 +104,12 @@ import {
   getCustomPrompts,
   setCustomPrompt,
 } from './settings-manager'
+import {
+  showFolderPicker,
+  scanForRepositories,
+  getCommonRepoPaths,
+  bulkCreateAgents,
+} from './setup-wizard'
 import { getDefaultPrompt } from './prompt-templates'
 import { bdList } from './bd-client'
 import { initializeDockerEnvironment } from './docker-sandbox'
@@ -588,6 +594,23 @@ function registerIpcHandlers() {
 
   ipcMain.handle('get-default-prompt', (_event, type: 'orchestrator' | 'planner' | 'discussion') => {
     return getDefaultPrompt(type)
+  })
+
+  // Setup Wizard
+  ipcMain.handle('show-folder-picker', async () => {
+    return showFolderPicker()
+  })
+
+  ipcMain.handle('scan-for-repositories', async (_event, parentPath: string, maxDepth?: number) => {
+    return scanForRepositories(parentPath, maxDepth)
+  })
+
+  ipcMain.handle('get-common-repo-paths', async () => {
+    return getCommonRepoPaths()
+  })
+
+  ipcMain.handle('bulk-create-agents', async (_event, repos: Array<{ path: string; name: string; remoteUrl?: string }>, parentPath?: string) => {
+    return bulkCreateAgents(repos, parentPath)
   })
 
   // Dev test harness (development mode only)

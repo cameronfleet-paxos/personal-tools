@@ -45,6 +45,9 @@ export interface AppSettings {
     planner: string | null
     discussion: string | null
   }
+  wizard: {
+    defaultReposPath: string | null  // Last selected parent directory from setup wizard
+  }
 }
 
 // In-memory cache of settings
@@ -103,6 +106,9 @@ export function getDefaultSettings(): AppSettings {
       planner: null,
       discussion: null,
     },
+    wizard: {
+      defaultReposPath: null,
+    },
   }
 }
 
@@ -118,8 +124,17 @@ export async function loadSettings(): Promise<AppSettings> {
 
   try {
     const data = await fs.readFile(settingsPath, 'utf-8')
-    settingsCache = JSON.parse(data)
-    return settingsCache!
+    const loadedSettings = JSON.parse(data) as AppSettings
+    const defaults = getDefaultSettings()
+
+    // Ensure wizard field exists (migration for existing settings files)
+    if (!loadedSettings.wizard) {
+      loadedSettings.wizard = defaults.wizard
+      await saveSettings(loadedSettings)
+    }
+
+    settingsCache = loadedSettings
+    return settingsCache
   } catch (error) {
     // File doesn't exist or is invalid - return defaults
     settingsCache = getDefaultSettings()
@@ -163,6 +178,10 @@ export async function updateSettings(updates: Partial<AppSettings>): Promise<App
     prompts: {
       ...(currentSettings.prompts || defaults.prompts),
       ...(updates.prompts || {}),
+    },
+    wizard: {
+      ...(currentSettings.wizard || defaults.wizard),
+      ...(updates.wizard || {}),
     },
   }
   await saveSettings(updatedSettings)
@@ -405,4 +424,24 @@ export async function detectToolPaths(): Promise<AppSettings['paths']> {
 export async function getToolPaths(): Promise<AppSettings['paths']> {
   const settings = await loadSettings()
   return settings.paths
+}
+
+/**
+ * Update wizard settings (defaultReposPath)
+ */
+export async function updateWizardSettings(wizardSettings: { defaultReposPath?: string | null }): Promise<void> {
+  const settings = await loadSettings()
+  settings.wizard = {
+    ...settings.wizard,
+    ...wizardSettings,
+  }
+  await saveSettings(settings)
+}
+
+/**
+ * Get default repos path from wizard settings
+ */
+export async function getDefaultReposPath(): Promise<string | null> {
+  const settings = await loadSettings()
+  return settings.wizard?.defaultReposPath || null
 }

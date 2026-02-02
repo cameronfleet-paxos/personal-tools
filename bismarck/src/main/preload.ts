@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask, PromptType } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask, PromptType, DiscoveredRepo } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -248,6 +248,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('set-custom-prompt', type, template),
   getDefaultPrompt: (type: PromptType): Promise<string> =>
     ipcRenderer.invoke('get-default-prompt', type),
+
+  // Setup Wizard
+  showFolderPicker: (): Promise<string | null> =>
+    ipcRenderer.invoke('show-folder-picker'),
+  scanForRepositories: (parentPath: string, maxDepth?: number): Promise<DiscoveredRepo[]> =>
+    ipcRenderer.invoke('scan-for-repositories', parentPath, maxDepth),
+  getCommonRepoPaths: (): Promise<string[]> =>
+    ipcRenderer.invoke('get-common-repo-paths'),
+  bulkCreateAgents: (repos: DiscoveredRepo[], parentPath?: string): Promise<string[]> =>
+    ipcRenderer.invoke('bulk-create-agents', repos, parentPath),
 
   // External URL handling
   openExternal: (url: string): Promise<void> =>

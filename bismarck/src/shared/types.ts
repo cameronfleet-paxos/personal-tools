@@ -449,3 +449,14 @@ export interface GraphStats {
   ready: number      // Planned with all blockers done
   failed: number
 }
+
+// ============================================
+// Setup Wizard Types
+// ============================================
+
+// Discovered repository from filesystem scan
+export interface DiscoveredRepo {
+  path: string          // Full path to repository
+  name: string          // Directory basename
+  remoteUrl?: string    // Origin remote URL if available
+}
