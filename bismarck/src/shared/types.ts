@@ -102,6 +102,9 @@ export interface AppState {
   // Team mode state
   planSidebarOpen?: boolean
   activePlanId?: string | null
+  // Onboarding state
+  hasCompletedOnboarding?: boolean
+  defaultRepoDirectory?: string
 }
 
 // Theme presets

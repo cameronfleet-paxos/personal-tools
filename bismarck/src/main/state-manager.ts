@@ -10,6 +10,8 @@ let currentState: AppState = {
   preferences: getDefaultPreferences(),
   planSidebarOpen: false,
   activePlanId: null,
+  hasCompletedOnboarding: false,
+  defaultRepoDirectory: undefined,
 }
 
 function generateTabId(): string {
@@ -398,5 +400,24 @@ export function getActivePlanId(): string | null {
 
 export function setActivePlanId(planId: string | null): void {
   currentState.activePlanId = planId
+  persistState()
+}
+
+// Onboarding state management
+export function getHasCompletedOnboarding(): boolean {
+  return currentState.hasCompletedOnboarding || false
+}
+
+export function setHasCompletedOnboarding(completed: boolean): void {
+  currentState.hasCompletedOnboarding = completed
+  persistState()
+}
+
+export function getDefaultRepoDirectory(): string | undefined {
+  return currentState.defaultRepoDirectory
+}
+
+export function setDefaultRepoDirectory(directory: string | undefined): void {
+  currentState.defaultRepoDirectory = directory
   persistState()
 }
