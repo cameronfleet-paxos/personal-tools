@@ -119,6 +119,35 @@ Located in `scripts/test/`:
 - `cdp-server.js` - HTTP server for fast CDP interactions (started automatically by dev-with-cdp.js)
 - `cdp-helper.js` - Shared CDP connection module (used by cdp-server.js)
 
+### Test Suites
+
+Located in `scripts/test/suites/`:
+
+- `settings-tests.js` - Comprehensive CDP tests for all settings flows
+  - General settings (Operating Mode, Attention Mode, Grid Size)
+  - Repositories settings (viewing, editing)
+  - Docker settings (image management, resource limits)
+  - Agent settings (model selection)
+
+**Run all settings tests:**
+```bash
+npm run test:settings
+```
+
+**Run specific test suite:**
+```bash
+npm run test:settings:general       # General settings only
+npm run test:settings:repositories  # Repositories settings only
+npm run test:settings:docker        # Docker settings only
+npm run test:settings:agent         # Agent settings only
+```
+
+Tests automatically:
+- Take screenshots at each step (saved to `/tmp/claude/bismarck-settings-tests/`)
+- Verify UI interactions and state changes
+- Report pass/fail status with detailed output
+- Exit with code 0 on success, 1 on failure
+
 ### CDP Server
 
 The CDP server maintains a persistent WebSocket connection, making interactions ~50ms instead of ~2s per action.
