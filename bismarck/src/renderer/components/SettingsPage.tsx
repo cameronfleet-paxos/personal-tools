@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { X, Settings, Palette, Bot, Keyboard } from 'lucide-react'
 import { Button } from '@/renderer/components/ui/button'
 import { Label } from '@/renderer/components/ui/label'
-import type { AppPreferences, AttentionMode, OperatingMode, AgentModel } from '@/shared/types'
+import type { AppPreferences, AttentionMode, OperatingMode, AgentModel, GridSize } from '@/shared/types'
 import { cn } from '@/lib/utils'
 
 interface SettingsPageProps {
@@ -34,6 +34,10 @@ export function SettingsPage({
 
   const handleAgentModelChange = (model: AgentModel) => {
     onPreferencesChange({ agentModel: model })
+  }
+
+  const handleGridSizeChange = (size: GridSize) => {
+    onPreferencesChange({ gridSize: size })
   }
 
   const categories = [
@@ -182,6 +186,79 @@ export function SettingsPage({
                         <div className="font-medium">Expand</div>
                         <div className="text-sm text-muted-foreground">
                           Waiting agent expands to fullscreen. Use Next button or hotkey to cycle through queue.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="grid gap-3">
+                  <Label className="text-base font-medium">Grid Size</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Layout configuration for agent workspace grid
+                  </p>
+                  <div className="grid gap-2">
+                    <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                      <input
+                        type="radio"
+                        name="gridSize"
+                        value="1x1"
+                        checked={preferences.gridSize === '1x1'}
+                        onChange={() => handleGridSizeChange('1x1')}
+                        className="mt-1"
+                      />
+                      <div>
+                        <div className="font-medium">1x1</div>
+                        <div className="text-sm text-muted-foreground">
+                          Single agent workspace (fullscreen)
+                        </div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                      <input
+                        type="radio"
+                        name="gridSize"
+                        value="2x2"
+                        checked={preferences.gridSize === '2x2'}
+                        onChange={() => handleGridSizeChange('2x2')}
+                        className="mt-1"
+                      />
+                      <div>
+                        <div className="font-medium">2x2</div>
+                        <div className="text-sm text-muted-foreground">
+                          Four agent workspaces in a 2x2 grid
+                        </div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                      <input
+                        type="radio"
+                        name="gridSize"
+                        value="2x3"
+                        checked={preferences.gridSize === '2x3'}
+                        onChange={() => handleGridSizeChange('2x3')}
+                        className="mt-1"
+                      />
+                      <div>
+                        <div className="font-medium">2x3</div>
+                        <div className="text-sm text-muted-foreground">
+                          Six agent workspaces in a 2x3 grid
+                        </div>
+                      </div>
+                    </label>
+                    <label className="flex items-start gap-3 p-3 rounded-lg border cursor-pointer hover:bg-muted/50 transition-colors">
+                      <input
+                        type="radio"
+                        name="gridSize"
+                        value="3x3"
+                        checked={preferences.gridSize === '3x3'}
+                        onChange={() => handleGridSizeChange('3x3')}
+                        className="mt-1"
+                      />
+                      <div>
+                        <div className="font-medium">3x3</div>
+                        <div className="text-sm text-muted-foreground">
+                          Nine agent workspaces in a 3x3 grid
                         </div>
                       </div>
                     </label>

@@ -85,11 +85,15 @@ export type OperatingMode = 'solo' | 'team'
 // Model for headless task agents
 export type AgentModel = 'opus' | 'sonnet' | 'haiku'
 
+// Grid size determines the layout of agents in a tab
+export type GridSize = '1x1' | '2x2' | '2x3' | '3x3'
+
 // App preferences (stored in ~/.bismarck/state.json)
 export interface AppPreferences {
   attentionMode: AttentionMode
   operatingMode: OperatingMode
   agentModel: AgentModel
+  gridSize: GridSize
 }
 
 // App state (stored in ~/.bismarck/state.json)
