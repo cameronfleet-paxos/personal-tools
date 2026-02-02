@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { randomUUID } from 'crypto'
@@ -88,6 +88,7 @@ import {
   detectRepository,
   getAllRepositories,
   updateRepository,
+  getUniqueRepositories,
 } from './repository-manager'
 import { bdList } from './bd-client'
 import { initializeDockerEnvironment } from './docker-sandbox'
@@ -487,6 +488,24 @@ function registerIpcHandlers() {
 
   ipcMain.handle('update-repository', async (_event, id: string, updates: Partial<Pick<Repository, 'name'>>) => {
     return updateRepository(id, updates)
+  })
+
+  ipcMain.handle('discover-repos', async (_event, directories: string[]) => {
+    return getUniqueRepositories(directories)
+  })
+
+  ipcMain.handle('pick-directory', async () => {
+    if (!mainWindow) {
+      return null
+    }
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory', 'createDirectory'],
+      title: 'Select Directory',
+    })
+    if (result.canceled || result.filePaths.length === 0) {
+      return null
+    }
+    return result.filePaths[0]
   })
 
   // Dev test harness (development mode only)

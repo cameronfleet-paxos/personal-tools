@@ -213,6 +213,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('get-repositories'),
   updateRepository: (id: string, updates: Partial<Pick<Repository, 'name'>>): Promise<Repository | undefined> =>
     ipcRenderer.invoke('update-repository', id, updates),
+  discoverRepos: (directories: string[]): Promise<Repository[]> =>
+    ipcRenderer.invoke('discover-repos', directories),
+  pickDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('pick-directory'),
 
   // External URL handling
   openExternal: (url: string): Promise<void> =>
