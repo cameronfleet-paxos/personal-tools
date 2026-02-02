@@ -39,6 +39,35 @@ export interface Repository {
   name: string            // Directory basename
   defaultBranch: string   // Usually 'main' or 'master'
   remoteUrl?: string      // Origin remote URL
+  // New editable fields for settings page
+  purpose?: string
+  completionCriteria?: string
+  protectedBranches?: string[]
+}
+
+// Proxied tool configuration for Docker sandboxes
+export interface ProxiedTool {
+  id: string
+  name: string           // Tool name, e.g., "npm"
+  hostPath: string       // Host command path, e.g., "/usr/local/bin/npm"
+  description?: string
+}
+
+// App settings (stored in ~/.bismarck/settings.json)
+export interface AppSettings {
+  paths: {
+    bd: string | null      // null = use auto-detected
+    gh: string | null
+    git: string | null
+  }
+  docker: {
+    images: string[]
+    resourceLimits: {
+      cpu: string          // e.g., "2"
+      memory: string       // e.g., "4g"
+    }
+    proxiedTools: ProxiedTool[]
+  }
 }
 
 // Agent definition (stored in ~/.bismarck/config.json)
