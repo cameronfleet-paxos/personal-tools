@@ -1,4 +1,4 @@
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask, PromptType } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask, PromptType, DiscoveredRepo } from '../shared/types'
 import type { AppSettings, ProxiedTool } from '../main/settings-manager'
 
 export interface ElectronAPI {
@@ -99,6 +99,12 @@ export interface ElectronAPI {
   removeProxiedTool: (id: string) => Promise<boolean>
   updateDockerSshSettings: (settings: { enabled?: boolean }) => Promise<void>
   setRawSettings: (settings: unknown) => Promise<AppSettings>
+
+  // Setup wizard
+  showFolderPicker: () => Promise<string | null>
+  getCommonRepoPaths: () => Promise<string[]>
+  scanForRepositories: (parentPath: string, maxDepth?: number) => Promise<DiscoveredRepo[]>
+  bulkCreateAgents: (repos: DiscoveredRepo[], parentPath?: string) => Promise<string[]>
 
   // Prompt management
   getCustomPrompts: () => Promise<{ orchestrator: string | null; planner: string | null; discussion: string | null }>

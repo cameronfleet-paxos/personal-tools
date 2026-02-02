@@ -45,6 +45,9 @@ export interface AppSettings {
     planner: string | null
     discussion: string | null
   }
+  wizard?: {
+    defaultReposPath?: string  // Last directory selected in setup wizard
+  }
 }
 
 // In-memory cache of settings
@@ -102,6 +105,9 @@ export function getDefaultSettings(): AppSettings {
       orchestrator: null,
       planner: null,
       discussion: null,
+    },
+    wizard: {
+      defaultReposPath: undefined,
     },
   }
 }
@@ -163,6 +169,10 @@ export async function updateSettings(updates: Partial<AppSettings>): Promise<App
     prompts: {
       ...(currentSettings.prompts || defaults.prompts),
       ...(updates.prompts || {}),
+    },
+    wizard: {
+      ...(currentSettings.wizard || defaults.wizard),
+      ...(updates.wizard || {}),
     },
   }
   await saveSettings(updatedSettings)

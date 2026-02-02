@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask, PromptType } from '../shared/types'
+import type { Workspace, AppState, AgentTab, AppPreferences, Plan, TaskAssignment, PlanActivity, Repository, HeadlessAgentInfo, StreamEvent, BranchStrategy, BeadTask, PromptType, DiscoveredRepo } from '../shared/types'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace management
@@ -240,6 +240,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('update-docker-ssh-settings', settings),
   setRawSettings: (settings: unknown) =>
     ipcRenderer.invoke('set-raw-settings', settings),
+
+  // Setup wizard
+  showFolderPicker: (): Promise<string | null> =>
+    ipcRenderer.invoke('show-folder-picker'),
+  getCommonRepoPaths: (): Promise<string[]> =>
+    ipcRenderer.invoke('get-common-repo-paths'),
+  scanForRepositories: (parentPath: string, maxDepth?: number): Promise<DiscoveredRepo[]> =>
+    ipcRenderer.invoke('scan-for-repositories', parentPath, maxDepth),
+  bulkCreateAgents: (repos: DiscoveredRepo[], parentPath?: string): Promise<string[]> =>
+    ipcRenderer.invoke('bulk-create-agents', repos, parentPath),
 
   // Prompt management
   getCustomPrompts: (): Promise<{ orchestrator: string | null; planner: string | null; discussion: string | null }> =>

@@ -104,6 +104,12 @@ import {
   getCustomPrompts,
   setCustomPrompt,
 } from './settings-manager'
+import {
+  showFolderPicker,
+  getCommonRepoPaths,
+  scanForRepositories,
+  bulkCreateAgents,
+} from './setup-wizard'
 import { getDefaultPrompt } from './prompt-templates'
 import { bdList } from './bd-client'
 import { initializeDockerEnvironment } from './docker-sandbox'
@@ -575,6 +581,23 @@ function registerIpcHandlers() {
 
   ipcMain.handle('set-raw-settings', async (_event, settings: unknown) => {
     return saveSettings(settings as AppSettings)
+  })
+
+  // Setup wizard
+  ipcMain.handle('show-folder-picker', async () => {
+    return showFolderPicker()
+  })
+
+  ipcMain.handle('get-common-repo-paths', async () => {
+    return getCommonRepoPaths()
+  })
+
+  ipcMain.handle('scan-for-repositories', async (_event, parentPath: string, maxDepth?: number) => {
+    return scanForRepositories(parentPath, maxDepth)
+  })
+
+  ipcMain.handle('bulk-create-agents', async (_event, repos: any[], parentPath?: string) => {
+    return bulkCreateAgents(repos, parentPath)
   })
 
   // Prompt management

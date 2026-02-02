@@ -271,6 +271,17 @@ export interface PlanActivity {
 }
 
 // ============================================
+// Setup Wizard Types
+// ============================================
+
+// Repository discovered during setup wizard scanning
+export interface DiscoveredRepo {
+  path: string          // Full path to repository
+  name: string          // Directory basename
+  remoteUrl?: string    // Origin remote URL if available
+}
+
+// ============================================
 // Headless Agent & Docker Container Types
 // ============================================
 
