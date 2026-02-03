@@ -294,6 +294,91 @@ export interface FixSecurityRecommendationResponse {
   error?: string;
 }
 
+// Token detection types (for security scanning of API keys and credentials)
+export type TokenType =
+  | 'anthropic_key'
+  | 'github_token'
+  | 'jira_token'
+  | 'aws_key'
+  | 'private_key'
+  | 'jwt_token'
+  | 'generic_secret';
+
+export interface TokenMatch {
+  id: string;
+  type: TokenType;
+  severity: SecuritySeverity;
+  description: string;
+  remediation: string;
+  redactedValue: string; // First 4 + last 4 chars only
+  fullPattern: string; // Internal use only, never displayed
+  location: {
+    source: 'settings' | 'discussion';
+    scope?: SettingsTarget;
+    projectPath?: string;
+    projectName?: string;
+    sessionId?: string;
+    filePath?: string;
+    settingsKey?: string; // e.g., "permissions.allow[2]"
+  };
+}
+
+export interface ScanMetadata {
+  lastScanTimestamp: number | null;
+  lastScanDuration: number | null;
+  scanStatus: 'idle' | 'running' | 'completed' | 'error';
+  scanError?: string;
+  scannedSources: {
+    settingsScanned: boolean;
+    discussionsScanned: boolean;
+    discussionCount: number;
+  };
+}
+
+export interface SecurityScanCache {
+  version: number;
+  lastScanTimestamp: number | null;
+  lastScanDuration: number | null;
+  scanStatus: 'idle' | 'running' | 'completed' | 'error';
+  scanError?: string;
+  scannedSources: {
+    settingsScanned: boolean;
+    discussionsScanned: boolean;
+    discussionCount: number;
+  };
+  tokens: TokenMatch[];
+}
+
+export interface SecurityScanResponse {
+  settingsTokens: TokenMatch[];
+  discussionTokens: TokenMatch[];
+  scanMetadata: ScanMetadata;
+  settingsIssues: SecurityRecommendation[]; // Existing dangerous patterns
+}
+
+export interface TriggerScanResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface ScanStatusResponse {
+  scanStatus: 'idle' | 'running' | 'completed' | 'error';
+  lastScanTimestamp: number | null;
+  scanError?: string;
+  tokenCount: number;
+}
+
+export interface RemoveTokenRequest {
+  id: string;
+  location: TokenMatch['location'];
+}
+
+export interface RemoveTokenResponse {
+  success: boolean;
+  error?: string;
+  deletedFile?: string;
+}
+
 // Permission interruptions types (for tracking frequently blocked commands)
 export type PermissionTimeFilter = "day" | "week" | "month";
 

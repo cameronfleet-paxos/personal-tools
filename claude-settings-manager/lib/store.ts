@@ -15,6 +15,8 @@ import type {
   AggregatedInterruption,
   PermissionTimeFilter,
   SessionMetadata,
+  TokenMatch,
+  ScanMetadata,
 } from "@/types/settings";
 
 function generateId(): string {
@@ -120,6 +122,11 @@ interface SettingsStore {
   securityRecommendations: SecurityRecommendation[];
   securityRecommendationsLoading: boolean;
 
+  // Token scan state
+  tokenScanResults: TokenMatch[];
+  tokenScanMetadata: ScanMetadata;
+  tokenScanLoading: boolean;
+
   // Permission interruptions state
   permissionInterruptions: AggregatedInterruption[];
   permissionInterruptionsLoading: boolean;
@@ -180,6 +187,12 @@ interface SettingsStore {
   loadSecurityRecommendations: () => Promise<void>;
   fixSecurityRecommendation: (id: string) => Promise<void>;
 
+  // Token scan actions
+  loadTokenScan: () => Promise<void>;
+  triggerTokenScan: () => Promise<void>;
+  pollScanStatus: () => Promise<void>;
+  removeTokenFinding: (id: string, location: TokenMatch['location']) => Promise<void>;
+
   // Permission interruptions actions
   loadPermissionInterruptions: () => Promise<void>;
   setPermissionInterruptionsFilter: (filter: PermissionTimeFilter) => Promise<void>;
@@ -189,6 +202,10 @@ interface SettingsStore {
 
   // Discussions actions
   loadDiscussions: (limit?: number) => Promise<void>;
+
+  // Token grouping helpers
+  getTokensBySession: (sessionId: string) => TokenMatch[];
+  getGroupedDiscussionTokens: () => Map<string, TokenMatch[]>;
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -237,6 +254,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Security recommendations state
   securityRecommendations: [],
   securityRecommendationsLoading: false,
+
+  // Token scan state
+  tokenScanResults: [],
+  tokenScanMetadata: {
+    lastScanTimestamp: null,
+    lastScanDuration: null,
+    scanStatus: 'idle',
+    scannedSources: {
+      settingsScanned: false,
+      discussionsScanned: false,
+      discussionCount: 0,
+    },
+  },
+  tokenScanLoading: false,
 
   // Permission interruptions state
   permissionInterruptions: [],
@@ -1046,6 +1077,171 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       console.error("Error loading discussions:", err);
       set({ discussionsLoading: false });
     }
+  },
+
+  loadTokenScan: async () => {
+    set({ tokenScanLoading: true });
+    try {
+      const response = await fetch("/api/security-scan");
+      if (!response.ok) {
+        throw new Error("Failed to load token scan");
+      }
+      const data = await response.json();
+
+      // Combine settings and discussion tokens
+      const allTokens = [...data.settingsTokens, ...data.discussionTokens];
+
+      set({
+        tokenScanResults: allTokens,
+        tokenScanMetadata: data.scanMetadata,
+        tokenScanLoading: false,
+      });
+
+      // Auto-trigger background scan if cache is empty or idle
+      const state = get();
+      if (
+        state.tokenScanMetadata.scanStatus === 'idle' &&
+        state.tokenScanMetadata.lastScanTimestamp === null
+      ) {
+        // Fire and forget - don't await
+        get().triggerTokenScan();
+      }
+    } catch (err) {
+      console.error("Error loading token scan:", err);
+      set({ tokenScanLoading: false });
+    }
+  },
+
+  triggerTokenScan: async () => {
+    try {
+      const response = await fetch("/api/security-scan/trigger", {
+        method: "POST",
+      });
+
+      if (!response.ok && response.status !== 409) {
+        throw new Error("Failed to trigger token scan");
+      }
+
+      // Start polling for status
+      const pollInterval = setInterval(async () => {
+        await get().pollScanStatus();
+
+        const state = get();
+        if (state.tokenScanMetadata.scanStatus !== 'running') {
+          clearInterval(pollInterval);
+
+          // Reload full results when scan completes
+          if (state.tokenScanMetadata.scanStatus === 'completed') {
+            await get().loadTokenScan();
+          }
+        }
+      }, 2000);
+    } catch (err) {
+      console.error("Error triggering token scan:", err);
+    }
+  },
+
+  pollScanStatus: async () => {
+    try {
+      const response = await fetch("/api/security-scan/status");
+      if (!response.ok) {
+        throw new Error("Failed to poll scan status");
+      }
+      const data = await response.json();
+
+      set((state) => ({
+        tokenScanMetadata: {
+          ...state.tokenScanMetadata,
+          scanStatus: data.scanStatus,
+          lastScanTimestamp: data.lastScanTimestamp,
+          scanError: data.scanError,
+        },
+      }));
+    } catch (err) {
+      console.error("Error polling scan status:", err);
+    }
+  },
+
+  removeTokenFinding: async (id: string, location: TokenMatch['location']) => {
+    const state = get();
+    set({ tokenScanLoading: true });
+
+    try {
+      const response = await fetch("/api/security-scan/remove", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, location }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to remove token finding");
+      }
+
+      const result = await response.json();
+      if (!result.success) {
+        console.error("Error removing token finding:", result.error);
+        set({ tokenScanLoading: false });
+        return;
+      }
+
+      // Remove the token from the results
+      set({
+        tokenScanResults: state.tokenScanResults.filter((t) => t.id !== id),
+        tokenScanLoading: false,
+      });
+
+      // If it was a settings token, reload settings silently
+      if (location.source === 'settings') {
+        try {
+          const settingsUrl = state.selectedProjectPath
+            ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
+            : "/api/settings";
+          const settingsResponse = await fetch(settingsUrl);
+          if (settingsResponse.ok) {
+            const data = await settingsResponse.json();
+            if (state.selectedProjectPath) {
+              set({
+                userSettings: data.user,
+                effectiveUser: data.user || {},
+              });
+            } else {
+              set({
+                userSettings: data.global,
+                globalSettings: data.global,
+                effectiveUser: data.global || {},
+                effectiveGlobal: data.global || {},
+              });
+            }
+          }
+        } catch {
+          // Silent fail
+        }
+      }
+    } catch (err) {
+      console.error("Error removing token finding:", err);
+      set({ tokenScanLoading: false });
+    }
+  },
+
+  getTokensBySession: (sessionId: string) => {
+    return get().tokenScanResults.filter(
+      t => t.location.sessionId === sessionId
+    );
+  },
+
+  getGroupedDiscussionTokens: () => {
+    const tokens = get().tokenScanResults.filter(t => t.location.source === 'discussion');
+    const grouped = new Map<string, TokenMatch[]>();
+
+    tokens.forEach(token => {
+      const sessionId = token.location.sessionId || 'unknown';
+      if (!grouped.has(sessionId)) {
+        grouped.set(sessionId, []);
+      }
+      grouped.get(sessionId)!.push(token);
+    });
+
+    return grouped;
   },
 
 }));

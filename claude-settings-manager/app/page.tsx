@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useSettingsStore } from "@/lib/store";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -26,8 +27,11 @@ import {
   RotateCcw,
   Eye,
   EyeOff,
+  RefreshCw,
+  Trash2,
+  ExternalLink,
 } from "lucide-react";
-import type { RecommendationType, SecuritySeverity, PermissionTimeFilter, ToolExample } from "@/types/settings";
+import type { RecommendationType, SecuritySeverity, PermissionTimeFilter, ToolExample, TokenMatch } from "@/types/settings";
 import {
   Select,
   SelectContent,
@@ -176,6 +180,29 @@ function getToolColor(toolName: string): string {
   }
 }
 
+function getTokenTypeLabel(type: string): string {
+  const labels: Record<string, string> = {
+    anthropic_key: "Anthropic API",
+    github_token: "GitHub Token",
+    jira_token: "Jira Token",
+    aws_key: "AWS Key",
+    private_key: "Private Key",
+    jwt_token: "JWT",
+    generic_secret: "Generic Secret",
+  };
+  return labels[type] || type;
+}
+
+function getWorstSeverity(tokens: TokenMatch[]): SecuritySeverity {
+  if (tokens.some(t => t.severity === "critical")) return "critical";
+  if (tokens.some(t => t.severity === "high")) return "high";
+  return "medium";
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export default function DashboardPage() {
   const {
     localSettings,
@@ -192,6 +219,12 @@ export default function DashboardPage() {
     securityRecommendationsLoading,
     loadSecurityRecommendations,
     fixSecurityRecommendation,
+    tokenScanResults,
+    tokenScanMetadata,
+    tokenScanLoading,
+    loadTokenScan,
+    triggerTokenScan,
+    removeTokenFinding,
     permissionInterruptions,
     permissionInterruptionsLoading,
     permissionInterruptionsFilter,
@@ -206,10 +239,15 @@ export default function DashboardPage() {
   const [expandedRec, setExpandedRec] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [fixingSecurityId, setFixingSecurityId] = useState<string | null>(null);
+  const [removingTokenId, setRemovingTokenId] = useState<string | null>(null);
+  const [confirmDeleteToken, setConfirmDeleteToken] = useState<string | null>(null);
   const [allowingPatternId, setAllowingPatternId] = useState<string | null>(null);
   const [dismissingPatternId, setDismissingPatternId] = useState<string | null>(null);
   const [expandedInterruption, setExpandedInterruption] = useState<string | null>(null);
   const [showAllowed, setShowAllowed] = useState(false);
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
+
+  const router = useRouter();
 
   // Filter interruptions based on showAllowed toggle
   const filteredInterruptions = showAllowed
@@ -220,8 +258,9 @@ export default function DashboardPage() {
   useEffect(() => {
     loadRecommendations();
     loadSecurityRecommendations();
+    loadTokenScan();
     loadPermissionInterruptions();
-  }, [loadRecommendations, loadSecurityRecommendations, loadPermissionInterruptions]);
+  }, [loadRecommendations, loadSecurityRecommendations, loadTokenScan, loadPermissionInterruptions]);
 
   // Check if we have data (for initial load vs subsequent syncs)
   const hasData = effectiveGlobal !== null || localSettings !== null;
@@ -453,127 +492,396 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {/* Security Recommendations Section */}
-      <Card className={securityRecommendations.length > 0 ? "border-orange-500/20" : "border-green-500/20"}>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <div className="flex items-center gap-2">
-            {securityRecommendations.length > 0 ? (
-              <AlertTriangle className="h-5 w-5 text-orange-500" />
-            ) : (
-              <Shield className="h-5 w-5 text-green-500" />
-            )}
-            <CardTitle className="text-lg">Security</CardTitle>
-            {!securityRecommendationsLoading && (
-              <Badge
-                variant="secondary"
-                className={securityRecommendations.length > 0
-                  ? "ml-2 bg-orange-500/10 text-orange-500"
-                  : "ml-2 bg-green-500/10 text-green-500"
-                }
-              >
-                {securityRecommendations.length > 0
-                  ? `${securityRecommendations.length} issues`
-                  : "All clear"
-                }
-              </Badge>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {securityRecommendationsLoading ? (
-            <div className="space-y-3">
-              {[1, 2].map((i) => (
-                <div key={i} className="border rounded-lg p-4 space-y-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Skeleton className="h-5 w-16" />
-                        <Skeleton className="h-4 w-32" />
-                      </div>
-                      <Skeleton className="h-4 w-40" />
-                      <Skeleton className="h-6 w-full" />
-                      <Skeleton className="h-4 w-56" />
-                    </div>
-                    <Skeleton className="h-8 w-16" />
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : securityRecommendations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-6 text-center">
-              <div className="rounded-full bg-green-500/10 p-3 mb-3">
-                <Check className="h-6 w-6 text-green-500" />
-              </div>
-              <p className="text-sm font-medium text-green-600 dark:text-green-400">
-                Looking good! No security issues detected.
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Your settings are configured safely.
-              </p>
-            </div>
-          ) : (
-            <>
-              <p className="text-sm text-muted-foreground mb-4">
-                Review these potential security issues in your settings.
-              </p>
-              {securityRecommendations.map((rec) => {
-                const isFixing = fixingSecurityId === rec.id;
+      {/* Security Issues Section (Unified: patterns + tokens) */}
+      {(() => {
+        // Group discussion tokens by sessionId
+        const groupedBySession = tokenScanResults
+          .filter(t => t.location.source === 'discussion')
+          .reduce((acc, token) => {
+            const sessionId = token.location.sessionId || 'unknown';
+            if (!acc.has(sessionId)) {
+              acc.set(sessionId, []);
+            }
+            acc.get(sessionId)!.push(token);
+            return acc;
+          }, new Map<string, TokenMatch[]>());
 
-                return (
-                  <div
-                    key={rec.id}
-                    className="border rounded-lg p-4 space-y-3"
+        // Settings tokens remain ungrouped
+        const settingsTokens = tokenScanResults.filter(t => t.location.source === 'settings');
+
+        // Calculate total unique issues (unique sessions + settings tokens + pattern recommendations)
+        const totalIssues = securityRecommendations.length + groupedBySession.size + settingsTokens.length;
+        const isScanning = tokenScanMetadata.scanStatus === 'running';
+        const lastScanned = tokenScanMetadata.lastScanTimestamp;
+
+        // Sort grouped sessions by severity and token count
+        const sortedSessions = Array.from(groupedBySession.entries())
+          .map(([sessionId, tokens]) => ({
+            sessionId,
+            tokens,
+            worstSeverity: getWorstSeverity(tokens),
+          }))
+          .sort((a, b) => {
+            const severityOrder = { critical: 0, high: 1, medium: 2 };
+            const severityDiff = severityOrder[a.worstSeverity] - severityOrder[b.worstSeverity];
+            if (severityDiff !== 0) return severityDiff;
+            return b.tokens.length - a.tokens.length;
+          });
+
+        const toggleExpanded = (sessionId: string) => {
+          setExpandedSessions(prev => {
+            const next = new Set(prev);
+            if (next.has(sessionId)) {
+              next.delete(sessionId);
+            } else {
+              next.add(sessionId);
+            }
+            return next;
+          });
+        };
+
+        return (
+          <Card className={totalIssues > 0 ? "border-orange-500/20" : "border-green-500/20"}>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <div className="flex items-center gap-2">
+                {totalIssues > 0 ? (
+                  <AlertTriangle className="h-5 w-5 text-orange-500" />
+                ) : (
+                  <Shield className="h-5 w-5 text-green-500" />
+                )}
+                <CardTitle className="text-lg">Security Issues</CardTitle>
+                {!securityRecommendationsLoading && !tokenScanLoading && (
+                  <Badge
+                    variant="secondary"
+                    className={totalIssues > 0
+                      ? "ml-2 bg-orange-500/10 text-orange-500"
+                      : "ml-2 bg-green-500/10 text-green-500"
+                    }
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <Badge
-                            variant="outline"
-                            className={`shrink-0 font-semibold ${getSeverityColor(rec.severity)}`}
-                          >
-                            {getSeverityLabel(rec.severity)}
-                          </Badge>
-                          <span className="font-medium text-sm">{rec.title}</span>
+                    {totalIssues > 0
+                      ? `${totalIssues} issues`
+                      : "All clear"
+                    }
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {lastScanned && (
+                  <span className="text-xs text-muted-foreground">
+                    Last scanned: {formatRelativeTime(lastScanned)}
+                  </span>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isScanning}
+                  onClick={() => triggerTokenScan()}
+                >
+                  {isScanning ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                      Scanning...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-1" />
+                      Scan Now
+                    </>
+                  )}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {securityRecommendationsLoading || tokenScanLoading ? (
+                <div className="space-y-3">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="border rounded-lg p-4 space-y-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Skeleton className="h-5 w-16" />
+                            <Skeleton className="h-4 w-32" />
+                          </div>
+                          <Skeleton className="h-4 w-40" />
+                          <Skeleton className="h-6 w-full" />
+                          <Skeleton className="h-4 w-56" />
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          Found in: {getScopeLabel(rec.scope, rec.projectName)}
-                        </p>
-                        <code className="block text-xs bg-muted px-2 py-1 rounded font-mono">
-                          {rec.pattern}
-                        </code>
-                        <p className="text-sm text-muted-foreground">
-                          {rec.remediation}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          disabled={isFixing || securityRecommendationsLoading}
-                          onClick={async () => {
-                            setFixingSecurityId(rec.id);
-                            await fixSecurityRecommendation(rec.id);
-                            setFixingSecurityId(null);
-                          }}
-                        >
-                          {isFixing ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <>
-                              <Wrench className="h-4 w-4 mr-1" />
-                              Fix
-                            </>
-                          )}
-                        </Button>
+                        <Skeleton className="h-8 w-16" />
                       </div>
                     </div>
+                  ))}
+                </div>
+              ) : totalIssues === 0 ? (
+                <div className="flex flex-col items-center justify-center py-6 text-center">
+                  <div className="rounded-full bg-green-500/10 p-3 mb-3">
+                    <Check className="h-6 w-6 text-green-500" />
                   </div>
-                );
-              })}
-            </>
-          )}
-        </CardContent>
-      </Card>
+                  <p className="text-sm font-medium text-green-600 dark:text-green-400">
+                    Looking good! No security issues detected.
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    No dangerous patterns or exposed credentials found.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Review these security issues in your settings and conversation history.
+                  </p>
+                  {/* Combine and sort all issues by severity */}
+                  {[...securityRecommendations.map(rec => ({ type: 'pattern' as const, data: rec })),
+                    ...sortedSessions.map(session => ({ type: 'grouped-tokens' as const, data: session })),
+                    ...settingsTokens.map(token => ({ type: 'settings-token' as const, data: token }))]
+                    .sort((a, b) => {
+                      const severityOrder = { critical: 0, high: 1, medium: 2 };
+                      const getSeverity = (item: typeof a) => {
+                        if (item.type === 'pattern') return item.data.severity;
+                        if (item.type === 'grouped-tokens') return item.data.worstSeverity;
+                        return item.data.severity;
+                      };
+                      return severityOrder[getSeverity(a)] - severityOrder[getSeverity(b)];
+                    })
+                    .map((item) => {
+                      if (item.type === 'pattern') {
+                        const rec = item.data;
+                        const isFixing = fixingSecurityId === rec.id;
+
+                        return (
+                          <div
+                            key={rec.id}
+                            className="border rounded-lg p-4 space-y-3"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Badge
+                                    variant="outline"
+                                    className={`shrink-0 font-semibold ${getSeverityColor(rec.severity)}`}
+                                  >
+                                    {getSeverityLabel(rec.severity)}
+                                  </Badge>
+                                  <span className="font-medium text-sm">{rec.title}</span>
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                  Found in: {getScopeLabel(rec.scope, rec.projectName)}
+                                </p>
+                                <code className="block text-xs bg-muted px-2 py-1 rounded font-mono">
+                                  {rec.pattern}
+                                </code>
+                                <p className="text-sm text-muted-foreground">
+                                  {rec.remediation}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  disabled={isFixing || securityRecommendationsLoading}
+                                  onClick={async () => {
+                                    setFixingSecurityId(rec.id);
+                                    await fixSecurityRecommendation(rec.id);
+                                    setFixingSecurityId(null);
+                                  }}
+                                >
+                                  {isFixing ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <Wrench className="h-4 w-4 mr-1" />
+                                      Fix
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      } else if (item.type === 'grouped-tokens') {
+                        // Grouped discussion tokens by session
+                        const { sessionId, tokens, worstSeverity } = item.data;
+                        const isExpanded = expandedSessions.has(sessionId);
+                        const firstToken = tokens[0];
+                        const projectName = firstToken.location.projectName || 'Unknown Project';
+                        const projectPath = firstToken.location.projectPath || '';
+
+                        // Get unique token types for summary
+                        const uniqueTypes = Array.from(new Set(tokens.map(t => t.type)));
+
+                        return (
+                          <div
+                            key={sessionId}
+                            className="border rounded-lg p-4 space-y-3"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 space-y-2">
+                                {/* Header - shows worst severity + count */}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <Badge
+                                    variant="outline"
+                                    className={`shrink-0 font-semibold ${getSeverityColor(worstSeverity)}`}
+                                  >
+                                    {getSeverityLabel(worstSeverity)}
+                                  </Badge>
+                                  <Link
+                                    href={`/discussions/${sessionId}?project=${encodeURIComponent(projectPath)}`}
+                                    className="font-medium text-sm hover:underline"
+                                  >
+                                    {projectName}
+                                  </Link>
+                                  <span className="text-muted-foreground text-xs">
+                                    {tokens.length} {tokens.length === 1 ? 'token' : 'tokens'} found
+                                  </span>
+                                </div>
+
+                                {/* Summary - show token types */}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {uniqueTypes.map(type => (
+                                    <Badge variant="outline" key={type} className="text-xs">
+                                      {getTokenTypeLabel(type)}
+                                    </Badge>
+                                  ))}
+                                </div>
+
+                                {/* Expand/collapse button */}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => toggleExpanded(sessionId)}
+                                  className="h-8"
+                                >
+                                  {isExpanded ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
+                                  {isExpanded ? 'Hide' : 'Show'} details
+                                </Button>
+
+                                {/* Expanded: show all tokens */}
+                                {isExpanded && (
+                                  <div className="mt-4 space-y-2 pl-4 border-l-2">
+                                    {tokens.map(token => (
+                                      <div key={token.id} className="space-y-1">
+                                        <div className="flex items-center gap-2">
+                                          <Badge
+                                            variant="outline"
+                                            className={`shrink-0 ${getSeverityColor(token.severity)}`}
+                                          >
+                                            {getTokenTypeLabel(token.type)}
+                                          </Badge>
+                                          <code className="text-xs font-mono">{token.redactedValue}</code>
+                                        </div>
+                                        <p className="text-xs text-muted-foreground">
+                                          {token.description}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Actions */}
+                              <div className="flex items-center gap-2 shrink-0">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => router.push(`/discussions/${sessionId}?project=${encodeURIComponent(projectPath)}`)}
+                                >
+                                  <ExternalLink className="h-4 w-4 mr-1" />
+                                  View
+                                </Button>
+                                {!confirmDeleteToken && (
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    disabled={removingTokenId !== null || tokenScanLoading}
+                                    onClick={() => setConfirmDeleteToken(sessionId)}
+                                  >
+                                    <Trash2 className="h-4 w-4 mr-1" />
+                                    Delete
+                                  </Button>
+                                )}
+                                {confirmDeleteToken === sessionId && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground">Delete conversation?</span>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      disabled={removingTokenId !== null}
+                                      onClick={async () => {
+                                        setRemovingTokenId(sessionId);
+                                        // Delete using first token's ID and location
+                                        await removeTokenFinding(tokens[0].id, tokens[0].location);
+                                        setRemovingTokenId(null);
+                                        setConfirmDeleteToken(null);
+                                      }}
+                                    >
+                                      {removingTokenId === sessionId ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                      ) : (
+                                        'Confirm'
+                                      )}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setConfirmDeleteToken(null)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      } else {
+                        // Settings token (individual)
+                        const token = item.data;
+
+                        return (
+                          <div
+                            key={token.id}
+                            className="border rounded-lg p-4 space-y-3"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 space-y-2">
+                                <div className="flex items-center gap-2">
+                                  <Badge
+                                    variant="outline"
+                                    className={`shrink-0 font-semibold ${getSeverityColor(token.severity)}`}
+                                  >
+                                    {getSeverityLabel(token.severity)}
+                                  </Badge>
+                                  <span className="font-medium text-sm">{token.description}</span>
+                                </div>
+                                <p className="text-sm text-muted-foreground">
+                                  Found in: {getScopeLabel(token.location.scope || '', token.location.projectName)}
+                                </p>
+                                <code className="block text-xs bg-muted px-2 py-1 rounded font-mono">
+                                  {token.redactedValue}
+                                </code>
+                                <p className="text-sm text-muted-foreground">
+                                  {token.remediation}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled
+                                  title="Manually edit settings file to remove"
+                                >
+                                  Manual Fix
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                    })}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Permission Interruptions Section */}
       {(filteredInterruptions.length > 0 || permissionInterruptionsLoading) && (

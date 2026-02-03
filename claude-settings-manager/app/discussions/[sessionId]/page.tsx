@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   ArrowLeft,
   Clock,
@@ -17,9 +18,11 @@ import {
   ChevronRight,
   Copy,
   Check,
+  AlertTriangle,
 } from "lucide-react";
 import type { SessionConversation, ConversationMessage, ContentBlock } from "@/types/settings";
 import { cn } from "@/lib/utils";
+import { useSettingsStore } from "@/lib/store";
 
 function formatTimestamp(isoString: string): string {
   const date = new Date(isoString);
@@ -50,6 +53,30 @@ function extractToolCalls(content: string | ContentBlock[]): ContentBlock[] {
     return [];
   }
   return content.filter((block) => block.type === "tool_use");
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function highlightTokens(text: string, tokens: Array<{ fullPattern: string; redactedValue: string }>, showUnredacted: boolean): string {
+  let result = text;
+
+  tokens.forEach(token => {
+    const pattern = token.fullPattern;
+    const replacement = showUnredacted
+      ? `<mark class="bg-red-500/20 dark:bg-red-900/30 font-mono px-1 rounded">${pattern}</mark>`
+      : `<mark class="bg-red-500/20 dark:bg-red-900/30 font-mono px-1 rounded">${token.redactedValue}</mark>`;
+
+    // Use regex to replace all occurrences
+    try {
+      result = result.replace(new RegExp(escapeRegex(pattern), 'g'), replacement);
+    } catch {
+      // If regex fails, skip this token
+    }
+  });
+
+  return result;
 }
 
 /**
@@ -224,7 +251,15 @@ function ToolResultMessage({ message }: { message: ConversationMessage }) {
   );
 }
 
-function MessageBubble({ message }: { message: ConversationMessage }) {
+function MessageBubble({
+  message,
+  sessionTokens,
+  showUnredactedTokens
+}: {
+  message: ConversationMessage;
+  sessionTokens: Array<{ fullPattern: string; redactedValue: string }>;
+  showUnredactedTokens: boolean;
+}) {
   const isUser = message.type === "user";
   const isToolResult = message.subtype === "tool_result";
 
@@ -240,6 +275,11 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
   if (!textContent && toolCalls.length === 0) {
     return null;
   }
+
+  // Highlight tokens in text content
+  const highlightedContent = sessionTokens.length > 0
+    ? highlightTokens(textContent, sessionTokens, showUnredactedTokens)
+    : textContent;
 
   return (
     <div className={cn("flex gap-3", isUser ? "flex-row-reverse" : "flex-row")}>
@@ -267,7 +307,13 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
               : "bg-muted text-foreground"
           )}
         >
-          {textContent && (
+          {textContent && sessionTokens.length > 0 && (
+            <div
+              className="text-sm whitespace-pre-wrap break-words"
+              dangerouslySetInnerHTML={{ __html: highlightedContent }}
+            />
+          )}
+          {textContent && sessionTokens.length === 0 && (
             <p className="text-sm whitespace-pre-wrap break-words">{textContent}</p>
           )}
           {toolCalls.length > 0 && (
@@ -290,6 +336,7 @@ export default function ConversationPage() {
   const params = useParams();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { getTokensBySession } = useSettingsStore();
 
   const sessionId = params.sessionId as string;
   const projectPath = searchParams.get("project");
@@ -297,6 +344,13 @@ export default function ConversationPage() {
   const [conversation, setConversation] = useState<SessionConversation | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showUnredactedTokens, setShowUnredactedTokens] = useState(false);
+
+  // Get tokens for this session from security scan results
+  const sessionTokens = getTokensBySession(sessionId).map(t => ({
+    fullPattern: t.fullPattern,
+    redactedValue: t.redactedValue,
+  }));
 
   useEffect(() => {
     async function loadConversation() {
@@ -439,6 +493,27 @@ const [copied, setCopied] = useState(false);
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-4xl mx-auto space-y-4">
+          {/* Security Warning Banner */}
+          {sessionTokens.length > 0 && !loading && !error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Security Warning</AlertTitle>
+              <AlertDescription className="flex items-center justify-between">
+                <span>
+                  {sessionTokens.length} credential{sessionTokens.length === 1 ? '' : 's'} detected in this conversation.
+                </span>
+                <Button
+                  variant="link"
+                  size="sm"
+                  onClick={() => setShowUnredactedTokens(!showUnredactedTokens)}
+                  className="h-auto p-0 text-red-600 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300"
+                >
+                  {showUnredactedTokens ? 'Hide' : 'Show'} full values
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -456,7 +531,12 @@ const [copied, setCopied] = useState(false);
             </div>
           ) : (
             conversation?.messages.map((message) => (
-              <MessageBubble key={message.uuid} message={message} />
+              <MessageBubble
+                key={message.uuid}
+                message={message}
+                sessionTokens={sessionTokens}
+                showUnredactedTokens={showUnredactedTokens}
+              />
             ))
           )}
         </div>
