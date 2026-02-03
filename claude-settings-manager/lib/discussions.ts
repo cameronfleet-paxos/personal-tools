@@ -60,7 +60,7 @@ function isInSensitiveFolder(pathToCheck: string): boolean {
  *
  * e.g., "-Users-cameronfleet-dev-personal-tools" -> "/Users/cameronfleet/dev/personal-tools"
  */
-function decodeProjectPath(dirName: string): string {
+export function decodeProjectPath(dirName: string): string {
   // For paths in sensitive folders, fall back to simple decode to avoid permission prompts
   if (SENSITIVE_MACOS_FOLDERS.some((folder) => dirName.includes(`-${folder}-`) || dirName.endsWith(`-${folder}`))) {
     return "/" + dirName.replace(/-/g, "/").replace(/^\/+/, "");
@@ -341,14 +341,42 @@ export async function parseFullConversation(
   sessionId: string,
   projectPath: string
 ): Promise<SessionConversation | null> {
-  // Encode project path back to directory name (directories have leading dash)
-  const encodedPath = "-" + projectPath.replace(/^\//,"").replace(/\//g, "-");
-  const projectDir = path.join(PROJECTS_DIR, encodedPath);
+  console.log('[parseFullConversation] Input projectPath:', projectPath);
+
+  // Handle both old and new formats:
+  // Old (broken): /Users/cameronfleet/.claude/projects/-Users-cameronfleet-dev-personal-tools
+  // New (correct): /Users/cameronfleet/dev/personal-tools
+
+  let projectDir: string;
+
+  if (projectPath.includes('/.claude/projects/')) {
+    // Old format - projectPath contains the full encoded path like:
+    // /Users/cameronfleet/.claude/projects/-Users-cameronfleet-dev-personal-tools
+    // Extract the encoded directory name and decode it to get the real project path
+    const dirName = path.basename(projectPath);
+    const decodedProjectPath = decodeProjectPath(dirName);
+    console.log('[parseFullConversation] Using old format, decoded:', decodedProjectPath);
+    // Now encode it properly
+    const encodedPath = "-" + decodedProjectPath.replace(/^\//,"").replace(/\//g, "-");
+    projectDir = path.join(PROJECTS_DIR, encodedPath);
+  } else {
+    // New format - need to encode the project path to directory name
+    const encodedPath = "-" + projectPath.replace(/^\//,"").replace(/\//g, "-");
+    projectDir = path.join(PROJECTS_DIR, encodedPath);
+    console.log('[parseFullConversation] Using new format (encoded path):', encodedPath);
+  }
+
   const jsonlPath = path.join(projectDir, `${sessionId}.jsonl`);
+
+  console.log('[parseFullConversation] Project dir:', projectDir);
+  console.log('[parseFullConversation] JSONL path:', jsonlPath);
 
   try {
     await fs.access(jsonlPath);
-  } catch {
+    console.log('[parseFullConversation] JSONL file exists');
+  } catch (err) {
+    console.error('[parseFullConversation] JSONL file not found:', jsonlPath);
+    console.error('[parseFullConversation] Error:', err);
     return null;
   }
 
