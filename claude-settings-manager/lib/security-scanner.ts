@@ -421,24 +421,18 @@ async function scanProjectDiscussions(projectDir: string): Promise<TokenMatch[]>
   const matches: TokenMatch[] = [];
 
   try {
+    // Decode the project directory name ONCE for all files in this directory
+    // projectDir is like: /Users/cameronfleet/.claude/projects/-Users-cameronfleet-dev-personal-tools
+    const dirName = path.basename(projectDir); // -Users-cameronfleet-dev-personal-tools
+    const projectPath = decodeProjectPath(dirName); // /Users/cameronfleet/dev/personal-tools (handles dashes correctly)
+    const projectName = path.basename(projectPath); // personal-tools
+
     const entries = await fs.readdir(projectDir, { withFileTypes: true });
 
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith('.jsonl')) {
         const sessionId = entry.name.replace('.jsonl', '');
         const jsonlPath = path.join(projectDir, entry.name);
-
-        // Decode the project directory name to get the actual path
-        // projectDir is like: /Users/cameronfleet/.claude/projects/-Users-cameronfleet-dev-personal-tools
-        // We want to extract just the directory name and decode it
-        const dirName = path.basename(projectDir); // -Users-cameronfleet-dev-personal-tools
-        const projectPath = decodeProjectPath(dirName); // /Users/cameronfleet/dev/personal-tools (handles dashes correctly)
-        const projectName = path.basename(projectPath); // personal-tools
-
-        console.log('[scanProjectDiscussions] projectDir:', projectDir);
-        console.log('[scanProjectDiscussions] dirName:', dirName);
-        console.log('[scanProjectDiscussions] decoded projectPath:', projectPath);
-        console.log('[scanProjectDiscussions] projectName:', projectName);
 
         matches.push(
           ...await parseConversationForScan(jsonlPath, projectPath, projectName, sessionId)
