@@ -23,6 +23,7 @@ import type {
 } from '@/shared/types'
 import { themes } from '@/shared/constants'
 import { extractPRUrl } from '@/shared/pr-utils'
+import { linkifyText } from '@/shared/linkify-utils'
 
 interface HeadlessTerminalProps {
   events: StreamEvent[]
@@ -424,7 +425,7 @@ export function HeadlessTerminal({
           >
             <span className="text-white flex-shrink-0">⏺</span>
             <p className="whitespace-pre-wrap">
-              {para.trim()}
+              {linkifyText(para.trim())}
             </p>
           </div>
         ))}
@@ -490,7 +491,7 @@ export function HeadlessTerminal({
                   ⎿
                 </span>
                 <span className={`${hasError ? 'text-red-400' : 'text-zinc-400'} break-all`}>
-                  {line.trim().length > 100 ? line.trim().slice(0, 100) + '...' : line.trim()}
+                  {linkifyText(line.trim().length > 100 ? line.trim().slice(0, 100) + '...' : line.trim())}
                 </span>
               </div>
             ))}
@@ -512,7 +513,7 @@ export function HeadlessTerminal({
               ⎿
             </span>
             <span className={`${hasError ? 'text-red-400' : 'text-zinc-400'} break-all`}>
-              {outputPreview.slice(2)}
+              {linkifyText(outputPreview.slice(2))}
             </span>
           </div>
         )}
