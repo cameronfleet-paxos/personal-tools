@@ -101,6 +101,7 @@ import {
   checkPlanModeDependencies,
   enablePlanMode,
   detectAndSaveGitHubToken,
+  type DiscoveredRepoWithDetails,
 } from './setup-wizard'
 import { generateDescriptions } from './description-generator'
 import {
@@ -664,7 +665,7 @@ function registerIpcHandlers() {
     return scanForRepositories(parentPath, depth)
   })
 
-  ipcMain.handle('setup-wizard:bulk-create-agents', async (_event, repos: DiscoveredRepo[]) => {
+  ipcMain.handle('setup-wizard:bulk-create-agents', async (_event, repos: DiscoveredRepoWithDetails[]) => {
     return bulkCreateAgents(repos)
   })
 

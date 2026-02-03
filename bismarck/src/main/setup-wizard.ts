@@ -183,7 +183,7 @@ export async function scanForRepositories(
 /**
  * Extended DiscoveredRepo with optional fields for bulk creation
  */
-interface DiscoveredRepoWithDetails extends DiscoveredRepo {
+export interface DiscoveredRepoWithDetails extends DiscoveredRepo {
   purpose?: string
   completionCriteria?: string
   protectedBranches?: string[]
