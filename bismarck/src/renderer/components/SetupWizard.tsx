@@ -877,10 +877,10 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold text-foreground mb-2">
-                  Enable Plan Mode
+                  Enable Headless Agents
                 </h2>
                 <p className="text-muted-foreground text-sm">
-                  Plan mode allows multiple AI agents to work on tasks in parallel using Docker containers.
+                  Headless agents allow AI to work autonomously on tasks in Docker containers, supporting both standalone agents and coordinated plans.
                 </p>
               </div>
 
@@ -888,10 +888,10 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
               <div className="flex items-center justify-between p-4 border border-border rounded-lg bg-card">
                 <div className="flex-1">
                   <Label htmlFor="plan-mode-toggle" className="text-sm font-medium text-foreground">
-                    Enable Plan Mode
+                    Enable Headless Agents
                   </Label>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Run parallel agents in isolated Docker containers
+                    Enable autonomous agents and plan execution in Docker containers
                   </p>
                 </div>
                 <button
