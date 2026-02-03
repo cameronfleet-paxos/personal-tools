@@ -838,7 +838,7 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
       // Create plan agent workspace (runs in plan directory so bd commands work without cd)
       const planAgentWorkspace: Workspace = {
         id: `plan-agent-${planId}`,
-        name: `Plan Agent (${plan.title})`,
+        name: `Planner (${plan.title})`,
         directory: planDir, // Plan agent runs in plan directory for bd commands
         purpose: 'Initial discovery and task creation',
         theme: 'blue',
@@ -861,7 +861,7 @@ export async function executePlan(planId: string, referenceAgentId: string): Pro
       console.log(`[PlanManager] Created plan agent terminal: ${planAgentTerminalId}`)
       addActiveWorkspace(planAgentWorkspace.id)
       addWorkspaceToTab(planAgentWorkspace.id, orchestratorTab.id)
-      addPlanActivity(planId, 'info', 'Plan agent started')
+      addPlanActivity(planId, 'info', 'Planner started')
 
       // Notify renderer about the plan agent terminal
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -934,10 +934,10 @@ export async function cancelPlan(planId: string): Promise<Plan | null> {
   }
 
   // 1. Kill all agents immediately (closes terminals and stops containers)
-  logger.info('plan', 'Killing all plan agents', logCtx)
+  logger.info('plan', 'Killing all planners', logCtx)
   const killStartTime = Date.now()
   await killAllPlanAgents(plan)
-  logger.info('plan', 'Finished killing all plan agents', logCtx, { durationMs: Date.now() - killStartTime })
+  logger.info('plan', 'Finished killing all planners', logCtx, { durationMs: Date.now() - killStartTime })
 
   // 2. Update plan state BEFORE worktree cleanup so UI knows plan is cancelled immediately
   plan.status = 'failed'
@@ -1093,7 +1093,7 @@ async function killAllPlanAgents(plan: Plan): Promise<void> {
 
   // Kill plan agent
   if (plan.planAgentWorkspaceId) {
-    logger.debug('plan', 'Killing plan agent', logCtx, { workspaceId: plan.planAgentWorkspaceId })
+    logger.debug('plan', 'Killing planner', logCtx, { workspaceId: plan.planAgentWorkspaceId })
     const terminalId = getTerminalForWorkspace(plan.planAgentWorkspaceId)
     if (terminalId) closeTerminal(terminalId)
     removeActiveWorkspace(plan.planAgentWorkspaceId)
@@ -1122,7 +1122,7 @@ async function killAllPlanAgents(plan: Plan): Promise<void> {
   // Emit state update so renderer reloads workspaces (clears headless agents from sidebar)
   emitStateUpdate()
 
-  logger.info('plan', 'All plan agents killed', logCtx)
+  logger.info('plan', 'All planners killed', logCtx)
 }
 
 /**
@@ -1739,11 +1739,11 @@ async function buildOrchestratorPrompt(plan: Plan, agents: Agent[]): Promise<str
 }
 
 /**
- * Build the prompt for the plan agent that creates tasks
+ * Build the prompt for the planner that creates tasks
  * Note: Plan agent runs in the plan directory so bd commands work directly
  * It has access to the codebase via --add-dir flag for analysis
  *
- * The Plan Agent is responsible for:
+ * The Planner is responsible for:
  * - Analyzing the codebase
  * - Creating epic + tasks
  * - Setting up dependencies
@@ -1787,7 +1787,7 @@ IMPORTANT: Create tasks that match the structure in this file.
 }
 
 /**
- * Cleanup plan agent workspace, terminal for a plan
+ * Cleanup planner workspace, terminal for a plan
  */
 async function cleanupPlanAgent(plan: Plan): Promise<void> {
   if (!plan.planAgentWorkspaceId) return
@@ -1809,7 +1809,7 @@ async function cleanupPlanAgent(plan: Plan): Promise<void> {
   plan.planAgentWorkspaceId = null
   await savePlan(plan)
 
-  addPlanActivity(plan.id, 'success', 'Plan agent completed task creation')
+  addPlanActivity(plan.id, 'success', 'Planner completed task creation')
   emitStateUpdate()
 
   // Notify renderer to refresh task list now that plan agent has created tasks
@@ -1817,7 +1817,7 @@ async function cleanupPlanAgent(plan: Plan): Promise<void> {
 }
 
 /**
- * Cleanup plan agent without logging success (used for cancellation)
+ * Cleanup planner without logging success (used for cancellation)
  */
 async function cleanupPlanAgentSilent(plan: Plan): Promise<void> {
   if (!plan.planAgentWorkspaceId) return
