@@ -379,7 +379,7 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-background py-8">
-      <div className={`w-full mx-auto px-4 ${step === 'repos' ? 'max-w-4xl' : 'max-w-2xl'}`}>
+      <div className={`w-full mx-auto px-4 ${step === 'repos' || step === 'descriptions' ? 'max-w-4xl' : 'max-w-2xl'}`}>
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-foreground mb-2">
@@ -785,7 +785,7 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                   </div>
 
                   {/* Descriptions list */}
-                  <div className="space-y-4 max-h-[50vh] overflow-y-auto">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[50vh] overflow-y-auto p-1">
                     {discoveredRepos
                       .filter(r => selectedRepos.has(r.path))
                       .map((repo) => (
