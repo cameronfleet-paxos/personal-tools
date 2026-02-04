@@ -6,6 +6,7 @@ import type {
   RemoveTokenResponse,
   Settings,
 } from "@/types/settings";
+import { loadSecurityScanCache, saveSecurityScanCache } from "@/lib/security-scanner";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const USER_CLAUDE_DIR = path.join(HOME, ".claude");
@@ -159,8 +160,30 @@ export async function DELETE(
       }
 
       try {
-        // Delete the file
-        await fs.unlink(filePath);
+        // Try to delete the file (may already be gone)
+        try {
+          await fs.unlink(filePath);
+        } catch (unlinkErr) {
+          // File doesn't exist - that's fine, treat as success
+          // (could have been deleted manually or from a previous attempt)
+          if ((unlinkErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+            throw unlinkErr; // Re-throw if it's a different error
+          }
+        }
+
+        // Update the cache to remove tokens from this session
+        try {
+          const cache = await loadSecurityScanCache();
+          if (cache.tokens && sessionId) {
+            cache.tokens = cache.tokens.filter(
+              (t) => !(t.location.source === 'discussion' && t.location.sessionId === sessionId)
+            );
+            await saveSecurityScanCache(cache);
+          }
+        } catch (cacheErr) {
+          console.error('Failed to update cache after deletion:', cacheErr);
+          // Continue anyway - file was deleted successfully
+        }
 
         return NextResponse.json({
           success: true,

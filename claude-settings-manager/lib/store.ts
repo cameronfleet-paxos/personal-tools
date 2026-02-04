@@ -1184,11 +1184,25 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         return;
       }
 
-      // Remove the token from the results
-      set({
-        tokenScanResults: state.tokenScanResults.filter((t) => t.id !== id),
-        tokenScanLoading: false,
-      });
+      // Remove the token(s) from the results
+      // IMPORTANT: Use get() to get fresh state after async operations (avoid stale closure)
+      const currentTokens = get().tokenScanResults;
+
+      // For discussions, remove ALL tokens from the same session (since we deleted the whole file)
+      if (location.source === 'discussion' && location.sessionId) {
+        set({
+          tokenScanResults: currentTokens.filter(
+            (t) => !(t.location.source === 'discussion' && t.location.sessionId === location.sessionId)
+          ),
+          tokenScanLoading: false,
+        });
+      } else {
+        // For settings, just remove the single token
+        set({
+          tokenScanResults: currentTokens.filter((t) => t.id !== id),
+          tokenScanLoading: false,
+        });
+      }
 
       // If it was a settings token, reload settings silently
       if (location.source === 'settings') {
