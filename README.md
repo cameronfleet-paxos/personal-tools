@@ -22,14 +22,6 @@ cd otto-schedule && pnpm install && pnpm electron:build
 cp -R dist/mac-arm64/Otto\ Schedule.app /Applications/
 ```
 
-### [bismarck](./bismarck)
-
-Desktop application for monitoring and managing Claude Code agents. Receives real-time updates from Claude Code sessions via Unix socket hooks.
-
-```bash
-cd bismarck && npm install && ./scripts/deploy-local.sh
-```
-
 ### bootstrap-claude
 
 Sets up 4 iTerm2 panes across 2 windows for running multiple Claude agents.
