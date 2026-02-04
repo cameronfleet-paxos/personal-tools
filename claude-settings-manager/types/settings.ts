@@ -315,6 +315,7 @@ export interface TokenMatch {
   location: {
     source: 'settings' | 'discussion';
     scope?: SettingsTarget;
+    encodedProjectDir?: string; // e.g., "-Users-cameronfleet-dev-personal-tools" (for lazy decoding)
     projectPath?: string;
     projectName?: string;
     sessionId?: string;

@@ -723,7 +723,10 @@ export default function DashboardPage() {
                                     {getSeverityLabel(worstSeverity)}
                                   </Badge>
                                   <Link
-                                    href={`/discussions/${sessionId}?project=${encodeURIComponent(projectPath)}`}
+                                    href={firstToken.location.encodedProjectDir
+                                      ? `/discussions/${sessionId}?encodedDir=${encodeURIComponent(firstToken.location.encodedProjectDir)}`
+                                      : `/discussions/${sessionId}?project=${encodeURIComponent(projectPath)}`
+                                    }
                                     className="font-medium text-sm hover:underline"
                                   >
                                     {projectName}
@@ -781,7 +784,11 @@ export default function DashboardPage() {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => router.push(`/discussions/${sessionId}?project=${encodeURIComponent(projectPath)}`)}
+                                  onClick={() => router.push(
+                                    firstToken.location.encodedProjectDir
+                                      ? `/discussions/${sessionId}?encodedDir=${encodeURIComponent(firstToken.location.encodedProjectDir)}`
+                                      : `/discussions/${sessionId}?project=${encodeURIComponent(projectPath)}`
+                                  )}
                                 >
                                   <ExternalLink className="h-4 w-4 mr-1" />
                                   View

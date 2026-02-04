@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import type { SessionConversationResponse } from "@/types/settings";
-import { parseFullConversation, findSessionProject } from "@/lib/discussions";
+import { parseFullConversation, parseFullConversationByEncodedDir, findSessionProject } from "@/lib/discussions";
 
 interface RouteParams {
   params: Promise<{ sessionId: string }>;
@@ -13,13 +13,34 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const { sessionId } = await context.params;
 
-  // Get project path from query param, or try to find it
+  // New fast path: use encoded directory directly (skips path decoding until display)
+  const encodedDir = searchParams.get("encodedDir");
+
+  // Legacy path: use project path (requires decoding)
   let projectPath = searchParams.get("project");
 
   console.log('[Discussion API] sessionId:', sessionId);
+  console.log('[Discussion API] encodedDir from query:', encodedDir);
   console.log('[Discussion API] projectPath from query:', projectPath);
   console.log('[Discussion API] Route timestamp:', new Date().toISOString());
 
+  // Fast path: use encoded directory directly
+  if (encodedDir) {
+    console.log('[Discussion API] Using fast path with encodedDir');
+    const conversation = await parseFullConversationByEncodedDir(sessionId, encodedDir);
+
+    if (!conversation) {
+      console.error('[Discussion API] Failed to parse conversation with encodedDir. sessionId:', sessionId, 'encodedDir:', encodedDir);
+      return NextResponse.json({
+        conversation: null,
+        error: "Failed to parse conversation",
+      });
+    }
+
+    return NextResponse.json({ conversation });
+  }
+
+  // Legacy path: decode project path
   if (!projectPath) {
     // Try to find which project this session belongs to
     projectPath = await findSessionProject(sessionId);

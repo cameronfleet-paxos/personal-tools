@@ -10,12 +10,11 @@ import type {
   SecuritySeverity,
   SettingsTarget,
 } from "@/types/settings";
-import { decodeProjectPath } from "./discussions";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const USER_CLAUDE_DIR = path.join(HOME, ".claude");
 const CACHE_FILE = path.join(USER_CLAUDE_DIR, "security-scan-cache.json");
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2; // Bumped to invalidate old cache with projectPath format
 
 interface TokenPattern {
   type: TokenType;
@@ -316,11 +315,25 @@ export async function scanSettingsForTokens(): Promise<TokenMatch[]> {
 }
 
 /**
+ * Extract a simple project name from an encoded directory name without filesystem calls.
+ * Takes the last segment after splitting by hyphens.
+ * e.g., "-Users-cameronfleet-dev-personal-tools" -> "personal-tools"
+ * Note: This may not be perfectly accurate for hyphenated folder names, but is acceptable for UI display.
+ */
+function getSimpleProjectName(encodedDir: string): string {
+  // Remove leading dash and get segments
+  const segments = encodedDir.replace(/^-/, '').split('-');
+  // Return last segment, or the original if empty
+  return segments[segments.length - 1] || encodedDir;
+}
+
+/**
  * Parse a single .jsonl conversation file and scan for tokens
+ * Uses encoded directory name to avoid expensive path decoding during scan.
  */
 async function parseConversationForScan(
   jsonlPath: string,
-  projectPath: string,
+  encodedProjectDir: string,
   projectName: string,
   sessionId: string
 ): Promise<TokenMatch[]> {
@@ -343,7 +356,7 @@ async function parseConversationForScan(
         if (message.type === 'user') {
           const context: Partial<TokenMatch['location']> = {
             source: 'discussion',
-            projectPath,
+            encodedProjectDir,
             projectName,
             sessionId,
             filePath: jsonlPath,
@@ -368,7 +381,7 @@ async function parseConversationForScan(
         if (message.type === 'assistant') {
           const context: Partial<TokenMatch['location']> = {
             source: 'discussion',
-            projectPath,
+            encodedProjectDir,
             projectName,
             sessionId,
             filePath: jsonlPath,
@@ -415,17 +428,19 @@ async function parseConversationForScan(
 
 
 /**
- * Scan all discussions in a project directory
+ * Scan all discussions in a project directory.
+ * Uses lazy path decoding - stores encoded directory name and derives a simple project name
+ * without expensive filesystem calls. Full path decoding happens only when user clicks a link.
  */
 async function scanProjectDiscussions(projectDir: string): Promise<TokenMatch[]> {
   const matches: TokenMatch[] = [];
 
   try {
-    // Decode the project directory name ONCE for all files in this directory
+    // Store encoded directory name directly - NO filesystem calls for decoding
     // projectDir is like: /Users/cameronfleet/.claude/projects/-Users-cameronfleet-dev-personal-tools
-    const dirName = path.basename(projectDir); // -Users-cameronfleet-dev-personal-tools
-    const projectPath = decodeProjectPath(dirName); // /Users/cameronfleet/dev/personal-tools (handles dashes correctly)
-    const projectName = path.basename(projectPath); // personal-tools
+    const encodedProjectDir = path.basename(projectDir); // -Users-cameronfleet-dev-personal-tools
+    // Extract simple project name without filesystem calls (may not be 100% accurate for hyphenated folders)
+    const projectName = getSimpleProjectName(encodedProjectDir); // personal-tools (best effort)
 
     const entries = await fs.readdir(projectDir, { withFileTypes: true });
 
@@ -435,7 +450,7 @@ async function scanProjectDiscussions(projectDir: string): Promise<TokenMatch[]>
         const jsonlPath = path.join(projectDir, entry.name);
 
         matches.push(
-          ...await parseConversationForScan(jsonlPath, projectPath, projectName, sessionId)
+          ...await parseConversationForScan(jsonlPath, encodedProjectDir, projectName, sessionId)
         );
       }
     }

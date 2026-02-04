@@ -470,6 +470,125 @@ export async function parseFullConversation(
 }
 
 /**
+ * Parse a full conversation using the encoded project directory name directly.
+ * This is faster than parseFullConversation() because it skips path decoding.
+ * Used when navigating from security scan results which store encodedProjectDir.
+ */
+export async function parseFullConversationByEncodedDir(
+  sessionId: string,
+  encodedDir: string
+): Promise<SessionConversation | null> {
+  console.log('[parseFullConversationByEncodedDir] encodedDir:', encodedDir);
+
+  // Build path directly using encoded directory name (no decoding needed)
+  const projectDir = path.join(PROJECTS_DIR, encodedDir);
+  const jsonlPath = path.join(projectDir, `${sessionId}.jsonl`);
+
+  console.log('[parseFullConversationByEncodedDir] Project dir:', projectDir);
+  console.log('[parseFullConversationByEncodedDir] JSONL path:', jsonlPath);
+
+  try {
+    await fs.access(jsonlPath);
+    console.log('[parseFullConversationByEncodedDir] JSONL file exists');
+  } catch (err) {
+    console.error('[parseFullConversationByEncodedDir] JSONL file not found:', jsonlPath);
+    console.error('[parseFullConversationByEncodedDir] Error:', err);
+    return null;
+  }
+
+  // Decode the path ONLY NOW for display purposes (lazy decoding)
+  const decodedProjectPath = decodeProjectPath(encodedDir);
+  const projectName = getProjectDisplayName(decodedProjectPath);
+
+  const messages: ConversationMessage[] = [];
+
+  return new Promise((resolve) => {
+    const fileStream = createReadStream(jsonlPath, { encoding: "utf-8" });
+    const rl = readline.createInterface({
+      input: fileStream,
+      crlfDelay: Infinity,
+    });
+
+    rl.on("line", (line) => {
+      try {
+        const entry = JSON.parse(line) as JournalEntry;
+
+        // Skip meta entries and non-message types
+        if (entry.isMeta) return;
+        if (entry.type === "progress") return;
+        if (entry.type === "file-history-snapshot") return;
+
+        // Process user messages
+        if (entry.type === "user" && entry.message?.role === "user") {
+          const content = entry.message.content;
+
+          if (typeof content === "string") {
+            // Skip local commands and system tags
+            if (content.startsWith("<local-command-")) {
+              return;
+            }
+
+            // Classify as tool_result if it contains tool result tags
+            if (
+              content.includes("<tool_result>") ||
+              content.includes("</tool_result>")
+            ) {
+              messages.push({
+                uuid: entry.uuid,
+                type: "user",
+                subtype: "tool_result",
+                timestamp: entry.timestamp,
+                content: content,
+              });
+              return;
+            }
+
+            // Skip other system XML tags (but not user prompts)
+            if (content.startsWith("<") && content.includes("</") && !content.includes("\n")) {
+              return;
+            }
+          }
+
+          // Regular user prompt
+          messages.push({
+            uuid: entry.uuid,
+            type: "user",
+            subtype: "prompt",
+            timestamp: entry.timestamp,
+            content: content || "",
+          });
+        }
+
+        // Process assistant messages
+        if (entry.type === "assistant" && entry.message?.content) {
+          messages.push({
+            uuid: entry.uuid,
+            type: "assistant",
+            timestamp: entry.timestamp,
+            content: entry.message.content,
+          });
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    });
+
+    rl.on("close", () => {
+      resolve({
+        sessionId,
+        projectPath: decodedProjectPath,
+        projectName,
+        messages,
+      });
+    });
+
+    rl.on("error", () => {
+      resolve(null);
+    });
+  });
+}
+
+/**
  * Find the jsonl file for a session across all projects
  * Returns the decoded project path if found
  */
