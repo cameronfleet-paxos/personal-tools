@@ -414,6 +414,12 @@ export interface SessionMetadata {
   projectName: string; // Display name (derived from path)
   timestamp: number; // File mtime (for sorting)
   firstUserPrompt: string; // Snippet (~150 chars)
+  isFavourite?: boolean; // Computed at runtime from favourites.json
+}
+
+// Favourites data structure (stored in ~/.claude/favourites.json)
+export interface FavouritesData {
+  favourites: string[]; // Array of sessionIds
 }
 
 export interface ConversationMessage {

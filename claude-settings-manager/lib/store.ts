@@ -138,6 +138,10 @@ interface SettingsStore {
   discussionsLoading: boolean;
   discussionsTotalCount: number;
 
+  // Favourites state
+  favourites: Set<string>;
+  favouritesLoading: boolean;
+
   // UI State
   isLoading: boolean;
   isSaving: boolean;
@@ -202,6 +206,10 @@ interface SettingsStore {
 
   // Discussions actions
   loadDiscussions: (limit?: number) => Promise<void>;
+
+  // Favourites actions
+  loadFavourites: () => Promise<void>;
+  toggleFavourite: (sessionId: string) => Promise<void>;
 
   // Token grouping helpers
   getTokensBySession: (sessionId: string) => TokenMatch[];
@@ -279,6 +287,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   discussions: [],
   discussionsLoading: false,
   discussionsTotalCount: 0,
+
+  // Favourites state
+  favourites: new Set<string>(),
+  favouritesLoading: false,
 
   isLoading: false,
   isSaving: false,
@@ -1076,6 +1088,43 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (err) {
       console.error("Error loading discussions:", err);
       set({ discussionsLoading: false });
+    }
+  },
+
+  loadFavourites: async () => {
+    set({ favouritesLoading: true });
+    try {
+      const response = await fetch("/api/discussions/favourites");
+      if (!response.ok) {
+        throw new Error("Failed to load favourites");
+      }
+      const data = await response.json();
+      set({
+        favourites: new Set(data.favourites),
+        favouritesLoading: false,
+      });
+    } catch (err) {
+      console.error("Error loading favourites:", err);
+      set({ favouritesLoading: false });
+    }
+  },
+
+  toggleFavourite: async (sessionId: string) => {
+    try {
+      const response = await fetch("/api/discussions/favourites", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      });
+      if (!response.ok) {
+        throw new Error("Failed to toggle favourite");
+      }
+      const data = await response.json();
+      set({
+        favourites: new Set(data.favourites),
+      });
+    } catch (err) {
+      console.error("Error toggling favourite:", err);
     }
   },
 

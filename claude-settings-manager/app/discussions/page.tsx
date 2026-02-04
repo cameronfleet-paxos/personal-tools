@@ -26,6 +26,7 @@ import {
   Loader2,
   ChevronRight,
   Filter,
+  Star,
 } from "lucide-react";
 import { LoadingOverlay } from "@/components/loading-overlay";
 import type { SessionMetadata } from "@/types/settings";
@@ -47,13 +48,26 @@ function formatRelativeTime(timestamp: number): string {
   return date.toLocaleDateString();
 }
 
-function DiscussionCard({ session }: { session: SessionMetadata }) {
+function DiscussionCard({
+  session,
+  isFavourite,
+  onToggleFavourite,
+}: {
+  session: SessionMetadata;
+  isFavourite: boolean;
+  onToggleFavourite: (sessionId: string) => void;
+}) {
   const router = useRouter();
 
   const handleClick = () => {
     router.push(
       `/discussions/${session.sessionId}?project=${encodeURIComponent(session.projectPath)}`
     );
+  };
+
+  const handleFavouriteClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onToggleFavourite(session.sessionId);
   };
 
   return (
@@ -81,7 +95,20 @@ function DiscussionCard({ session }: { session: SessionMetadata }) {
               {session.firstUserPrompt}
             </CardTitle>
           </div>
-          <div className="flex-shrink-0">
+          <div className="flex-shrink-0 flex items-center gap-1">
+            <button
+              onClick={handleFavouriteClick}
+              className="p-1 rounded-md hover:bg-accent transition-colors"
+              title={isFavourite ? "Remove from favourites" : "Add to favourites"}
+            >
+              <Star
+                className={`h-4 w-4 ${
+                  isFavourite
+                    ? "fill-yellow-400 text-yellow-400"
+                    : "text-muted-foreground"
+                }`}
+              />
+            </button>
             <ChevronRight className="h-5 w-5 text-muted-foreground" />
           </div>
         </div>
@@ -96,13 +123,18 @@ export default function DiscussionsPage() {
     discussionsLoading,
     discussionsTotalCount,
     loadDiscussions,
+    favourites,
+    loadFavourites,
+    toggleFavourite,
   } = useSettingsStore();
 
   const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [favouriteFilter, setFavouriteFilter] = useState<"all" | "favourites">("all");
 
   useEffect(() => {
     loadDiscussions();
-  }, [loadDiscussions]);
+    loadFavourites();
+  }, [loadDiscussions, loadFavourites]);
 
   // Extract unique projects from discussions
   const uniqueProjects = useMemo(() => {
@@ -123,13 +155,17 @@ export default function DiscussionsPage() {
     return Array.from(projectMap.values()).sort((a, b) => b.count - a.count);
   }, [discussions]);
 
-  // Filter discussions by project
+  // Filter discussions by project and favourites
   const filteredDiscussions = useMemo(() => {
-    if (projectFilter === "all") {
-      return discussions;
+    let result = discussions;
+    if (projectFilter !== "all") {
+      result = result.filter((s) => s.projectPath === projectFilter);
     }
-    return discussions.filter((s) => s.projectPath === projectFilter);
-  }, [discussions, projectFilter]);
+    if (favouriteFilter === "favourites") {
+      result = result.filter((s) => favourites.has(s.sessionId));
+    }
+    return result;
+  }, [discussions, projectFilter, favouriteFilter, favourites]);
 
   const hasData = discussions.length > 0;
 
@@ -164,31 +200,53 @@ export default function DiscussionsPage() {
               <MessageSquare className="h-4 w-4" />
               <span>
                 {filteredDiscussions.length}
-                {projectFilter !== "all" && ` of ${discussions.length}`} session
+                {(projectFilter !== "all" || favouriteFilter !== "all") && ` of ${discussions.length}`} session
                 {filteredDiscussions.length !== 1 ? "s" : ""}
-                {projectFilter === "all" && ` (${discussionsTotalCount} total)`}
+                {projectFilter === "all" && favouriteFilter === "all" && ` (${discussionsTotalCount} total)`}
               </span>
             </div>
           </div>
 
-          {uniqueProjects.length > 1 && (
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <Select value={projectFilter} onValueChange={setProjectFilter}>
-                <SelectTrigger className="w-[200px]">
-                  <SelectValue placeholder="Filter by project" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All projects</SelectItem>
-                  {uniqueProjects.map((project) => (
-                    <SelectItem key={project.path} value={project.path}>
-                      {project.name} ({project.count})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <Button
+              variant={favouriteFilter === "favourites" ? "default" : "outline"}
+              size="sm"
+              onClick={() =>
+                setFavouriteFilter(favouriteFilter === "favourites" ? "all" : "favourites")
+              }
+              className={
+                favouriteFilter === "favourites"
+                  ? "bg-yellow-500 hover:bg-yellow-600 text-white"
+                  : ""
+              }
+            >
+              <Star
+                className={`h-4 w-4 mr-1 ${
+                  favouriteFilter === "favourites" ? "fill-current" : ""
+                }`}
+              />
+              Favourites
+            </Button>
+
+            {uniqueProjects.length > 1 && (
+              <>
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <Select value={projectFilter} onValueChange={setProjectFilter}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="Filter by project" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All projects</SelectItem>
+                    {uniqueProjects.map((project) => (
+                      <SelectItem key={project.path} value={project.path}>
+                        {project.name} ({project.count})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Discussions List */}
@@ -202,32 +260,56 @@ export default function DiscussionsPage() {
         ) : filteredDiscussions.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center text-muted-foreground">
-              <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p className="text-lg font-medium">
-                {projectFilter !== "all" ? "No discussions in this project" : "No discussions found"}
-              </p>
-              {projectFilter !== "all" ? (
-                <Button
-                  variant="link"
-                  className="mt-2"
-                  onClick={() => setProjectFilter("all")}
-                >
-                  Show all projects
-                </Button>
+              {favouriteFilter === "favourites" ? (
+                <>
+                  <Star className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg font-medium">No favourites yet</p>
+                  <p className="text-sm mt-1">
+                    Click the star icon on a conversation to add it to your favourites.
+                  </p>
+                  <Button
+                    variant="link"
+                    className="mt-2"
+                    onClick={() => setFavouriteFilter("all")}
+                  >
+                    Show all conversations
+                  </Button>
+                </>
               ) : (
-                <p className="text-sm mt-1">
-                  Conversations are stored in{" "}
-                  <code className="bg-muted px-1.5 py-0.5 rounded">
-                    ~/.claude/projects/
-                  </code>
-                </p>
+                <>
+                  <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg font-medium">
+                    {projectFilter !== "all" ? "No discussions in this project" : "No discussions found"}
+                  </p>
+                  {projectFilter !== "all" ? (
+                    <Button
+                      variant="link"
+                      className="mt-2"
+                      onClick={() => setProjectFilter("all")}
+                    >
+                      Show all projects
+                    </Button>
+                  ) : (
+                    <p className="text-sm mt-1">
+                      Conversations are stored in{" "}
+                      <code className="bg-muted px-1.5 py-0.5 rounded">
+                        ~/.claude/projects/
+                      </code>
+                    </p>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
         ) : (
           <div className="space-y-3">
             {filteredDiscussions.map((session) => (
-              <DiscussionCard key={session.sessionId} session={session} />
+              <DiscussionCard
+                key={session.sessionId}
+                session={session}
+                isFavourite={favourites.has(session.sessionId)}
+                onToggleFavourite={toggleFavourite}
+              />
             ))}
           </div>
         )}

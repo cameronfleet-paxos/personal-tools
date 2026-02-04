@@ -8,11 +8,13 @@ import type {
   ConversationMessage,
   ContentBlock,
   DiscussionsResponse,
+  FavouritesData,
 } from "@/types/settings";
 
 const HOME = process.env.HOME || process.env.USERPROFILE || "";
 const CLAUDE_DIR = path.join(HOME, ".claude");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
+const FAVOURITES_FILE = path.join(CLAUDE_DIR, "favourites.json");
 
 // JSONL entry types (internal)
 interface JournalEntry {
@@ -618,4 +620,47 @@ export async function findSessionProject(
   }
 
   return null;
+}
+
+/**
+ * Load favourites from ~/.claude/favourites.json
+ * Returns empty array if file doesn't exist
+ */
+export async function loadFavourites(): Promise<string[]> {
+  try {
+    const content = await fs.readFile(FAVOURITES_FILE, "utf-8");
+    const data = JSON.parse(content) as FavouritesData;
+    return data.favourites || [];
+  } catch {
+    // File doesn't exist or is invalid
+    return [];
+  }
+}
+
+/**
+ * Save favourites to ~/.claude/favourites.json
+ */
+export async function saveFavourites(sessionIds: string[]): Promise<void> {
+  const data: FavouritesData = { favourites: sessionIds };
+  await fs.writeFile(FAVOURITES_FILE, JSON.stringify(data, null, 2), "utf-8");
+}
+
+/**
+ * Toggle a session's favourite status
+ * Returns the updated list of favourite session IDs
+ */
+export async function toggleFavourite(sessionId: string): Promise<string[]> {
+  const favourites = await loadFavourites();
+  const index = favourites.indexOf(sessionId);
+
+  if (index === -1) {
+    // Add to favourites
+    favourites.push(sessionId);
+  } else {
+    // Remove from favourites
+    favourites.splice(index, 1);
+  }
+
+  await saveFavourites(favourites);
+  return favourites;
 }
