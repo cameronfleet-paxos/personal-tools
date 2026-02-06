@@ -14,5 +14,5 @@ pnpm electron:build
 
 # Deploy to Applications
 echo "Deploying to ~/Applications..."
-cp -R dist/mac-arm64/Claude\ Settings.app /Users/cameronfleet/Applications/
+cp -R dist/mac-arm64/Claude\ Settings.app ~/Applications/
 echo "Deployed Claude Settings.app to ~/Applications"
