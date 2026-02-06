@@ -65,12 +65,31 @@ if (fs.existsSync(pnpmDir)) {
         const srcModule = path.join(pkgNodeModules, moduleName);
         const destModule = path.join(nodeModulesDir, moduleName);
 
-        // Skip if already exists at top level or is a symlink
-        if (fs.existsSync(destModule)) continue;
-
         const stat = fs.lstatSync(srcModule);
         if (stat.isDirectory()) {
-          copyRecursive(srcModule, destModule);
+          // If destination exists, merge the contents instead of skipping
+          if (fs.existsSync(destModule)) {
+            console.log(`Merging ${moduleName} from pnpm structure...`);
+            // Copy contents from source to destination, merging directories
+            function mergeDir(src, dest) {
+              if (!fs.existsSync(dest)) {
+                fs.mkdirSync(dest, { recursive: true });
+              }
+              for (const item of fs.readdirSync(src)) {
+                const srcItem = path.join(src, item);
+                const destItem = path.join(dest, item);
+                const itemStat = fs.lstatSync(srcItem);
+                if (itemStat.isDirectory()) {
+                  mergeDir(srcItem, destItem);
+                } else if (!fs.existsSync(destItem)) {
+                  fs.copyFileSync(srcItem, destItem);
+                }
+              }
+            }
+            mergeDir(srcModule, destModule);
+          } else {
+            copyRecursive(srcModule, destModule);
+          }
         }
       }
     }
