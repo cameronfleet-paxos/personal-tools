@@ -234,6 +234,7 @@ export default function DashboardPage() {
     allowPermissionPattern,
     dismissPermissionInterruption,
     resetDismissedInterruptions,
+    loadInterruptionContext,
   } = useSettingsStore();
 
   const [expandedRec, setExpandedRec] = useState<string | null>(null);
@@ -244,6 +245,7 @@ export default function DashboardPage() {
   const [allowingPatternId, setAllowingPatternId] = useState<string | null>(null);
   const [dismissingPatternId, setDismissingPatternId] = useState<string | null>(null);
   const [expandedInterruption, setExpandedInterruption] = useState<string | null>(null);
+  const [loadingContextId, setLoadingContextId] = useState<string | null>(null);
   const [showAllowed, setShowAllowed] = useState(false);
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
 
@@ -995,9 +997,16 @@ export default function DashboardPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() =>
-                                setExpandedInterruption(isExpanded ? null : interruption.id)
-                              }
+                              onClick={async () => {
+                                if (isExpanded) {
+                                  setExpandedInterruption(null);
+                                } else {
+                                  setExpandedInterruption(interruption.id);
+                                  setLoadingContextId(interruption.id);
+                                  await loadInterruptionContext(interruption.id);
+                                  setLoadingContextId(null);
+                                }
+                              }}
                             >
                               {isExpanded ? (
                                 <ChevronUp className="h-4 w-4" />
@@ -1065,7 +1074,12 @@ export default function DashboardPage() {
                           )}
 
                           {/* Conversation examples */}
-                          {interruption.examples && interruption.examples.length > 0 && (
+                          {loadingContextId === interruption.id ? (
+                            <div className="flex items-center gap-2 py-2">
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">Loading examples...</span>
+                            </div>
+                          ) : interruption.examples && interruption.examples.length > 0 ? (
                             <div className="space-y-2">
                               <div className="text-xs text-muted-foreground font-medium">
                                 Recent examples:
@@ -1095,7 +1109,7 @@ export default function DashboardPage() {
                                 </div>
                               ))}
                             </div>
-                          )}
+                          ) : null}
 
                           {/* Projects affected */}
                           {projectCount > 0 && (
