@@ -203,6 +203,7 @@ interface SettingsStore {
   allowPermissionPattern: (id: string) => Promise<void>;
   dismissPermissionInterruption: (id: string) => Promise<void>;
   resetDismissedInterruptions: () => Promise<void>;
+  loadInterruptionContext: (id: string) => Promise<void>;
 
   // Discussions actions
   loadDiscussions: (limit?: number) => Promise<void>;
@@ -340,16 +341,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   loadSettings: async () => {
     const state = get();
-    set({ isLoading: true, isSyncing: true, isIndexing: true, error: null });
+    set({ isLoading: true, isSyncing: true, error: null });
     try {
       const settingsUrl = state.selectedProjectPath
         ? `/api/settings?path=${encodeURIComponent(state.selectedProjectPath)}`
         : "/api/settings";
 
-      // Fetch settings and refresh index in parallel
-      const [settingsResponse, indexResponse] = await Promise.all([
+      // Load settings and cached index in parallel (both fast)
+      const [settingsResponse, cachedIndexResponse] = await Promise.all([
         fetch(settingsUrl),
-        fetch("/api/index", { method: "PUT" }),
+        fetch("/api/index"), // GET - returns cached index instantly
       ]);
 
       if (!settingsResponse.ok) {
@@ -357,10 +358,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       }
       const data = await settingsResponse.json();
 
-      // Process index response
-      let indexData = null;
-      if (indexResponse.ok) {
-        indexData = await indexResponse.json();
+      // Process cached index response
+      let cachedIndex: SettingsIndex | null = null;
+      if (cachedIndexResponse.ok) {
+        const indexData = await cachedIndexResponse.json();
+        cachedIndex = indexData.index || null;
       }
 
       if (state.selectedProjectPath) {
@@ -381,13 +383,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           // Legacy aliases
           effectiveGlobal: multiData.project || {},
           effectiveLocal: multiData.projectLocal || {},
-          // Update index data if refresh succeeded
-          settingsIndex: indexData?.success ? indexData.index : state.settingsIndex,
-          commands: indexData?.success ? (indexData.index?.commands?.commands || []) : state.commands,
-          commandsLastIndexed: indexData?.success ? (indexData.index?.lastIndexed || null) : state.commandsLastIndexed,
+          // Use cached index immediately so UI is interactive
+          settingsIndex: cachedIndex || state.settingsIndex,
+          commands: cachedIndex?.commands?.commands || state.commands,
+          commandsLastIndexed: cachedIndex?.lastIndexed || state.commandsLastIndexed,
           isLoading: false,
           isSyncing: false,
-          isIndexing: false,
           lastSyncedAt: new Date(),
           pendingChanges: [],
         });
@@ -408,21 +409,42 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           // Legacy aliases
           effectiveGlobal: data.global || {},
           effectiveLocal: {},
-          // Update index data if refresh succeeded
-          settingsIndex: indexData?.success ? indexData.index : state.settingsIndex,
-          commands: indexData?.success ? (indexData.index?.commands?.commands || []) : state.commands,
-          commandsLastIndexed: indexData?.success ? (indexData.index?.lastIndexed || null) : state.commandsLastIndexed,
+          // Use cached index immediately so UI is interactive
+          settingsIndex: cachedIndex || state.settingsIndex,
+          commands: cachedIndex?.commands?.commands || state.commands,
+          commandsLastIndexed: cachedIndex?.lastIndexed || state.commandsLastIndexed,
           isLoading: false,
           isSyncing: false,
-          isIndexing: false,
           lastSyncedAt: new Date(),
           pendingChanges: [],
         });
       }
 
-      // Slow path - background MCP refresh (non-blocking)
-      // Fire and forget - don't await, let it run in background
-      get().refreshMCPs();
+      // Background: refresh index (re-scan commands) without blocking UI
+      set({ isIndexing: true });
+      fetch("/api/index", { method: "PUT" })
+        .then(async (res) => {
+          if (res.ok) {
+            const indexData = await res.json();
+            if (indexData.success) {
+              set({
+                settingsIndex: indexData.index,
+                commands: indexData.index?.commands?.commands || [],
+                commandsLastIndexed: indexData.index?.lastIndexed || null,
+                isIndexing: false,
+              });
+            } else {
+              set({ isIndexing: false });
+            }
+          } else {
+            set({ isIndexing: false });
+          }
+        })
+        .catch(() => set({ isIndexing: false }));
+
+      // MCP refresh skipped on load — it uses execSync (claude mcp list/get)
+      // which blocks the Node.js event loop for ~10s, starving all other API requests.
+      // MCPs are served from cache; refresh is triggered from the MCPs page.
     } catch (err) {
       set({
         error: err instanceof Error ? err.message : "Unknown error",
@@ -1069,6 +1091,41 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     } catch (err) {
       console.error("Error resetting dismissed interruptions:", err);
       set({ permissionInterruptionsLoading: false });
+    }
+  },
+
+  loadInterruptionContext: async (id: string) => {
+    const state = get();
+    const interruption = state.permissionInterruptions.find((i) => i.id === id);
+    if (!interruption) return;
+
+    // Already loaded
+    if (interruption.examples && interruption.examples.length > 0) return;
+
+    // No sessions to load from
+    if (!interruption.recentSessions || interruption.recentSessions.length === 0) return;
+
+    // Build sessions query param: "sessionId:timestamp,sessionId:timestamp,..."
+    const sessionsParam = interruption.recentSessions
+      .map((s) => `${s.sessionId}:${s.timestamp}`)
+      .join(",");
+
+    try {
+      const response = await fetch(
+        `/api/permission-interruptions/context?toolName=${encodeURIComponent(interruption.toolName)}&sessions=${encodeURIComponent(sessionsParam)}`
+      );
+      if (!response.ok) return;
+
+      const data = await response.json();
+
+      // Update just this interruption's examples
+      set({
+        permissionInterruptions: get().permissionInterruptions.map((i) =>
+          i.id === id ? { ...i, examples: data.examples } : i
+        ),
+      });
+    } catch (err) {
+      console.error("Error loading interruption context:", err);
     }
   },
 
