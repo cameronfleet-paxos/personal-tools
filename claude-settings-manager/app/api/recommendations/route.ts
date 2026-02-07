@@ -131,23 +131,27 @@ export async function GET(): Promise<NextResponse<RecommendationsResponse>> {
   const accumulator: ValueAccumulator = {};
   let analyzedProjects = 0;
 
-  for (const location of index.locations) {
-    // Skip user-level .claude directory
-    if (location.path === USER_CLAUDE_DIR) {
-      continue;
-    }
+  const projectLocations = index.locations.filter(
+    (location) => location.path !== USER_CLAUDE_DIR
+  );
+  analyzedProjects = projectLocations.length;
 
-    analyzedProjects++;
+  // Read all project settings in parallel
+  const projectResults = await Promise.all(
+    projectLocations.map(async (location) => {
+      const settingsPath = path.join(location.path, "settings.json");
+      const localSettingsPath = path.join(location.path, "settings.local.json");
 
-    // Load project settings
-    const settingsPath = path.join(location.path, "settings.json");
-    const localSettingsPath = path.join(location.path, "settings.local.json");
+      const [projectSettings, projectLocalSettings] = await Promise.all([
+        readJsonFile<Settings>(settingsPath),
+        readJsonFile<Settings>(localSettingsPath),
+      ]);
 
-    const [projectSettings, projectLocalSettings] = await Promise.all([
-      readJsonFile<Settings>(settingsPath),
-      readJsonFile<Settings>(localSettingsPath),
-    ]);
+      return { location, projectSettings, projectLocalSettings };
+    })
+  );
 
+  for (const { location, projectSettings, projectLocalSettings } of projectResults) {
     extractValues(
       projectSettings,
       location.path,
