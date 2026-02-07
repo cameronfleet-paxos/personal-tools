@@ -91,6 +91,110 @@ const TOKEN_PATTERNS: TokenPattern[] = [
   },
 ];
 
+/**
+ * Windowed scanning: instead of running regex across entire multi-MB JSONL lines,
+ * use indexOf (SIMD-optimized in V8) to find candidate positions, extract small
+ * windows around each, and run the appropriate regex only on the window.
+ *
+ * Each entry: [literalPrefix, regex, patternMeta]
+ * The regex is run on a ~500 char window around each indexOf hit.
+ */
+const WINDOW_SIZE = 500; // chars around each prefix hit
+
+interface ScanRule {
+  prefix: string;
+  regex: RegExp;
+  meta: TokenPattern;
+}
+
+const SCAN_RULES: ScanRule[] = [
+  { prefix: 'sk-ant-', regex: /sk-ant-[a-zA-Z0-9_-]{20,}/g, meta: TOKEN_PATTERNS[0] },
+  { prefix: 'ghp_', regex: /gh[pso]_[a-zA-Z0-9_]{20,}/g, meta: TOKEN_PATTERNS[1] },
+  { prefix: 'ghs_', regex: /gh[pso]_[a-zA-Z0-9_]{20,}/g, meta: TOKEN_PATTERNS[1] },
+  { prefix: 'gho_', regex: /gh[pso]_[a-zA-Z0-9_]{20,}/g, meta: TOKEN_PATTERNS[1] },
+  { prefix: 'github_pat_', regex: /github_pat_[a-zA-Z0-9_]{22,}/g, meta: TOKEN_PATTERNS[2] },
+  { prefix: 'GITHUB_TOKEN', regex: /\bGITHUB_TOKEN\s*[:=]\s*["']?([a-zA-Z0-9_-]{20,})["']?/gi, meta: TOKEN_PATTERNS[3] },
+  { prefix: 'JIRA_', regex: /JIRA_[A-Z0-9_]{20,}/g, meta: TOKEN_PATTERNS[4] },
+  { prefix: 'AKIA', regex: /AKIA[0-9A-Z]{16}/g, meta: TOKEN_PATTERNS[5] },
+  { prefix: 'BEGIN', regex: /-----BEGIN\s+(?:RSA\s+|EC\s+|OPENSSH\s+|DSA\s+)?PRIVATE\s+KEY-----/gi, meta: TOKEN_PATTERNS[6] },
+  // Generic secret prefixes: use longer, more specific prefixes that include the assignment
+  // operator to avoid matching the thousands of times "api_key" appears in code discussions
+  // without an actual value assignment. The regex is only run on a small window.
+  { prefix: 'api_key=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'api_key:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'api-key=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'api-key:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'api_secret=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'api_secret:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'api-secret=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'api-secret:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'secret_key=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'secret_key:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'secret-key=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'secret-key:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'access_token=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'access_token:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'access-token=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'access-token:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'auth_token=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'auth_token:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'auth-token=', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  { prefix: 'auth-token:', regex: /(?:api[_-]?key|api[_-]?secret|secret[_-]?key|access[_-]?token|auth[_-]?token)\s*[:=]\s*["']([a-zA-Z0-9_\-+/=]{20,})["']/gi, meta: TOKEN_PATTERNS[8] },
+  // JWT: placed last because 'eyJ' is extremely common in base64 content.
+  // Only checked on lines < LARGE_LINE_THRESHOLD (same as generic_secret rules).
+  { prefix: 'eyJ', regex: /\beyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}/g, meta: TOKEN_PATTERNS[7] },
+];
+
+// For lines > this threshold, only check high-value specific prefixes
+// (skip generic_secret and JWT patterns whose prefixes are extremely common)
+const LARGE_LINE_THRESHOLD = 50_000; // 50KB
+
+// First 9 rules are high-value specific patterns (sk-ant, gh*, JIRA, AKIA, BEGIN)
+const HIGH_VALUE_RULE_COUNT = 9;
+
+/**
+ * Scan a line using windowed approach: indexOf to find prefix positions,
+ * then regex on small windows. Returns matched tokens with their metadata.
+ */
+function scanLineWindowed(line: string): Array<{ token: string; meta: TokenPattern }> {
+  const results: Array<{ token: string; meta: TokenPattern }> = [];
+  const seen = new Set<string>(); // deduplicate tokens found via overlapping windows
+
+  // For large lines, skip generic_secret rules (their prefixes are too common in code)
+  const rulesToCheck = line.length > LARGE_LINE_THRESHOLD
+    ? SCAN_RULES.slice(0, HIGH_VALUE_RULE_COUNT)
+    : SCAN_RULES;
+
+  for (const rule of rulesToCheck) {
+    let searchFrom = 0;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const idx = line.indexOf(rule.prefix, searchFrom);
+      if (idx === -1) break;
+
+      // Extract a window around the hit
+      const windowStart = Math.max(0, idx - 50); // small lookbehind for context
+      const windowEnd = Math.min(line.length, idx + WINDOW_SIZE);
+      const window = line.substring(windowStart, windowEnd);
+
+      // Run regex on the small window
+      rule.regex.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = rule.regex.exec(window)) !== null) {
+        const token = match[0];
+        if (!seen.has(token) && !shouldExclude(token)) {
+          seen.add(token);
+          results.push({ token, meta: rule.meta });
+        }
+      }
+
+      searchFrom = idx + rule.prefix.length;
+    }
+  }
+
+  return results;
+}
+
 // False positive patterns to exclude
 const FALSE_POSITIVE_PATTERNS = [
   /sk-ant-xxxx/i,
@@ -328,8 +432,9 @@ function getSimpleProjectName(encodedDir: string): string {
 }
 
 /**
- * Parse a single .jsonl conversation file and scan for tokens
- * Uses encoded directory name to avoid expensive path decoding during scan.
+ * Parse a single .jsonl conversation file and scan for tokens.
+ * Optimized: uses windowed scanning (indexOf + small regex windows) to avoid
+ * running regex across entire multi-MB JSONL lines. JSON.parse only on match.
  */
 async function parseConversationForScan(
   jsonlPath: string,
@@ -338,6 +443,7 @@ async function parseConversationForScan(
   sessionId: string
 ): Promise<TokenMatch[]> {
   const matches: TokenMatch[] = [];
+  let idCounter = 0;
 
   try {
     const fileStream = createReadStream(jsonlPath);
@@ -346,77 +452,43 @@ async function parseConversationForScan(
       crlfDelay: Infinity,
     });
 
+    const context: TokenMatch['location'] = {
+      source: 'discussion',
+      encodedProjectDir,
+      projectName,
+      sessionId,
+      filePath: jsonlPath,
+    };
+
     for await (const line of rl) {
-      if (!line.trim()) continue;
+      if (!line) continue;
 
+      const hits = scanLineWindowed(line);
+      if (hits.length === 0) continue;
+
+      // Lazy JSON.parse: only when we actually have matches (very rare)
+      let parsedMessage: Record<string, unknown>;
       try {
-        const message = JSON.parse(line);
-
-        // Scan user prompts (check both direct content and nested message.content)
-        if (message.type === 'user') {
-          const context: Partial<TokenMatch['location']> = {
-            source: 'discussion',
-            encodedProjectDir,
-            projectName,
-            sessionId,
-            filePath: jsonlPath,
-          };
-
-          // Check direct content field
-          if (typeof message.content === 'string') {
-            matches.push(...scanTextForTokens(message.content, context));
-          }
-
-          // Check nested message.message.content (actual Claude Code format)
-          if (message.message?.content && typeof message.message.content === 'string') {
-            matches.push(...scanTextForTokens(message.message.content, context));
-          }
-
-          // Also scan stringified message object for any embedded tokens
-          const messageStr = JSON.stringify(message);
-          matches.push(...scanTextForTokens(messageStr, context));
-        }
-
-        // Scan assistant messages and tool inputs
-        if (message.type === 'assistant') {
-          const context: Partial<TokenMatch['location']> = {
-            source: 'discussion',
-            encodedProjectDir,
-            projectName,
-            sessionId,
-            filePath: jsonlPath,
-          };
-
-          // Scan tool inputs from content blocks
-          if (Array.isArray(message.content)) {
-            for (const block of message.content) {
-              if (block.type === 'tool_use' && block.input) {
-                const inputStr = JSON.stringify(block.input);
-                matches.push(...scanTextForTokens(inputStr, context));
-              }
-            }
-          }
-
-          // Scan nested message.message structure if present
-          if (message.message?.content) {
-            if (typeof message.message.content === 'string') {
-              matches.push(...scanTextForTokens(message.message.content, context));
-            } else if (Array.isArray(message.message.content)) {
-              for (const block of message.message.content) {
-                if (block.type === 'tool_use' && block.input) {
-                  const inputStr = JSON.stringify(block.input);
-                  matches.push(...scanTextForTokens(inputStr, context));
-                }
-              }
-            }
-          }
-
-          // Also scan stringified message for any embedded tokens
-          const messageStr = JSON.stringify(message);
-          matches.push(...scanTextForTokens(messageStr, context));
-        }
+        parsedMessage = JSON.parse(line);
       } catch {
-        // Skip malformed JSON lines
+        continue; // Malformed line
+      }
+
+      // Only report tokens from user/assistant messages
+      const msgType = parsedMessage.type as string;
+      if (msgType !== 'user' && msgType !== 'assistant') continue;
+
+      for (const hit of hits) {
+        matches.push({
+          id: `token-${Date.now()}-${++idCounter}`,
+          type: hit.meta.type,
+          severity: hit.meta.severity,
+          description: hit.meta.description,
+          remediation: hit.meta.remediation,
+          redactedValue: redactToken(hit.token, hit.meta.type),
+          fullPattern: hit.token,
+          location: context,
+        });
       }
     }
   } catch (err) {
@@ -433,32 +505,41 @@ async function parseConversationForScan(
  * without expensive filesystem calls. Full path decoding happens only when user clicks a link.
  */
 async function scanProjectDiscussions(projectDir: string): Promise<TokenMatch[]> {
-  const matches: TokenMatch[] = [];
-
   try {
-    // Store encoded directory name directly - NO filesystem calls for decoding
-    // projectDir is like: /Users/cameronfleet/.claude/projects/-Users-cameronfleet-dev-personal-tools
-    const encodedProjectDir = path.basename(projectDir); // -Users-cameronfleet-dev-personal-tools
-    // Extract simple project name without filesystem calls (may not be 100% accurate for hyphenated folders)
-    const projectName = getSimpleProjectName(encodedProjectDir); // personal-tools (best effort)
+    const encodedProjectDir = path.basename(projectDir);
+    const projectName = getSimpleProjectName(encodedProjectDir);
 
     const entries = await fs.readdir(projectDir, { withFileTypes: true });
+    const jsonlFiles = entries.filter(e => e.isFile() && e.name.endsWith('.jsonl'));
+    const projectStart = Date.now();
 
-    for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-        const sessionId = entry.name.replace('.jsonl', '');
-        const jsonlPath = path.join(projectDir, entry.name);
-
-        matches.push(
-          ...await parseConversationForScan(jsonlPath, encodedProjectDir, projectName, sessionId)
-        );
+    // Parallelize file scanning within each project (batches of 10)
+    const allMatches: TokenMatch[] = [];
+    const fileBatchSize = 10;
+    for (let i = 0; i < jsonlFiles.length; i += fileBatchSize) {
+      const batch = jsonlFiles.slice(i, i + fileBatchSize);
+      const batchResults = await Promise.all(
+        batch.map(entry => {
+          const sessionId = entry.name.replace('.jsonl', '');
+          const jsonlPath = path.join(projectDir, entry.name);
+          return parseConversationForScan(jsonlPath, encodedProjectDir, projectName, sessionId);
+        })
+      );
+      for (const matches of batchResults) {
+        allMatches.push(...matches);
       }
     }
+
+    const projectMs = Date.now() - projectStart;
+    if (projectMs > 500) {
+      console.log(`[scan] ${projectName}: ${jsonlFiles.length} files in ${projectMs}ms (${allMatches.length} matches)`);
+    }
+
+    return allMatches;
   } catch (err) {
     console.error(`Error scanning project discussions in ${projectDir}:`, err);
+    return [];
   }
-
-  return matches;
 }
 
 /**
@@ -467,20 +548,21 @@ async function scanProjectDiscussions(projectDir: string): Promise<TokenMatch[]>
 async function scanAllDiscussions(): Promise<{ matches: TokenMatch[], discussionCount: number }> {
   const allMatches: TokenMatch[] = [];
   let discussionCount = 0;
+  const scanStart = Date.now();
 
   try {
     const projectsDir = path.join(USER_CLAUDE_DIR, 'projects');
     const projectDirs = await fs.readdir(projectsDir, { withFileTypes: true });
+    const dirs = projectDirs.filter(entry => entry.isDirectory());
+    console.log(`[scan] Starting scan of ${dirs.length} projects...`);
 
     // Process in batches of 5 for memory efficiency
-    const batchSize = 5;
-    for (let i = 0; i < projectDirs.length; i += batchSize) {
-      const batch = projectDirs.slice(i, i + batchSize);
+    const batchSize = 10;
+    for (let i = 0; i < dirs.length; i += batchSize) {
+      const batch = dirs.slice(i, i + batchSize);
 
       const batchResults = await Promise.all(
-        batch
-          .filter(entry => entry.isDirectory())
-          .map(async (entry) => {
+        batch.map(async (entry) => {
             const projectDir = path.join(projectsDir, entry.name);
 
             // Count .jsonl files
@@ -500,10 +582,19 @@ async function scanAllDiscussions(): Promise<{ matches: TokenMatch[], discussion
       for (const matches of batchResults) {
         allMatches.push(...matches);
       }
+
+      // Progress log every 20 projects
+      if ((i + batchSize) % 20 === 0 || i + batchSize >= dirs.length) {
+        const elapsed = ((Date.now() - scanStart) / 1000).toFixed(1);
+        console.log(`[scan] Progress: ${Math.min(i + batchSize, dirs.length)}/${dirs.length} projects (${elapsed}s elapsed, ${allMatches.length} matches so far)`);
+      }
     }
   } catch (err) {
     console.error('Error scanning all discussions:', err);
   }
+
+  const totalMs = Date.now() - scanStart;
+  console.log(`[scan] Complete: ${discussionCount} files across ${totalMs}ms, ${allMatches.length} total matches`);
 
   return { matches: allMatches, discussionCount };
 }
