@@ -39,8 +39,66 @@ interface CacheEntry {
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const cache = new Map<PermissionTimeFilter, CacheEntry>();
 
+// Session map cache: sessionId -> { jsonlPath, projectDir (encoded) }
+interface SessionMapEntry {
+  jsonlPath: string;
+  projectDir: string; // encoded dir name e.g. "-Users-cameronfleet-dev-pax"
+}
+
+const SESSION_MAP_TTL = 15 * 60 * 1000; // 15 minutes
+let sessionMapCache: Map<string, SessionMapEntry> | null = null;
+let sessionMapTimestamp = 0;
+
+async function getSessionMap(): Promise<Map<string, SessionMapEntry>> {
+  if (sessionMapCache && Date.now() - sessionMapTimestamp < SESSION_MAP_TTL) {
+    return sessionMapCache;
+  }
+
+  const map = new Map<string, SessionMapEntry>();
+
+  try {
+    const projectDirs = await fs.readdir(PROJECTS_DIR);
+
+    // Read all project dirs in parallel
+    await Promise.all(
+      projectDirs.map(async (projectDir) => {
+        if (projectDir.includes("-T-") || projectDir.includes("var-folders")) {
+          return;
+        }
+
+        const projectPath = path.join(PROJECTS_DIR, projectDir);
+        try {
+          const stat = await fs.stat(projectPath);
+          if (!stat.isDirectory()) return;
+
+          const files = await fs.readdir(projectPath);
+          for (const file of files) {
+            if (file.endsWith(".jsonl")) {
+              const sessionId = file.replace(".jsonl", "");
+              map.set(sessionId, {
+                jsonlPath: path.join(projectPath, file),
+                projectDir,
+              });
+            }
+          }
+        } catch {
+          // Skip directories we can't read
+        }
+      })
+    );
+  } catch {
+    // If projects dir doesn't exist, return empty map
+  }
+
+  sessionMapCache = map;
+  sessionMapTimestamp = Date.now();
+  return map;
+}
+
 export function invalidateCache(): void {
   cache.clear();
+  sessionMapCache = null;
+  sessionMapTimestamp = 0;
 }
 
 interface PermissionSuggestion {
@@ -113,18 +171,30 @@ async function getDebugFilesInRange(
 ): Promise<string[]> {
   try {
     const files = await fs.readdir(DEBUG_DIR);
+    const txtFiles = files.filter((f) => f.endsWith(".txt"));
+
+    // Batch stat calls with concurrency limit
+    const BATCH_SIZE = 100;
     const debugFiles: Array<{ path: string; mtime: number }> = [];
 
-    for (const file of files) {
-      if (!file.endsWith(".txt")) continue;
-      const filePath = path.join(DEBUG_DIR, file);
-      try {
-        const stat = await fs.stat(filePath);
-        if (stat.mtimeMs >= start && stat.mtimeMs <= end) {
-          debugFiles.push({ path: filePath, mtime: stat.mtimeMs });
-        }
-      } catch {
-        // Skip files we can't stat
+    for (let i = 0; i < txtFiles.length; i += BATCH_SIZE) {
+      const batch = txtFiles.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (file) => {
+          const filePath = path.join(DEBUG_DIR, file);
+          try {
+            const stat = await fs.stat(filePath);
+            if (stat.mtimeMs >= start && stat.mtimeMs <= end) {
+              return { path: filePath, mtime: stat.mtimeMs };
+            }
+          } catch {
+            // Skip files we can't stat
+          }
+          return null;
+        })
+      );
+      for (const result of results) {
+        if (result) debugFiles.push(result);
       }
     }
 
@@ -137,33 +207,12 @@ async function getDebugFilesInRange(
 }
 
 async function findSessionJsonlPath(sessionId: string): Promise<string | null> {
-  try {
-    const projectDirs = await fs.readdir(PROJECTS_DIR);
-
-    for (const projectDir of projectDirs) {
-      // Skip temp directories
-      if (projectDir.includes("-T-") || projectDir.includes("var-folders")) {
-        continue;
-      }
-
-      const projectPath = path.join(PROJECTS_DIR, projectDir);
-      const jsonlPath = path.join(projectPath, `${sessionId}.jsonl`);
-
-      try {
-        await fs.access(jsonlPath);
-        return jsonlPath;
-      } catch {
-        // File doesn't exist in this project, continue
-      }
-    }
-  } catch {
-    // Projects dir doesn't exist
-  }
-
-  return null;
+  const map = await getSessionMap();
+  const entry = map.get(sessionId);
+  return entry?.jsonlPath ?? null;
 }
 
-async function extractConversationContext(
+export async function extractConversationContext(
   sessionId: string,
   timestamp: number,
   toolName: string
@@ -258,39 +307,14 @@ async function extractConversationContext(
 }
 
 async function buildSessionToProjectMap(): Promise<Map<string, string>> {
+  const map = await getSessionMap();
   const sessionToProject = new Map<string, string>();
 
-  try {
-    const projectDirs = await fs.readdir(PROJECTS_DIR);
-
-    for (const projectDir of projectDirs) {
-      // Skip temp directories
-      if (projectDir.includes("-T-") || projectDir.includes("var-folders")) {
-        continue;
-      }
-
-      const projectPath = path.join(PROJECTS_DIR, projectDir);
-      try {
-        const stat = await fs.stat(projectPath);
-        if (!stat.isDirectory()) continue;
-
-        // Decode the project path from the directory name
-        // e.g., "-Users-cameronfleet-dev-pax" -> "/Users/cameronfleet/dev/pax"
-        const decodedPath = "/" + projectDir.replace(/-/g, "/").replace(/^\/+/, "");
-
-        const files = await fs.readdir(projectPath);
-        for (const file of files) {
-          if (file.endsWith(".jsonl")) {
-            const sessionId = file.replace(".jsonl", "");
-            sessionToProject.set(sessionId, decodedPath);
-          }
-        }
-      } catch {
-        // Skip directories we can't read
-      }
-    }
-  } catch {
-    // If projects dir doesn't exist, return empty map
+  for (const [sessionId, entry] of map) {
+    // Decode the project path from the directory name
+    // e.g., "-Users-cameronfleet-dev-pax" -> "/Users/cameronfleet/dev/pax"
+    const decodedPath = "/" + entry.projectDir.replace(/-/g, "/").replace(/^\/+/, "");
+    sessionToProject.set(sessionId, decodedPath);
   }
 
   return sessionToProject;
@@ -500,62 +524,7 @@ async function aggregateInterruptions(
   const result: AggregatedInterruption[] = [];
   let idCounter = 0;
 
-  // Extract conversation context for each pattern (limited to 3 examples per pattern)
-  const contextExtractionPromises: Array<{
-    fullPattern: string;
-    toolName: string;
-    sessionId: string;
-    timestamp: number;
-  }> = [];
-
   for (const [, value] of grouped) {
-    for (const recent of value.recentInterruptions) {
-      contextExtractionPromises.push({
-        fullPattern: value.fullPattern,
-        toolName: value.toolName,
-        sessionId: recent.sessionId,
-        timestamp: recent.timestamp,
-      });
-    }
-  }
-
-  // Extract contexts in parallel (with concurrency limit)
-  const CONTEXT_CONCURRENCY = 5;
-  const contextResults = new Map<string, ToolExample[]>();
-
-  for (let i = 0; i < contextExtractionPromises.length; i += CONTEXT_CONCURRENCY) {
-    const batch = contextExtractionPromises.slice(i, i + CONTEXT_CONCURRENCY);
-    const results = await Promise.all(
-      batch.map(async (item) => {
-        const context = await extractConversationContext(
-          item.sessionId,
-          item.timestamp,
-          item.toolName
-        );
-        return { fullPattern: item.fullPattern, context };
-      })
-    );
-
-    for (const { fullPattern, context } of results) {
-      if (context) {
-        const existing = contextResults.get(fullPattern) || [];
-        existing.push({
-          toolInput: context.toolInput,
-          userPrompt: context.userPrompt,
-          timestamp: context.timestamp,
-        });
-        contextResults.set(fullPattern, existing);
-      }
-    }
-  }
-
-  for (const [, value] of grouped) {
-    const examples = contextResults.get(value.fullPattern) || [];
-    // Sort examples by timestamp descending and deduplicate
-    const uniqueExamples = examples
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, 3);
-
     result.push({
       id: `pi-${++idCounter}`,
       toolName: value.toolName,
@@ -565,7 +534,8 @@ async function aggregateInterruptions(
       lastOccurrence: value.lastOccurrence,
       projects: Array.from(value.projects),
       alreadyInUserScope: userAllowList.has(value.fullPattern),
-      examples: uniqueExamples,
+      examples: [], // Lazy-loaded on expand via /api/permission-interruptions/context
+      recentSessions: value.recentInterruptions.slice(0, 3),
     });
   }
 
@@ -586,17 +556,16 @@ export async function getPermissionInterruptions(
 
   const { start, end } = getTimeRange(filter);
 
-  // Get debug files in range
-  const debugFiles = await getDebugFilesInRange(start, end);
-
-  // Build session to project map
-  const sessionToProject = await buildSessionToProjectMap();
-
-  // Get user allow list
-  const userAllowList = await getUserAllowList();
+  // Run all independent I/O in parallel
+  const [debugFiles, sessionToProject, userAllowList, dismissedPatterns] = await Promise.all([
+    getDebugFilesInRange(start, end),
+    buildSessionToProjectMap(),
+    getUserAllowList(),
+    getDismissedPatterns(),
+  ]);
 
   // Parse all debug files in parallel (with concurrency limit)
-  const CONCURRENCY = 10;
+  const CONCURRENCY = 50;
   const allInterruptions: ParsedInterruption[] = [];
 
   for (let i = 0; i < debugFiles.length; i += CONCURRENCY) {
@@ -611,9 +580,6 @@ export async function getPermissionInterruptions(
   const filteredInterruptions = allInterruptions.filter(
     (i) => i.timestamp >= start && i.timestamp <= end
   );
-
-  // Get dismissed patterns
-  const dismissedPatterns = await getDismissedPatterns();
 
   // Aggregate
   const aggregated = await aggregateInterruptions(

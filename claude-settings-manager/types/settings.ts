@@ -398,7 +398,8 @@ export interface AggregatedInterruption {
   lastOccurrence: number; // timestamp
   projects: string[]; // affected project paths
   alreadyInUserScope: boolean;
-  examples: ToolExample[]; // Up to 3 recent examples with context
+  examples: ToolExample[]; // Up to 3 recent examples with context (lazy-loaded)
+  recentSessions?: Array<{ sessionId: string; timestamp: number }>; // For lazy context loading
 }
 
 export interface PermissionInterruptionsResponse {
