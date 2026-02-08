@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import { LoadingOverlay } from "@/components/loading-overlay";
+import { DeepSearchProgress } from "@/components/deep-search-progress";
 import type { SessionMetadata } from "@/types/settings";
 
 function formatRelativeTime(timestamp: number): string {
@@ -51,14 +52,62 @@ function formatRelativeTime(timestamp: number): string {
   return date.toLocaleDateString();
 }
 
+/**
+ * Highlight search term within text by wrapping matches in <mark> tags.
+ */
+function HighlightedText({ text, search }: { text: string; search: string }) {
+  if (!search || search.length < 2) return <>{text}</>;
+
+  const searchLower = search.toLowerCase();
+  const textLower = text.toLowerCase();
+  const parts: Array<{ text: string; highlighted: boolean }> = [];
+
+  let lastIndex = 0;
+  let matchIndex = textLower.indexOf(searchLower, lastIndex);
+
+  while (matchIndex !== -1) {
+    if (matchIndex > lastIndex) {
+      parts.push({ text: text.slice(lastIndex, matchIndex), highlighted: false });
+    }
+    parts.push({
+      text: text.slice(matchIndex, matchIndex + search.length),
+      highlighted: true,
+    });
+    lastIndex = matchIndex + search.length;
+    matchIndex = textLower.indexOf(searchLower, lastIndex);
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ text: text.slice(lastIndex), highlighted: false });
+  }
+
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.highlighted ? (
+          <mark key={i} className="bg-yellow-200 dark:bg-yellow-800 rounded-sm px-0.5">
+            {part.text}
+          </mark>
+        ) : (
+          <span key={i}>{part.text}</span>
+        )
+      )}
+    </>
+  );
+}
+
 function DiscussionCard({
   session,
   isFavourite,
   onToggleFavourite,
+  searchQuery,
+  isDeepSearchOnly,
 }: {
   session: SessionMetadata;
   isFavourite: boolean;
   onToggleFavourite: (sessionId: string) => void;
+  searchQuery: string;
+  isDeepSearchOnly: boolean;
 }) {
   const router = useRouter();
 
@@ -93,10 +142,23 @@ function DiscussionCard({
                 <Clock className="h-3 w-3" />
                 {formatRelativeTime(session.timestamp)}
               </span>
+              {isDeepSearchOnly && (
+                <Badge
+                  variant="outline"
+                  className="text-xs bg-blue-500/10 text-blue-700 dark:text-blue-400 border-blue-500/30"
+                >
+                  Conversation match
+                </Badge>
+              )}
             </div>
             <CardTitle className="text-sm font-normal line-clamp-2">
               {session.firstUserPrompt}
             </CardTitle>
+            {session.matchContext && (
+              <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">
+                <HighlightedText text={session.matchContext} search={searchQuery} />
+              </p>
+            )}
           </div>
           <div className="flex-shrink-0 flex items-center gap-1">
             <button
@@ -135,11 +197,22 @@ export default function DiscussionsPage() {
     favourites,
     loadFavourites,
     toggleFavourite,
+    // Deep search
+    deepSearchResults,
+    deepSearching,
+    deepSearchProgress,
+    deepSearchComplete,
+    deepSearchTotalMatches,
+    deepSearchDurationMs,
+    startDeepSearch,
+    cancelDeepSearch,
+    clearDeepSearch,
   } = useSettingsStore();
 
   const [searchInput, setSearchInput] = useState(discussionsSearchQuery);
   const [favouriteFilter, setFavouriteFilter] = useState<"all" | "favourites">("all");
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const indexDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deepSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadDone = useRef(false);
 
   // Initial load
@@ -151,17 +224,17 @@ export default function DiscussionsPage() {
     }
   }, [loadDiscussions, loadFavourites]);
 
-  // Debounce search input -> store
+  // Debounce search input -> store (200ms for index search)
   useEffect(() => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
+    if (indexDebounceRef.current) {
+      clearTimeout(indexDebounceRef.current);
     }
-    debounceRef.current = setTimeout(() => {
+    indexDebounceRef.current = setTimeout(() => {
       setDiscussionsSearchQuery(searchInput);
-    }, 300);
+    }, 200);
     return () => {
-      if (debounceRef.current) {
-        clearTimeout(debounceRef.current);
+      if (indexDebounceRef.current) {
+        clearTimeout(indexDebounceRef.current);
       }
     };
   }, [searchInput, setDiscussionsSearchQuery]);
@@ -172,6 +245,43 @@ export default function DiscussionsPage() {
     if (!initialLoadDone.current) return;
     loadDiscussions();
   }, [discussionsSearchQuery, discussionsProjectFilter, loadDiscussions]);
+
+  // Deep search effect: triggered with 600ms debounce when project is selected and search >= 3 chars
+  useEffect(() => {
+    // Clear any pending deep search debounce
+    if (deepSearchDebounceRef.current) {
+      clearTimeout(deepSearchDebounceRef.current);
+      deepSearchDebounceRef.current = null;
+    }
+
+    // Cancel any in-progress deep search when inputs change
+    cancelDeepSearch();
+
+    // Only trigger deep search when a specific project is selected and search is long enough
+    if (discussionsProjectFilter === "all" || !discussionsSearchQuery || discussionsSearchQuery.length < 3) {
+      clearDeepSearch();
+      return;
+    }
+
+    deepSearchDebounceRef.current = setTimeout(() => {
+      startDeepSearch(discussionsProjectFilter, discussionsSearchQuery);
+    }, 600);
+
+    return () => {
+      if (deepSearchDebounceRef.current) {
+        clearTimeout(deepSearchDebounceRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [discussionsSearchQuery, discussionsProjectFilter]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cancelDeepSearch();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleProjectFilterChange = useCallback(
     (value: string) => {
@@ -187,33 +297,73 @@ export default function DiscussionsPage() {
   const handleClearSearch = useCallback(() => {
     setSearchInput("");
     setDiscussionsSearchQuery("");
-  }, [setDiscussionsSearchQuery]);
+    clearDeepSearch();
+  }, [setDiscussionsSearchQuery, clearDeepSearch]);
+
+  // Merge index results with deep search results, deduplicating by sessionId
+  const mergedResults = useMemo(() => {
+    const indexSessionIds = new Set(discussions.map((s) => s.sessionId));
+    const deepOnly = deepSearchResults.filter((s) => !indexSessionIds.has(s.sessionId));
+
+    // For index results that also have deep search matches, add the match context
+    const enrichedIndex = discussions.map((session) => {
+      const deepMatch = deepSearchResults.find((d) => d.sessionId === session.sessionId);
+      if (deepMatch) {
+        return {
+          ...session,
+          matchContext: deepMatch.matchContext,
+          matchRole: deepMatch.matchRole,
+        };
+      }
+      return session;
+    });
+
+    return [...enrichedIndex, ...deepOnly];
+  }, [discussions, deepSearchResults]);
+
+  // Track which sessionIds are deep-search-only (not in index results)
+  const deepSearchOnlyIds = useMemo(() => {
+    const indexSessionIds = new Set(discussions.map((s) => s.sessionId));
+    return new Set(deepSearchResults.filter((s) => !indexSessionIds.has(s.sessionId)).map((s) => s.sessionId));
+  }, [discussions, deepSearchResults]);
 
   // Client-side favourite filtering (favourites are not in the index)
   const filteredDiscussions = useMemo(() => {
     if (favouriteFilter === "favourites") {
-      return discussions.filter((s) => favourites.has(s.sessionId));
+      return mergedResults.filter((s) => favourites.has(s.sessionId));
     }
-    return discussions;
-  }, [discussions, favouriteFilter, favourites]);
+    return mergedResults;
+  }, [mergedResults, favouriteFilter, favourites]);
 
-  const hasData = discussions.length > 0;
+  const hasData = discussions.length > 0 || deepSearchResults.length > 0;
   const isFiltering = discussionsSearchQuery || discussionsProjectFilter !== "all";
+  const hasDeepResults = deepSearchResults.length > 0;
+  const showDeepSearchProgress = deepSearching || deepSearchComplete;
 
   // Count text
   const countText = useMemo(() => {
     const showing = filteredDiscussions.length;
-    const matching = discussionsTotalCount;
+    const indexMatching = discussionsTotalCount;
     const total = discussionsIndexedCount;
 
+    if (hasDeepResults && isFiltering) {
+      const titleMatches = discussions.length;
+      const convMatches = deepSearchResults.filter(
+        (d) => !discussions.some((s) => s.sessionId === d.sessionId)
+      ).length;
+      if (convMatches > 0) {
+        return `${titleMatches} from titles, ${convMatches} from conversations (${total} total)`;
+      }
+    }
+
     if (isFiltering || favouriteFilter === "favourites") {
-      return `${showing} of ${matching} matching (${total} total)`;
+      return `${showing} of ${indexMatching} matching (${total} total)`;
     }
     if (showing < total) {
       return `${showing} of ${total} sessions`;
     }
     return `${total} session${total !== 1 ? "s" : ""}`;
-  }, [filteredDiscussions.length, discussionsTotalCount, discussionsIndexedCount, isFiltering, favouriteFilter]);
+  }, [filteredDiscussions.length, discussionsTotalCount, discussionsIndexedCount, isFiltering, favouriteFilter, hasDeepResults, discussions, deepSearchResults]);
 
   return (
     <>
@@ -241,21 +391,34 @@ export default function DiscussionsPage() {
 
         {/* Search + Filters Bar */}
         <div className="flex flex-col gap-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search conversations..."
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              className="pl-9 pr-9"
-            />
-            {searchInput && (
-              <button
-                onClick={handleClearSearch}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-4 w-4" />
-              </button>
+          <div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search conversations..."
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                className="pl-9 pr-9"
+              />
+              {searchInput && (
+                <button
+                  onClick={handleClearSearch}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              )}
+            </div>
+            {showDeepSearchProgress && (
+              <DeepSearchProgress
+                searching={deepSearching}
+                progress={deepSearchProgress}
+                complete={deepSearchComplete}
+                totalMatches={deepSearchTotalMatches}
+                durationMs={deepSearchDurationMs}
+                onCancel={cancelDeepSearch}
+                onClear={clearDeepSearch}
+              />
             )}
           </div>
 
@@ -342,6 +505,11 @@ export default function DiscussionsPage() {
                   <p className="text-lg font-medium">
                     No conversations matching &quot;{discussionsSearchQuery}&quot;
                   </p>
+                  {discussionsProjectFilter === "all" && discussionsSearchQuery.length >= 3 && (
+                    <p className="text-sm mt-1">
+                      Select a project to search full conversation content.
+                    </p>
+                  )}
                   <Button
                     variant="link"
                     className="mt-2"
@@ -384,6 +552,8 @@ export default function DiscussionsPage() {
                 session={session}
                 isFavourite={favourites.has(session.sessionId)}
                 onToggleFavourite={toggleFavourite}
+                searchQuery={discussionsSearchQuery}
+                isDeepSearchOnly={deepSearchOnlyIds.has(session.sessionId)}
               />
             ))}
           </div>

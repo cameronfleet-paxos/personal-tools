@@ -416,6 +416,8 @@ export interface SessionMetadata {
   timestamp: number; // File mtime (for sorting)
   firstUserPrompt: string; // Snippet (~150 chars)
   isFavourite?: boolean; // Computed at runtime from favourites.json
+  matchContext?: string; // ~200 char snippet from deep search match
+  matchRole?: "user" | "assistant"; // Role of the message containing the match
 }
 
 // Favourites data structure (stored in ~/.claude/favourites.json)
@@ -478,6 +480,46 @@ export interface SessionConversationResponse {
   conversation: SessionConversation | null;
   error?: string;
 }
+
+// Deep search types (full conversation content search)
+export interface DeepSearchMatch {
+  sessionId: string;
+  projectPath: string;
+  projectName: string;
+  timestamp: number;
+  firstUserPrompt: string;
+  matchContext: string; // ~200 char snippet around match
+  matchRole: "user" | "assistant";
+}
+
+export interface DeepSearchProgressEvent {
+  type: "progress";
+  searched: number;
+  total: number;
+}
+
+export interface DeepSearchResultEvent {
+  type: "result";
+  match: DeepSearchMatch;
+}
+
+export interface DeepSearchCompleteEvent {
+  type: "complete";
+  totalMatches: number;
+  totalSearched: number;
+  durationMs: number;
+}
+
+export interface DeepSearchErrorEvent {
+  type: "error";
+  message: string;
+}
+
+export type DeepSearchEvent =
+  | DeepSearchProgressEvent
+  | DeepSearchResultEvent
+  | DeepSearchCompleteEvent
+  | DeepSearchErrorEvent;
 
 // MCP (Model Context Protocol) types
 export type MCPServerType = 'stdio' | 'http' | 'sse' | 'ws';

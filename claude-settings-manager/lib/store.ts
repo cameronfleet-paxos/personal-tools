@@ -143,6 +143,14 @@ interface SettingsStore {
   discussionsProjects: DiscussionsProjectInfo[];
   discussionsIndexedCount: number;
 
+  // Deep search state
+  deepSearchResults: SessionMetadata[];
+  deepSearching: boolean;
+  deepSearchProgress: { searched: number; total: number } | null;
+  deepSearchComplete: boolean;
+  deepSearchTotalMatches: number;
+  deepSearchDurationMs: number;
+
   // Favourites state
   favourites: Set<string>;
   favouritesLoading: boolean;
@@ -215,6 +223,11 @@ interface SettingsStore {
   setDiscussionsSearchQuery: (query: string) => void;
   setDiscussionsProjectFilter: (project: string) => void;
 
+  // Deep search actions
+  startDeepSearch: (project: string, search: string) => void;
+  cancelDeepSearch: () => void;
+  clearDeepSearch: () => void;
+
   // Favourites actions
   loadFavourites: () => Promise<void>;
   toggleFavourite: (sessionId: string) => Promise<void>;
@@ -223,6 +236,9 @@ interface SettingsStore {
   getTokensBySession: (sessionId: string) => TokenMatch[];
   getGroupedDiscussionTokens: () => Map<string, TokenMatch[]>;
 }
+
+// Module-level abort controller for deep search (not in store state)
+let deepSearchAbortController: AbortController | null = null;
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Multi-source settings (userLocalSettings removed - doesn't exist per Claude Code docs)
@@ -299,6 +315,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   discussionsProjectFilter: "all",
   discussionsProjects: [],
   discussionsIndexedCount: 0,
+
+  // Deep search state
+  deepSearchResults: [],
+  deepSearching: false,
+  deepSearchProgress: null,
+  deepSearchComplete: false,
+  deepSearchTotalMatches: 0,
+  deepSearchDurationMs: 0,
 
   // Favourites state
   favourites: new Set<string>(),
@@ -1183,6 +1207,137 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   setDiscussionsProjectFilter: (project: string) => {
     set({ discussionsProjectFilter: project });
+  },
+
+  startDeepSearch: (project: string, search: string) => {
+    // Abort any existing deep search
+    if (deepSearchAbortController) {
+      deepSearchAbortController.abort();
+    }
+
+    const controller = new AbortController();
+    deepSearchAbortController = controller;
+
+    set({
+      deepSearchResults: [],
+      deepSearching: true,
+      deepSearchProgress: null,
+      deepSearchComplete: false,
+      deepSearchTotalMatches: 0,
+      deepSearchDurationMs: 0,
+    });
+
+    const params = new URLSearchParams({
+      project,
+      search,
+    });
+
+    fetch(`/api/discussions/deep-search?${params.toString()}`, {
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok || !response.body) {
+          throw new Error("Deep search request failed");
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+
+            try {
+              const event = JSON.parse(line.slice(6));
+
+              switch (event.type) {
+                case "progress":
+                  set({
+                    deepSearchProgress: {
+                      searched: event.searched,
+                      total: event.total,
+                    },
+                  });
+                  break;
+
+                case "result":
+                  set((state) => ({
+                    deepSearchResults: [
+                      ...state.deepSearchResults,
+                      {
+                        sessionId: event.match.sessionId,
+                        projectPath: event.match.projectPath,
+                        projectName: event.match.projectName,
+                        timestamp: event.match.timestamp,
+                        firstUserPrompt: event.match.firstUserPrompt,
+                        matchContext: event.match.matchContext,
+                        matchRole: event.match.matchRole,
+                      },
+                    ],
+                  }));
+                  break;
+
+                case "complete":
+                  set({
+                    deepSearching: false,
+                    deepSearchComplete: true,
+                    deepSearchTotalMatches: event.totalMatches,
+                    deepSearchDurationMs: event.durationMs,
+                  });
+                  break;
+
+                case "error":
+                  console.error("Deep search error:", event.message);
+                  set({ deepSearching: false });
+                  break;
+              }
+            } catch {
+              // Skip malformed SSE events
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          // Expected when cancelling
+          return;
+        }
+        console.error("Deep search fetch error:", err);
+        set({ deepSearching: false });
+      });
+  },
+
+  cancelDeepSearch: () => {
+    if (deepSearchAbortController) {
+      deepSearchAbortController.abort();
+      deepSearchAbortController = null;
+    }
+    set({ deepSearching: false });
+  },
+
+  clearDeepSearch: () => {
+    if (deepSearchAbortController) {
+      deepSearchAbortController.abort();
+      deepSearchAbortController = null;
+    }
+    set({
+      deepSearchResults: [],
+      deepSearching: false,
+      deepSearchProgress: null,
+      deepSearchComplete: false,
+      deepSearchTotalMatches: 0,
+      deepSearchDurationMs: 0,
+    });
   },
 
   loadFavourites: async () => {
