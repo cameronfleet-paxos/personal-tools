@@ -7,7 +7,6 @@ import type {
   SessionConversation,
   ConversationMessage,
   ContentBlock,
-  DiscussionsResponse,
   FavouritesData,
 } from "@/types/settings";
 
@@ -133,14 +132,14 @@ export function decodeProjectPath(dirName: string): string {
  * Get a display name from a project path
  * e.g., "/Users/cameronfleet/dev/pax" -> "pax"
  */
-function getProjectDisplayName(projectPath: string): string {
+export function getProjectDisplayName(projectPath: string): string {
   return path.basename(projectPath) || projectPath;
 }
 
 /**
  * Check if a directory should be skipped
  */
-function shouldSkipDirectory(dirName: string): boolean {
+export function shouldSkipDirectory(dirName: string): boolean {
   return dirName.includes("-T-") || dirName.includes("var-folders");
 }
 
@@ -148,7 +147,7 @@ function shouldSkipDirectory(dirName: string): boolean {
  * Extract the first user prompt from a JSONL file by reading only the first N lines
  * Returns a snippet of ~150 characters
  */
-async function extractFirstUserPrompt(
+export async function extractFirstUserPrompt(
   jsonlPath: string,
   maxLines: number = 50
 ): Promise<string> {
@@ -249,7 +248,7 @@ async function extractFirstUserPrompt(
  */
 export async function scanAllSessions(
   limit: number = 50
-): Promise<DiscussionsResponse> {
+): Promise<{ sessions: SessionMetadata[]; totalCount: number }> {
   const sessions: Array<{
     sessionId: string;
     projectPath: string;

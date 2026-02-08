@@ -446,9 +446,32 @@ export interface SessionConversation {
   messages: ConversationMessage[];
 }
 
+export interface DiscussionsIndexEntry {
+  sessionId: string;
+  projectPath: string;
+  projectName: string;
+  mtime: number;           // cache invalidation key
+  firstUserPrompt: string;
+  promptLower: string;     // pre-lowercased for fast search
+}
+
+export interface DiscussionsIndex {
+  version: number;
+  lastBuilt: number;
+  entries: Record<string, DiscussionsIndexEntry>;  // keyed by sessionId
+}
+
+export interface DiscussionsProjectInfo {
+  name: string;
+  path: string;
+  count: number;
+}
+
 export interface DiscussionsResponse {
   sessions: SessionMetadata[];
   totalCount: number;
+  projects: DiscussionsProjectInfo[];
+  indexedCount: number;
 }
 
 export interface SessionConversationResponse {
