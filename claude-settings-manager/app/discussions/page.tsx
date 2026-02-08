@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSettingsStore } from "@/lib/store";
 import {
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -27,6 +28,8 @@ import {
   ChevronRight,
   Filter,
   Star,
+  Search,
+  X,
 } from "lucide-react";
 import { LoadingOverlay } from "@/components/loading-overlay";
 import type { SessionMetadata } from "@/types/settings";
@@ -122,52 +125,95 @@ export default function DiscussionsPage() {
     discussions,
     discussionsLoading,
     discussionsTotalCount,
+    discussionsSearchQuery,
+    discussionsProjectFilter,
+    discussionsProjects,
+    discussionsIndexedCount,
     loadDiscussions,
+    setDiscussionsSearchQuery,
+    setDiscussionsProjectFilter,
     favourites,
     loadFavourites,
     toggleFavourite,
   } = useSettingsStore();
 
-  const [projectFilter, setProjectFilter] = useState<string>("all");
+  const [searchInput, setSearchInput] = useState(discussionsSearchQuery);
   const [favouriteFilter, setFavouriteFilter] = useState<"all" | "favourites">("all");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialLoadDone = useRef(false);
 
+  // Initial load
   useEffect(() => {
-    loadDiscussions();
-    loadFavourites();
+    if (!initialLoadDone.current) {
+      initialLoadDone.current = true;
+      loadDiscussions();
+      loadFavourites();
+    }
   }, [loadDiscussions, loadFavourites]);
 
-  // Extract unique projects from discussions
-  const uniqueProjects = useMemo(() => {
-    const projectMap = new Map<string, { name: string; path: string; count: number }>();
-    for (const session of discussions) {
-      const existing = projectMap.get(session.projectPath);
-      if (existing) {
-        existing.count++;
-      } else {
-        projectMap.set(session.projectPath, {
-          name: session.projectName,
-          path: session.projectPath,
-          count: 1,
-        });
+  // Debounce search input -> store
+  useEffect(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = setTimeout(() => {
+      setDiscussionsSearchQuery(searchInput);
+    }, 300);
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
       }
-    }
-    // Sort by count (most sessions first)
-    return Array.from(projectMap.values()).sort((a, b) => b.count - a.count);
-  }, [discussions]);
+    };
+  }, [searchInput, setDiscussionsSearchQuery]);
 
-  // Filter discussions by project and favourites
+  // Reload when search query or project filter changes (after debounce)
+  useEffect(() => {
+    // Skip the initial render (handled by initial load above)
+    if (!initialLoadDone.current) return;
+    loadDiscussions();
+  }, [discussionsSearchQuery, discussionsProjectFilter, loadDiscussions]);
+
+  const handleProjectFilterChange = useCallback(
+    (value: string) => {
+      setDiscussionsProjectFilter(value);
+    },
+    [setDiscussionsProjectFilter]
+  );
+
+  const handleRefresh = useCallback(() => {
+    loadDiscussions({ rebuild: true });
+  }, [loadDiscussions]);
+
+  const handleClearSearch = useCallback(() => {
+    setSearchInput("");
+    setDiscussionsSearchQuery("");
+  }, [setDiscussionsSearchQuery]);
+
+  // Client-side favourite filtering (favourites are not in the index)
   const filteredDiscussions = useMemo(() => {
-    let result = discussions;
-    if (projectFilter !== "all") {
-      result = result.filter((s) => s.projectPath === projectFilter);
-    }
     if (favouriteFilter === "favourites") {
-      result = result.filter((s) => favourites.has(s.sessionId));
+      return discussions.filter((s) => favourites.has(s.sessionId));
     }
-    return result;
-  }, [discussions, projectFilter, favouriteFilter, favourites]);
+    return discussions;
+  }, [discussions, favouriteFilter, favourites]);
 
   const hasData = discussions.length > 0;
+  const isFiltering = discussionsSearchQuery || discussionsProjectFilter !== "all";
+
+  // Count text
+  const countText = useMemo(() => {
+    const showing = filteredDiscussions.length;
+    const matching = discussionsTotalCount;
+    const total = discussionsIndexedCount;
+
+    if (isFiltering || favouriteFilter === "favourites") {
+      return `${showing} of ${matching} matching (${total} total)`;
+    }
+    if (showing < total) {
+      return `${showing} of ${total} sessions`;
+    }
+    return `${total} session${total !== 1 ? "s" : ""}`;
+  }, [filteredDiscussions.length, discussionsTotalCount, discussionsIndexedCount, isFiltering, favouriteFilter]);
 
   return (
     <>
@@ -183,7 +229,7 @@ export default function DiscussionsPage() {
           </div>
           <Button
             variant="outline"
-            onClick={() => loadDiscussions()}
+            onClick={handleRefresh}
             disabled={discussionsLoading}
           >
             <RefreshCw
@@ -193,59 +239,74 @@ export default function DiscussionsPage() {
           </Button>
         </div>
 
-        {/* Filters Bar */}
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <MessageSquare className="h-4 w-4" />
-              <span>
-                {filteredDiscussions.length}
-                {(projectFilter !== "all" || favouriteFilter !== "all") && ` of ${discussions.length}`} session
-                {filteredDiscussions.length !== 1 ? "s" : ""}
-                {projectFilter === "all" && favouriteFilter === "all" && ` (${discussionsTotalCount} total)`}
-              </span>
-            </div>
+        {/* Search + Filters Bar */}
+        <div className="flex flex-col gap-4">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search conversations..."
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="pl-9 pr-9"
+            />
+            {searchInput && (
+              <button
+                onClick={handleClearSearch}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant={favouriteFilter === "favourites" ? "default" : "outline"}
-              size="sm"
-              onClick={() =>
-                setFavouriteFilter(favouriteFilter === "favourites" ? "all" : "favourites")
-              }
-              className={
-                favouriteFilter === "favourites"
-                  ? "bg-yellow-500 hover:bg-yellow-600 text-white"
-                  : ""
-              }
-            >
-              <Star
-                className={`h-4 w-4 mr-1 ${
-                  favouriteFilter === "favourites" ? "fill-current" : ""
-                }`}
-              />
-              Favourites
-            </Button>
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <div className="flex items-center gap-1">
+                <MessageSquare className="h-4 w-4" />
+                <span>{countText}</span>
+              </div>
+            </div>
 
-            {uniqueProjects.length > 1 && (
-              <>
-                <Filter className="h-4 w-4 text-muted-foreground" />
-                <Select value={projectFilter} onValueChange={setProjectFilter}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="Filter by project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All projects</SelectItem>
-                    {uniqueProjects.map((project) => (
-                      <SelectItem key={project.path} value={project.path}>
-                        {project.name} ({project.count})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </>
-            )}
+            <div className="flex items-center gap-2">
+              <Button
+                variant={favouriteFilter === "favourites" ? "default" : "outline"}
+                size="sm"
+                onClick={() =>
+                  setFavouriteFilter(favouriteFilter === "favourites" ? "all" : "favourites")
+                }
+                className={
+                  favouriteFilter === "favourites"
+                    ? "bg-yellow-500 hover:bg-yellow-600 text-white"
+                    : ""
+                }
+              >
+                <Star
+                  className={`h-4 w-4 mr-1 ${
+                    favouriteFilter === "favourites" ? "fill-current" : ""
+                  }`}
+                />
+                Favourites
+              </Button>
+
+              {discussionsProjects.length > 1 && (
+                <>
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <Select value={discussionsProjectFilter} onValueChange={handleProjectFilterChange}>
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="Filter by project" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All projects</SelectItem>
+                      {discussionsProjects.map((project) => (
+                        <SelectItem key={project.path} value={project.path}>
+                          {project.name} ({project.count})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </>
+              )}
+            </div>
           </div>
         </div>
 
@@ -275,17 +336,31 @@ export default function DiscussionsPage() {
                     Show all conversations
                   </Button>
                 </>
+              ) : discussionsSearchQuery ? (
+                <>
+                  <Search className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p className="text-lg font-medium">
+                    No conversations matching &quot;{discussionsSearchQuery}&quot;
+                  </p>
+                  <Button
+                    variant="link"
+                    className="mt-2"
+                    onClick={handleClearSearch}
+                  >
+                    Clear search
+                  </Button>
+                </>
               ) : (
                 <>
                   <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
                   <p className="text-lg font-medium">
-                    {projectFilter !== "all" ? "No discussions in this project" : "No discussions found"}
+                    {discussionsProjectFilter !== "all" ? "No discussions in this project" : "No discussions found"}
                   </p>
-                  {projectFilter !== "all" ? (
+                  {discussionsProjectFilter !== "all" ? (
                     <Button
                       variant="link"
                       className="mt-2"
-                      onClick={() => setProjectFilter("all")}
+                      onClick={() => handleProjectFilterChange("all")}
                     >
                       Show all projects
                     </Button>
@@ -319,7 +394,7 @@ export default function DiscussionsPage() {
           <div className="flex justify-center">
             <Button
               variant="outline"
-              onClick={() => loadDiscussions(discussions.length + 50)}
+              onClick={() => loadDiscussions({ limit: discussions.length + 50 })}
               disabled={discussionsLoading}
             >
               Load More Sessions

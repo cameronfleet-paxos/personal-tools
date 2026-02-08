@@ -15,6 +15,7 @@ import type {
   AggregatedInterruption,
   PermissionTimeFilter,
   SessionMetadata,
+  DiscussionsProjectInfo,
   TokenMatch,
   ScanMetadata,
 } from "@/types/settings";
@@ -137,6 +138,10 @@ interface SettingsStore {
   discussions: SessionMetadata[];
   discussionsLoading: boolean;
   discussionsTotalCount: number;
+  discussionsSearchQuery: string;
+  discussionsProjectFilter: string;
+  discussionsProjects: DiscussionsProjectInfo[];
+  discussionsIndexedCount: number;
 
   // Favourites state
   favourites: Set<string>;
@@ -206,7 +211,9 @@ interface SettingsStore {
   loadInterruptionContext: (id: string) => Promise<void>;
 
   // Discussions actions
-  loadDiscussions: (limit?: number) => Promise<void>;
+  loadDiscussions: (options?: { limit?: number; rebuild?: boolean }) => Promise<void>;
+  setDiscussionsSearchQuery: (query: string) => void;
+  setDiscussionsProjectFilter: (project: string) => void;
 
   // Favourites actions
   loadFavourites: () => Promise<void>;
@@ -288,6 +295,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   discussions: [],
   discussionsLoading: false,
   discussionsTotalCount: 0,
+  discussionsSearchQuery: "",
+  discussionsProjectFilter: "all",
+  discussionsProjects: [],
+  discussionsIndexedCount: 0,
 
   // Favourites state
   favourites: new Set<string>(),
@@ -1129,10 +1140,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     }
   },
 
-  loadDiscussions: async (limit: number = 50) => {
+  loadDiscussions: async (options?: { limit?: number; rebuild?: boolean }) => {
+    const state = get();
+    const limit = options?.limit || 50;
+    const rebuild = options?.rebuild || false;
+
     set({ discussionsLoading: true });
     try {
-      const response = await fetch(`/api/discussions?limit=${limit}`);
+      const params = new URLSearchParams();
+      params.set("limit", String(limit));
+      if (state.discussionsSearchQuery) {
+        params.set("search", state.discussionsSearchQuery);
+      }
+      if (state.discussionsProjectFilter !== "all") {
+        params.set("project", state.discussionsProjectFilter);
+      }
+      if (rebuild) {
+        params.set("rebuild", "true");
+      }
+
+      const response = await fetch(`/api/discussions?${params.toString()}`);
       if (!response.ok) {
         throw new Error("Failed to load discussions");
       }
@@ -1140,12 +1167,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       set({
         discussions: data.sessions,
         discussionsTotalCount: data.totalCount,
+        discussionsProjects: data.projects || [],
+        discussionsIndexedCount: data.indexedCount || 0,
         discussionsLoading: false,
       });
     } catch (err) {
       console.error("Error loading discussions:", err);
       set({ discussionsLoading: false });
     }
+  },
+
+  setDiscussionsSearchQuery: (query: string) => {
+    set({ discussionsSearchQuery: query });
+  },
+
+  setDiscussionsProjectFilter: (project: string) => {
+    set({ discussionsProjectFilter: project });
   },
 
   loadFavourites: async () => {
