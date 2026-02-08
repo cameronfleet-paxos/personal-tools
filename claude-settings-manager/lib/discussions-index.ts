@@ -247,6 +247,27 @@ export function invalidateCache(): void {
 }
 
 /**
+ * Look up sessions by ID directly from the index.
+ * O(1) per lookup. Filters out IDs not found in the index.
+ */
+export function getSessionsByIds(index: DiscussionsIndex, sessionIds: string[]): SessionMetadata[] {
+  const results: SessionMetadata[] = [];
+  for (const id of sessionIds) {
+    const entry = index.entries[id];
+    if (entry) {
+      results.push({
+        sessionId: entry.sessionId,
+        projectPath: entry.projectPath,
+        projectName: entry.projectName,
+        timestamp: entry.mtime,
+        firstUserPrompt: entry.firstUserPrompt,
+      });
+    }
+  }
+  return results;
+}
+
+/**
  * Query the index with search, project filter, and pagination.
  * Pure synchronous filtering on the index entries.
  */

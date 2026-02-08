@@ -195,6 +195,7 @@ export default function DiscussionsPage() {
     setDiscussionsSearchQuery,
     setDiscussionsProjectFilter,
     favourites,
+    favouriteSessions,
     loadFavourites,
     toggleFavourite,
     // Deep search
@@ -327,13 +328,14 @@ export default function DiscussionsPage() {
     return new Set(deepSearchResults.filter((s) => !indexSessionIds.has(s.sessionId)).map((s) => s.sessionId));
   }, [discussions, deepSearchResults]);
 
-  // Client-side favourite filtering (favourites are not in the index)
+  // When favourites filter is active, use favouriteSessions directly from the API
+  // (not filtered from mergedResults) so ALL favourites appear regardless of pagination
   const filteredDiscussions = useMemo(() => {
     if (favouriteFilter === "favourites") {
-      return mergedResults.filter((s) => favourites.has(s.sessionId));
+      return favouriteSessions;
     }
     return mergedResults;
-  }, [mergedResults, favouriteFilter, favourites]);
+  }, [mergedResults, favouriteFilter, favouriteSessions]);
 
   const hasData = discussions.length > 0 || deepSearchResults.length > 0;
   const isFiltering = discussionsSearchQuery || discussionsProjectFilter !== "all";

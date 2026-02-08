@@ -153,6 +153,7 @@ interface SettingsStore {
 
   // Favourites state
   favourites: Set<string>;
+  favouriteSessions: SessionMetadata[];
   favouritesLoading: boolean;
 
   // UI State
@@ -326,6 +327,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   // Favourites state
   favourites: new Set<string>(),
+  favouriteSessions: [],
   favouritesLoading: false,
 
   isLoading: false,
@@ -1350,6 +1352,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const data = await response.json();
       set({
         favourites: new Set(data.favourites),
+        favouriteSessions: data.sessions || [],
         favouritesLoading: false,
       });
     } catch (err) {
@@ -1371,6 +1374,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const data = await response.json();
       set({
         favourites: new Set(data.favourites),
+        favouriteSessions: data.sessions || [],
       });
     } catch (err) {
       console.error("Error toggling favourite:", err);
